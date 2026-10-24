@@ -56,6 +56,14 @@ ISSUE_LIST_INSTRUCTIONS = (
 ISSUE_BLOCK = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
 ISSUE_TEXT_FIELDS = ("title", "evidence", "proposed_validation")
 CONFIDENCE_LEVELS = ("high", "medium", "low")
+ANALYSIS_DEPTHS = ("triage", "standard", "deep")
+
+# Inputs of the personal agents (AGENT_1, AGENT_2), verified 2026-10-23 on runs
+# 8eb4dc7d and 7bcbb28f. Several focus areas are sent as comma-separated text
+# (verified on run aaa9f564).
+PERSONAL_REQUIRED_INPUTS = ("project_path", "observed_symptom", "focus_areas", "analysis_depth")
+FOCUS_AREAS = ("numerical", "reproducibility", "data_integrity", "performance", "visualization", "all")
+PERSONAL_INPUT_CHOICES = {"focus_areas": FOCUS_AREAS, "analysis_depth": ANALYSIS_DEPTHS}
 
 
 class CreaoError(Exception):
@@ -67,11 +75,14 @@ class CreaoConfigError(CreaoError):
 
 
 class CreaoInputError(CreaoError):
-    """Required agent inputs are missing; nothing was sent to CREAO."""
+    """Required agent inputs are missing or not an allowed choice; nothing was sent to CREAO."""
 
-    def __init__(self, missing: list[str]):
-        super().__init__(f"Missing required CREAO inputs: {', '.join(missing)}. Nothing was sent.")
+    def __init__(self, missing: list[str], invalid: dict[str, list[str]] | None = None):
         self.missing = missing
+        self.invalid = invalid or {}
+        parts = [f"Missing required CREAO inputs: {', '.join(missing)}."] if missing else []
+        parts += [f"Not an allowed {name}: {', '.join(values)}." for name, values in self.invalid.items()]
+        super().__init__(" ".join(parts) + " Nothing was sent.")
 
 
 class CreaoRequestError(CreaoError):
@@ -113,6 +124,8 @@ class AgentConfig:
     required_inputs: tuple[str, ...] = ()
     base_url: str = DEFAULT_BASE_URL
     extra_inputs: dict[str, str] = field(default_factory=dict, compare=False)  # sent with every run
+    # Fixed-choice inputs; a value may list several choices separated by commas.
+    input_choices: dict[str, tuple[str, ...]] = field(default_factory=dict, compare=False)
 
     @classmethod
     def from_env(
@@ -121,6 +134,7 @@ class AgentConfig:
         required_inputs: tuple[str, ...] = (),
         env_file: Path | None = DEFAULT_ENV_FILE,
         extra_inputs: dict[str, str] | None = None,
+        input_choices: dict[str, tuple[str, ...]] | None = None,
     ) -> AgentConfig:
         """Read CREAO_<prefix>_APP_ID and CREAO_<prefix>_KEY, e.g. prefix "HUB" or "AGENT_1"."""
         if env_file is not None:
@@ -136,6 +150,7 @@ class AgentConfig:
             required_inputs=required_inputs,
             base_url=os.environ.get("CREAO_BASE_URL", "").strip() or DEFAULT_BASE_URL,
             extra_inputs=dict(extra_inputs or {}),
+            input_choices=dict(input_choices or {}),
         )
 
 
@@ -144,6 +159,18 @@ def hub_agent(env_file: Path | None = DEFAULT_ENV_FILE) -> AgentConfig:
     request to end each reply with a JSON issue list."""
     return AgentConfig.from_env(
         "HUB", HUB_REQUIRED_INPUTS, env_file, extra_inputs={"output_format": ISSUE_LIST_INSTRUCTIONS}
+    )
+
+
+def personal_agent(prefix: str, env_file: Path | None = DEFAULT_ENV_FILE) -> AgentConfig:
+    """Config for a researcher's personal agent (e.g. prefix "AGENT_1"): its required
+    inputs, its fixed choices, and the request to end each reply with a JSON issue list."""
+    return AgentConfig.from_env(
+        prefix,
+        PERSONAL_REQUIRED_INPUTS,
+        env_file,
+        extra_inputs={"output_format": ISSUE_LIST_INSTRUCTIONS},
+        input_choices=PERSONAL_INPUT_CHOICES,
     )
 
 
@@ -183,10 +210,26 @@ def parse_run(raw: dict[str, Any]) -> RunResult:
         status=raw.get("status", ""),
         reply=reply,
         summary=summary,
-        analysis_ran=bool(summary),
+        analysis_ran=_analysis_ran(structured, summary),
         issues=issues,
         raw=raw,
     )
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _analysis_ran(structured: dict[str, Any], summary: dict[str, Any]) -> bool:
+    """Whether the agent actually analyzed anything. Agents echo the analysis_depth
+    they used: a real depth on real analyses, "none" or "not_run" on runs that only
+    reported their inputs, which can still carry summary counts of zero and a
+    reproducibility_score of 0 (runs 829188d5, 8eb4dc7d). Without an echoed depth,
+    only issues actually found count."""
+    depth = structured.get("analysis_depth")
+    if depth is not None:
+        return depth in ANALYSIS_DEPTHS
+    return any(_is_number(v) and v > 0 for k, v in summary.items() if k != "reproducibility_score")
 
 
 def _extract_issues(reply: str) -> tuple[str, list[dict[str, Any]]]:
@@ -247,8 +290,14 @@ class CreaoClient:
     def start_run(self, inputs: dict[str, Any]) -> str:
         """Start a run and return its ID. Never retried automatically: every start costs credits."""
         missing = [k for k in self.agent.required_inputs if not str(inputs.get(k, "")).strip()]
-        if missing:
-            raise CreaoInputError(missing)
+        invalid = {}
+        for name, choices in self.agent.input_choices.items():
+            if str(inputs.get(name, "")).strip():
+                bad = [v.strip() for v in str(inputs[name]).split(",") if v.strip() not in choices]
+                if bad:
+                    invalid[name] = bad
+        if missing or invalid:
+            raise CreaoInputError(missing, invalid)
 
         payload = {**self.agent.extra_inputs, **inputs}  # the caller's inputs win
         data = self._request("POST", "/runs", json={"appId": self.agent.app_id, "inputs": payload})

@@ -4,7 +4,32 @@ One entry per commit, newest first. Each commit adds its own entry with the hash
 
 ---
 
-## 2026-10-23 · `pending` · Add diagnosis endpoint, local connector and evidence rules
+## 2026-10-23 · `pending` · Add databases, demo workspace, sign-in and personal agents
+
+**Why:** Build plan step 3 (SQLite models and demo data), plus the start of step 4: each researcher gets their own CREAO agent, so CREAO's own agent memory can't carry one researcher's evidence into another's runs.
+
+**Changed**
+- Added `backend/db/`: the shared Super Brain (`superbrain.db`) and one private memory file per researcher (`private/<member>.db`), with separate tables so no shared query can return private memory. `approvals` stores no draft text.
+- Added `backend/workspaces/`: membership lookups (offboarded members have no project access) and the demo workspace: a group leader, Researcher A (both projects) and Researcher B (`heat-diffusion` only). Reset with `python -m backend.workspaces.demo --reset`.
+- Added `backend/memory/private_memory.py`: private episodes split by project, with a membership check on every read and write.
+- Added `backend/auth/`: prototype sign-in (`GET /demo/members`, `POST /sign-in`, `GET /me`) and project permission checks. Offboarding takes effect on the next request.
+- CREAO adapter: `personal_agent()` for the researchers' agents (four required inputs, fixed choices checked before sending, `focus_areas` as comma-separated text, issue-list request). `analysis_ran` detection fixed: it now uses the `analysis_depth` the agent echoes back, because agents return zero counts and even a numeric score of 0 on runs that analyzed nothing.
+- Added fixtures from real runs: `creao_agent2_run_not_analyzed.json`, `creao_personal_agent_contract_probe.json`, `creao_personal_agent_diagnosis.json`.
+- Added `tests/test_database.py` and `tests/conftest.py` (every test uses temporary data folders), and new adapter tests.
+- `.gitignore`: ignores `backend/data/`.
+- Updated `backend/README.md` (databases, sign-in, agent input contracts, key behaviour) and `Documents/build-plan.md`.
+
+**Checks**
+- `python -m pytest`: 105 passed, 1 skipped (symlink test on Windows).
+- Demo database deleted, recreated and reloaded twice with the real command: same counts each time.
+- Probe runs `8eb4dc7d` and `7bcbb28f`: both personal agents reachable, with identical input contracts.
+- Real diagnosis `aaa9f564` on `AGENT_1`: comma-separated `focus_areas` accepted, 10 issues returned matching the summary counts, root cause found.
+- Found: CREAO `capi_` keys can read other agents' runs, and listing runs returns 200 for unknown app IDs. Documented in `backend/README.md`.
+- Secret scan: no API key or app ID in the commit; `backend/.env` and `backend/data/` not included.
+
+---
+
+## 2026-10-23 · `40e192e` · Add diagnosis endpoint, local connector and evidence rules
 
 **Why:** Build plan step 2: a researcher can grant a project folder, pick the files that matter, and get a diagnosis, while secrets, sensitive files and local paths never leave the computer.
 

@@ -20,7 +20,7 @@
 | 0 | Setup | `backend/` | Mostly done |
 | 1 | Verify CREAO with a known-good input | `backend/creao/`, `tests/` | Done except recording credits |
 | 2 | Diagnosis endpoint with file permissions | `backend/api/`, `backend/orchestration/`, `local_connector/` | Done |
-| 3 | SQLite models and demo data | `backend/db/`, `backend/workspaces/`, `backend/memory/`, `backend/auth/` | Not started |
+| 3 | SQLite models and demo data | `backend/db/`, `backend/workspaces/`, `backend/memory/`, `backend/auth/` | Done |
 | 4 | Approval path to publish a finding | `backend/knowledge_sharing/` | Not started |
 | 5 | Scoped lookup for Researcher B | `backend/memory/`, `backend/auth/` | Not started |
 | 6 | Dashboard and local anomaly checks | `frontend/`, `local_connector/simulation_monitor/`, `backend/monitoring/` | Not started |
@@ -96,20 +96,25 @@
 ## Step 3 — SQLite models and demo data
 
 **Tasks**
-- [ ] Tables in `backend/db/`: `workspaces`, `members`, `projects`, `project_members`, `agents`, `runs`, `private_episodes`, `shared_findings`, `finding_links`, `approvals` (`alerts` and `handoff_events` come in step 7)
-- [ ] Demo data: 1 workspace, Researchers A and B, 2 projects. A belongs to both; B belongs to only one (needed for the isolation test)
-- [ ] Simple prototype sign-in: pick a demo researcher
+- [x] Tables in `backend/db/`: `workspaces`, `members`, `projects`, `project_members`, `agents`, `runs`, `private_episodes`, `shared_findings`, `finding_links`, `approvals` (`alerts` and `handoff_events` come in step 7). Shared tables go in `superbrain.db`; `runs` and `private_episodes` go in a separate file per researcher (`private/<member>.db`)
+- [x] Demo data: 1 workspace, Researchers A and B, 2 projects. A belongs to both; B belongs to only one (needed for the isolation test). Also a group leader for step 7
+- [x] Simple prototype sign-in: pick a demo researcher (`GET /demo/members`, `POST /sign-in`, `GET /me`)
 
 **Checkpoint 3**
-- [ ] Delete the database file, recreate it and load the demo data: no errors
-- [ ] Automated: private episodes and shared findings are stored separately, and a private episode never appears in a shared query
-- [ ] Automated: loading the demo data twice does not create duplicates
+- [x] Delete the database file, recreate it and load the demo data: no errors (`python -m backend.workspaces.demo --reset`, run twice)
+- [x] Automated: private episodes and shared findings are stored separately, and a private episode never appears in a shared query (checked down to the raw shared database file)
+- [x] Automated: loading the demo data twice does not create duplicates
+- [x] Automated: each researcher's private memory is separate and split by project; a researcher can't use a project they're not in; offboarding removes access at once
 
 ---
 
 ## Step 4 — Approval path to publish a finding
 
 **Tasks**
+- [x] Set up separate CREAO agents for Researchers A and B (`CREAO_AGENT_1_*` and `CREAO_AGENT_2_*` in `backend/.env`; the demo data already points A and B at these). If both used the one hub agent, CREAO's own long-term agent memory could carry A's evidence into B's runs, outside SimGuard's access checks. Both agents verified with a short run on 2026-10-23
+- [x] Give both personal agents the same input contract (verified 2026-10-23: `AGENT_2` is now a copy of `AGENT_1`; see `backend/README.md`)
+- [x] Configure the adapter for the personal agents' inputs (`personal_agent()`: `focus_areas` choices sent as comma-separated text, required `analysis_depth`, issue-list request). Verified on run `aaa9f564` **(uses credits)**
+- [ ] Use each signed-in researcher's own personal agent for `/diagnose` (today it still uses the hub agent)
 - [ ] The agent drafts an editable, minimum-necessary summary in one of the three categories: research result, code bug / new implementation, error diagnosis
 - [ ] The researcher approves (optionally after editing) or rejects it
 - [ ] On approval, store the shared finding with provenance (who, when, source project, verification status), its project label and its links

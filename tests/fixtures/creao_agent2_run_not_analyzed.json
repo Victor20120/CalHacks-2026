@@ -1,0 +1,26 @@
+{
+  "note": "Real CREAO run captured 2026-10-23 on the second personal agent (AGENT_2): a connection test with no real inputs. It returns summary counts of zero and reproducibility_score 'not_computed' even though nothing was analyzed. App ID redacted; no API key.",
+  "request": {
+    "method": "POST",
+    "path": "/runs",
+    "body": {
+      "appId": "<APP_ID>",
+      "inputs": {
+        "prompt": "Connection test from SimGuard. Do not analyze anything; only list the inputs you require."
+      }
+    }
+  },
+  "final_response": {
+    "id": "829188d5-d1f2-4569-8d91-f4e93621177c",
+    "status": "completed",
+    "threadId": "f00fca48-74cb-4bc1-aab1-c0954e659b83",
+    "result": {
+      "text": "{\"project_name\":\"Connection test (no project supplied)\",\"project_path\":\"none\",\"analysis_depth\":\"not_run\",\"focus_areas\":\"none_selected\",\"issues_confirmed\":0,\"issues_suspected\":0,\"blocking_count\":0,\"reproducibility_score\":\"not_computed\",\"experiments_proposed\":0}",
+      "chatText": "I'll start by reading the skill and manifest.I treated this as a connection/handshake test as instructed: no audit was performed, no files were read, and no findings were invented. Here is exactly what the app needs before it can run.\n\n\n\n**Required before I can audit:** `project_name`, `observed_symptom`, `focus_areas` (one or more of numerical / reproducibility / data_integrity / performance / visualization), `analysis_depth` (triage / standard / deep), and `audience_level` (newcomer / researcher).\n\n**Optional but strongly recommended:** `project_path` (absolute directory) *or* uploaded `artifacts` \u2014 without one of these there is no evidence to cite, so findings could only be marked suspected \u2014 plus `known_context` so settled questions are cited instead of re-tested. No connectors are needed; this agent works purely from files on disk or uploads.Connection test complete (SimGuard) \u2014 the agent is reachable, the form contract resolved correctly, and the session was recorded with zeros and a `not_computed` score so no invented audit metrics entered the history. Nothing was analyzed: no directory listed, no artifacts read, no log excerpts quoted.\n\nTo run a real audit, supply `project_name`, `observed_symptom`, `focus_areas`, `analysis_depth`, `audience_level`, and either `project_path` or uploaded `artifacts`."
+    },
+    "errorCode": null,
+    "startedAt": "2026-10-24T06:07:45.896Z",
+    "completedAt": "2026-10-24T06:08:11.593Z",
+    "createdAt": "2026-10-24T06:07:45.878Z"
+  }
+}

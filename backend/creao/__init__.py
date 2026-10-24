@@ -10,6 +10,7 @@ from .client import (
     RunResult,
     hub_agent,
     parse_run,
+    personal_agent,
 )
 
 __all__ = [
@@ -24,4 +25,5 @@ __all__ = [
     "RunResult",
     "hub_agent",
     "parse_run",
+    "personal_agent",
 ]

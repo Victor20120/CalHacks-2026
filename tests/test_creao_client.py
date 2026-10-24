@@ -17,13 +17,18 @@ from backend.creao import (
     CreaoTimeout,
     hub_agent,
     parse_run,
+    personal_agent,
 )
-from backend.creao.client import HUB_REQUIRED_INPUTS, ISSUE_LIST_INSTRUCTIONS
+from backend.creao.client import HUB_REQUIRED_INPUTS, ISSUE_LIST_INSTRUCTIONS, PERSONAL_REQUIRED_INPUTS
 
 FIXTURES = Path(__file__).parent / "fixtures"
 COMPLETED = json.loads((FIXTURES / "creao_hub_run_completed.json").read_text(encoding="utf-8"))
 MISSING_INPUTS = json.loads((FIXTURES / "creao_hub_run_missing_inputs.json").read_text(encoding="utf-8"))
 WITH_ISSUES = json.loads((FIXTURES / "creao_hub_run_with_issue_list.json").read_text(encoding="utf-8"))
+NOT_ANALYZED = json.loads((FIXTURES / "creao_agent2_run_not_analyzed.json").read_text(encoding="utf-8"))
+CONTRACT_PROBE = json.loads((FIXTURES / "creao_personal_agent_contract_probe.json").read_text(encoding="utf-8"))
+PERSONAL_DIAGNOSIS = json.loads((FIXTURES / "creao_personal_agent_diagnosis.json").read_text(encoding="utf-8"))
+PERSONAL_INPUTS = {k: PERSONAL_DIAGNOSIS["request"]["body"]["inputs"][k] for k in PERSONAL_REQUIRED_INPUTS}
 
 GOOD_INPUTS = COMPLETED["request"]["body"]["inputs"]
 FAKE_KEY = "capi_fake_key_for_tests"
@@ -123,6 +128,38 @@ def test_missing_inputs_reply_is_recognised():
     assert "project_path" in result.reply
 
 
+def test_zero_counts_with_no_score_do_not_count_as_an_analysis():
+    # This agent returns a summary even when nothing was analyzed.
+    result = parse_run(NOT_ANALYZED["final_response"])
+
+    assert result.summary["issues_confirmed"] == 0
+    assert result.summary["reproducibility_score"] == "not_computed"
+    assert result.analysis_ran is False
+
+
+def test_a_zero_score_from_a_connection_test_is_not_an_analysis():
+    # Numeric score of 0, but the agent echoes analysis_depth "none".
+    result = parse_run(CONTRACT_PROBE["final_response"])
+
+    assert result.summary["reproducibility_score"] == 0
+    assert result.analysis_ran is False
+
+
+@pytest.mark.parametrize("fixture, ran", [
+    (COMPLETED, True), (WITH_ISSUES, True), (MISSING_INPUTS, False), (NOT_ANALYZED, False), (CONTRACT_PROBE, False),
+    (PERSONAL_DIAGNOSIS, True),
+])
+def test_every_saved_real_run_is_classified_correctly(fixture, ran):
+    assert parse_run(fixture["final_response"]).analysis_ran is ran
+
+
+def test_issues_found_count_as_an_analysis_even_without_a_score():
+    raw = {"id": "r1", "status": "completed",
+           "result": {"text": json.dumps({"issues_confirmed": 1, "reproducibility_score": "n/a"})}}
+
+    assert parse_run(raw).analysis_ran is True
+
+
 def test_non_json_result_text_is_still_readable():
     raw = {"id": "r1", "status": "completed", "result": {"text": "plain words, not JSON"}}
 
@@ -198,6 +235,71 @@ def test_hub_runs_ask_for_the_issue_list(monkeypatch):
     sent = session.calls[0]["json"]["inputs"]
     assert sent["output_format"] == ISSUE_LIST_INSTRUCTIONS
     assert {k: sent[k] for k in GOOD_INPUTS} == GOOD_INPUTS
+
+
+# --- Personal agents -------------------------------------------------------
+
+
+@pytest.fixture
+def personal_client(monkeypatch):
+    monkeypatch.setenv("CREAO_AGENT_1_APP_ID", "app-personal")
+    monkeypatch.setenv("CREAO_AGENT_1_KEY", FAKE_KEY)
+    session = FakeSession(post=[ok(COMPLETED["start_response"])])
+    return CreaoClient(personal_agent("AGENT_1", env_file=None), session=session), session
+
+
+def test_personal_agent_config(personal_client):
+    client, _ = personal_client
+
+    assert client.agent.required_inputs == PERSONAL_REQUIRED_INPUTS
+    assert client.agent.extra_inputs == {"output_format": ISSUE_LIST_INSTRUCTIONS}
+    assert "numerical" in client.agent.input_choices["focus_areas"]
+
+
+def test_real_personal_agent_diagnosis_is_parsed():
+    result = parse_run(PERSONAL_DIAGNOSIS["final_response"])
+    statuses = [i["status"] for i in result.issues]
+
+    assert result.analysis_ran is True
+    assert len(result.issues) == 10
+    assert statuses.count("confirmed") == result.summary["issues_confirmed"] == 7
+    assert statuses.count("suspected") == result.summary["issues_suspected"] == 3
+
+
+def test_several_focus_areas_are_sent_as_comma_separated_text(personal_client):
+    client, session = personal_client
+
+    client.start_run(PERSONAL_INPUTS)
+
+    sent = session.calls[0]["json"]["inputs"]
+    assert sent["focus_areas"] == "numerical, reproducibility"
+    assert sent["analysis_depth"] == "standard"
+    assert sent["output_format"] == ISSUE_LIST_INSTRUCTIONS
+
+
+@pytest.mark.parametrize("name, value, bad", [
+    ("focus_areas", "numerical, vibes", ["vibes"]),
+    ("analysis_depth", "extreme", ["extreme"]),
+])
+def test_values_outside_the_fixed_choices_are_refused_before_sending(personal_client, name, value, bad):
+    client, session = personal_client
+
+    with pytest.raises(CreaoInputError) as err:
+        client.start_run({**PERSONAL_INPUTS, name: value})
+
+    assert err.value.invalid == {name: bad}
+    assert session.calls == []
+
+
+def test_personal_agent_requires_analysis_depth(personal_client):
+    client, session = personal_client
+    inputs = {k: v for k, v in PERSONAL_INPUTS.items() if k != "analysis_depth"}
+
+    with pytest.raises(CreaoInputError) as err:
+        client.start_run(inputs)
+
+    assert err.value.missing == ["analysis_depth"]
+    assert session.calls == []
 
 
 # --- Input checks (nothing sent, no credits spent) -------------------------

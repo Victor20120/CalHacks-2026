@@ -4,6 +4,7 @@
 !.env.example
 
 # Local SQLite databases (private project memory and demo data)
+backend/data/
 *.db
 *.sqlite
 *.sqlite3
