@@ -9,6 +9,12 @@ const CATEGORY_LABELS = {
   code_change: "Code change",
 };
 
+const NOTE_KINDS = {
+  detail: "More detail",
+  guess: "My own guess",
+  correction: "Correction",
+};
+
 // Shared updates grouped by researcher, with private CREAO chat docked at the bottom.
 export default function SuperBrainView({ session, project, projects }) {
   const [findings, setFindings] = useState(null);
@@ -181,6 +187,7 @@ function UpdateItem({ finding, projectName, onOpen, showAuthor }) {
         {showAuthor && `${finding.contributed_by_name} · `}
         {CATEGORY_LABELS[finding.category] || finding.category} · {projectName(finding.project_id)} ·{" "}
         {finding.approved_at.slice(0, 10)} {finding.handed_off && <HandedOffBadge />}
+        {finding.auto_shared && <AgentSharedBadge />}
       </div>
     </li>
   );
@@ -189,6 +196,11 @@ function UpdateItem({ finding, projectName, onOpen, showAuthor }) {
 // From an offboarding handoff: shared by group policy, not approved by its author.
 function HandedOffBadge() {
   return <span className="badge handed-off">handed off at offboarding</span>;
+}
+
+// Shared by the researcher's personal agent from a chat, not approved by the researcher.
+function AgentSharedBadge() {
+  return <span className="badge agent-shared">shared by their agent</span>;
 }
 
 function FindingDetail({ session, id, projectName, onOpen, onBack }) {
@@ -202,6 +214,8 @@ function FindingDetail({ session, id, projectName, onOpen, onBack }) {
       .catch((e) => setError(e.message));
   }, [id]);
 
+  const finding = detail?.finding;
+
   return (
     <div>
       <button className="link" onClick={onBack}>
@@ -214,15 +228,30 @@ function FindingDetail({ session, id, projectName, onOpen, onBack }) {
           <p>
             <VerificationBadge status={detail.finding.verification_status} />{" "}
             {detail.finding.handed_off && <HandedOffBadge />}{" "}
+            {finding.auto_shared && <AgentSharedBadge />}{" "}
             <span className="muted small">
               {CATEGORY_LABELS[detail.finding.category] || detail.finding.category} ·{" "}
-              {projectName(detail.finding.project_id)} · shared by {detail.finding.contributed_by_name} on{" "}
+              {projectName(detail.finding.project_id)} · shared by {detail.finding.contributed_by_name}
+              {finding.auto_shared && "'s agent from a chat"} on{" "}
               {detail.finding.approved_at.slice(0, 10)}
               {detail.finding.edited_before_approval && " · edited before approval"} · CREAO run{" "}
               {detail.finding.source_creao_run_id}
             </span>
           </p>
           <Markdown text={detail.finding.summary} />
+          {finding.agent_guess && (
+            <div className="agent-guess">
+              <span className="label">The agent's own guess · not evidence</span>
+              <p>{finding.agent_guess}</p>
+            </div>
+          )}
+          <Notes
+            session={session}
+            findingId={id}
+            notes={detail.notes || []}
+            autoShared={finding.auto_shared}
+            onAdded={(note) => setDetail({ ...detail, notes: [...(detail.notes || []), note] })}
+          />
           <h3>Linked findings</h3>
           {!detail.related.length && <p className="muted">None that you can see.</p>}
           <ul className="finding-list">
@@ -239,6 +268,92 @@ function FindingDetail({ session, id, projectName, onOpen, onBack }) {
           </ul>
         </section>
       )}
+    </div>
+  );
+}
+
+// What members added later: more detail, their own guess, or a correction.
+// The Super Brain reads these with the finding, so a correction reaches every agent.
+function Notes({ session, findingId, notes, autoShared, onAdded }) {
+  const [kind, setKind] = useState("detail");
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function add(event) {
+    event.preventDefault();
+    if (!text.trim() || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const note = await backend(`/findings/${findingId}/notes`, {
+        method: "POST",
+        token: session.token,
+        body: { kind, text: text.trim() },
+      });
+      onAdded(note);
+      setText("");
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="finding-notes">
+      <h3>Added by the group</h3>
+      {!notes.length && (
+        <p className="muted">
+          Nothing yet.{autoShared && " An agent wrote this from a chat: if it missed something, add it below."}
+        </p>
+      )}
+      <ul className="note-list">
+        {notes.map((n) => (
+          <li key={n.id} className={`note note-${n.kind}`}>
+            <span className="label">{NOTE_KINDS[n.kind] || n.kind}</span>
+            <span className="muted small">
+              {" "}
+              {n.member_name} · {n.created_at.slice(0, 10)}
+            </span>
+            <p>{n.text}</p>
+          </li>
+        ))}
+      </ul>
+      <form className="note-form" onSubmit={add}>
+        <label>
+          Add
+          <select value={kind} onChange={(e) => setKind(e.target.value)} disabled={busy}>
+            {Object.entries(NOTE_KINDS).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          maxLength={2000}
+          rows={3}
+          disabled={busy}
+          aria-label="Your note"
+          placeholder={
+            kind === "guess"
+              ? "What you think is going on, even without proof yet"
+              : kind === "correction"
+                ? "What the finding gets wrong"
+                : "What the finding leaves out: conditions, values, steps"
+          }
+        />
+        <div className="note-actions">
+          <span className="muted small">Everyone in the project sees it, and so does the Super Brain. {text.length}/2000</span>
+          <button className="primary" type="submit" disabled={busy || !text.trim()}>
+            {busy ? "Adding…" : "Add to this finding"}
+          </button>
+        </div>
+        <ErrorNote error={error} />
+      </form>
     </div>
   );
 }

@@ -307,3 +307,150 @@ function useWidth() {
   }, []);
   return [ref, width];
 }
+
+// Several runs of the same measure on one chart: the original in gray, up to three
+// experiments in the categorical colours, one shared legend above the charts.
+// Hovering shows every run's value at that step (one tooltip, every series).
+export function CompareCharts({ lines, limit = 3 }) {
+  const [hoverStep, setHoverStep] = useState(null);
+  const metrics = [...new Set(lines.flatMap((l) => Object.keys(l.series)))].slice(0, limit);
+  if (!metrics.length) return <p className="muted">No step numbers to compare yet.</p>;
+  return (
+    <div className="run-charts">
+      <ul className="legend" aria-label="Legend">
+        {lines.map((l) => (
+          <li key={l.key}>
+            <span className={`legend-key ${l.tone}`} />
+            {l.name}
+          </li>
+        ))}
+      </ul>
+      {metrics.map((metric) => (
+        <MultiLineChart key={metric} metric={metric} lines={lines} hoverStep={hoverStep} onHover={setHoverStep} />
+      ))}
+    </div>
+  );
+}
+
+function MultiLineChart({ metric, lines, hoverStep, onHover }) {
+  const [box, width] = useWidth();
+  const drawn = lines.map((l) => ({ ...l, points: l.series[metric] || [] })).filter((l) => l.points.length);
+  const steps = [...new Set(drawn.flatMap((l) => l.points.map(([s]) => s)))].sort((a, b) => a - b);
+  const finite = drawn.flatMap((l) => l.points.filter(([, v]) => v !== null).map(([, v]) => v));
+
+  let svg = null;
+  let tip = null;
+  let scale = null;
+  if (width > 0 && steps.length) {
+    const plotRight = width - M.right;
+    const plotBottom = HEIGHT - M.bottom;
+    const x0 = steps[0];
+    const x1 = Math.max(x0 + 1, steps[steps.length - 1]);
+    const x = (s) => M.left + ((s - x0) / (x1 - x0)) * (plotRight - M.left);
+    scale = finite.length ? yScale(finite, M.top, plotBottom) : null;
+
+    const paths = drawn.map((l) => {
+      let d = "";
+      let pen = false;
+      for (const [s, v] of l.points) {
+        if (v === null || !scale || (scale.log && v <= 0)) {
+          pen = false;
+          continue;
+        }
+        d += `${pen ? "L" : "M"}${x(s).toFixed(1)},${scale.at(v).toFixed(1)}`;
+        pen = true;
+      }
+      return <path key={l.key} className={`series-line ${l.tone}`} d={d} />;
+    });
+
+    let crosshair = null;
+    if (hoverStep !== null) {
+      const hx = x(hoverStep);
+      const rows = drawn.map((l) => {
+        const near = nearest(l.points, hoverStep);
+        const inRange = near && Math.abs(near[0] - hoverStep) <= (x1 - x0) / 50;
+        return { line: l, value: inRange ? near[1] : undefined };
+      });
+      tip = (
+        <div className="chart-tip line-tip" style={{ left: hx > width - 230 ? hx - 222 : hx + 12, top: M.top }}>
+          <span className="muted">step {hoverStep}</span>
+          {rows.map(({ line, value }) => (
+            <span key={line.key} className="tip-row">
+              <span className={`legend-key ${line.tone}`} />
+              <strong>{value === undefined ? "–" : formatValue(value)}</strong> {line.name}
+            </span>
+          ))}
+        </div>
+      );
+      crosshair = (
+        <g className="crosshair">
+          <line x1={hx} x2={hx} y1={M.top} y2={plotBottom} />
+        </g>
+      );
+    }
+
+    const xTicks = linearTicks(x0, x1, 6).filter((t) => t >= x0 && t <= x1);
+    svg = (
+      <svg width={width} height={HEIGHT} role="img" aria-label={`${metric} by step, ${drawn.length} runs`}>
+        {scale &&
+          scale.ticks.map((t, i) => (
+            <g key={i}>
+              <line className="grid" x1={M.left} x2={plotRight} y1={t.y} y2={t.y} />
+              <text className="tick" x={M.left - 8} y={t.y + 4} textAnchor="end">
+                {t.label}
+              </text>
+            </g>
+          ))}
+        <line className="axis" x1={M.left} x2={plotRight} y1={plotBottom} y2={plotBottom} />
+        {xTicks.map((t) => (
+          <text key={t} className="tick" x={x(t)} y={plotBottom + 17} textAnchor="middle">
+            {t}
+          </text>
+        ))}
+        {paths}
+        {crosshair}
+        <rect
+          className="hit"
+          x={M.left}
+          y={M.top}
+          width={Math.max(0, plotRight - M.left)}
+          height={plotBottom - M.top}
+          onPointerMove={(e) => {
+            const left = e.currentTarget.getBoundingClientRect().left;
+            const step = x0 + ((e.clientX - left) / (plotRight - M.left)) * (x1 - x0);
+            onHover(nearest(steps.map((s) => [s]), step)[0]);
+          }}
+          onPointerLeave={() => onHover(null)}
+        />
+      </svg>
+    );
+  }
+
+  function onKeyDown(event) {
+    if (!steps.length || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) return;
+    event.preventDefault();
+    const index = hoverStep === null ? steps.length - 1 : steps.indexOf(hoverStep);
+    const next = Math.min(steps.length - 1, Math.max(0, index + (event.key === "ArrowRight" ? 1 : -1)));
+    onHover(steps[next]);
+  }
+
+  return (
+    <section className="chart-card">
+      <h4>
+        {metric} <span className="muted small">by step{scale?.log ? " · log scale" : ""}</span>
+      </h4>
+      <div
+        className="chart-box"
+        ref={box}
+        tabIndex={steps.length ? 0 : -1}
+        aria-label={`${metric} by step for ${drawn.length} runs. Left and right arrow keys read them.`}
+        onKeyDown={onKeyDown}
+        onFocus={() => hoverStep === null && steps.length && onHover(steps[steps.length - 1])}
+        onBlur={() => onHover(null)}
+      >
+        {svg}
+        {tip}
+      </div>
+    </section>
+  );
+}

@@ -46,6 +46,7 @@ Dashboard
 ├── Workspace & project picker   (+ demo researcher switcher)
 ├── Diagnosis                    (agent conversation, evidence, proposed fix)
 ├── Runs                         (watched runs, live and earlier, with graphs and alerts)
+├── Experiments                  (changes tried in copies, run on the researcher's click, compared with the original)
 ├── Approvals                    (knowledge contributions, proposed code edits)
 ├── Super Brain                  (shared updates by researcher, "Ask Super Brain" box at the bottom)
 ├── Settings                     (automatic Super Brain search)
@@ -72,20 +73,28 @@ Built so far: researchers get Project, Diagnose, Drafts, Super Brain and Runs; t
 ### 4.3 Runs (the nav item formerly called Alerts)
 - Purpose: watch a simulation live, get its alerts, and open earlier runs again.
 - Flow: the researcher runs the simulation on their computer, picks its log here and clicks **Start watching**; the local connector reads the log and sends the numbers from each step and the alerts; the run shows here live.
-- Shows: (researcher only) a "Watch a run" bar: the log (from granted folders, refreshed every few seconds), **Start watching**, and "Add a folder". Then two columns: on the left the runs in this project, **Live** first, then **Earlier runs** (log name, who for the leader, start time, alert counts); on the right the chosen run: name, Live or Stopped, who, start time, current step, last update; up to 3 line charts, one per measure read from the log (e.g. max|T| and residual) on a shared step axis, with a log scale when values span 1,000x or more and Warning and Critical alerts marked at their step (hover shows the value at that step in every chart); then the run's alerts, newest first, and the numbers as a table.
+- Shows: one sentence on what is watched (the log file the simulation writes; ExpandRG only reads it), then, for researchers, a "How to use it" box (start the simulation writing a log file, pick it and click Start watching, read the graphs and problems), open until the first run exists, and for the leader the same Warning / Critical guide on its own. (Researcher only) a "Log file to watch" bar: the log (from granted folders, refreshed every few seconds), **Start watching**, and "Add a folder". Then two columns: on the left the runs in this project, **Being watched now** first, then **Finished** (log name, who for the leader, start time, problem counts or "No problems found"); on the right the chosen run: name, Watching now or Finished, whose simulation, when watching started, the step reached, the last new line; the two latest problems found (or "No problems found so far"); up to 3 line charts, one per measure read from the log (e.g. max|T| and residual) on a shared step axis, with a log scale when values span 1,000x or more and Warning and Critical alerts marked at their step (hover shows the value at that step in every chart); then the run's alerts, newest first, and the numbers as a table.
 - Actions: **Stop watching** (a live run watched on this computer); **Replay** (an earlier run: the graphs and alerts play back step by step in about 8 seconds).
 - Rules: ExpandRG only reads the log and never pauses or stops a simulation. The log file never leaves the researcher's computer, only the numbers and alerts. A run is seen by the researcher and the group leader, never by other researchers. The Runs tab shows a count of Critical alerts in runs being watched right now.
+
+### 4.3b Experiments (researchers)
+- Purpose: try a change in a copy of the project and compare it with the original run, without touching the project.
+- Shows: the project folder, then the run manifest's entry point, "Compare with" (a log in the project, e.g. `run.log`), and up to three experiments as rows of parameter values (values that differ from the config are highlighted). Below, one card per comparison: each experiment with its status (prepared, queued, running, finished, failed, stopped) and time limit; one line chart per measure with the original in gray and the experiments in blue, orange and green, a shared legend and a hover readout of every run at that step; and a table with each run's result, last step, final values and first Warning and Critical steps.
+- Actions: **Prepare** (copies only), **Run**, **Run all** (one at a time, up to the sum of their time limits), **Stop**, **Delete**.
+- Rules: nothing runs without a click. Runs happen in copies under `~/.expandrg/experiments/`, limited in time, memory and output, with keys and tokens removed from their environment. Only commands in the project's `expandrg.json` run, and only its listed config keys can change. Experiments stay on the researcher's computer.
 
 ### 4.4 Approvals
 - Purpose: _TODO_
 - Shows: the agent's editable draft (research result, code bug / new implementation, or error diagnosis)
 - Actions: approve, edit, reject
-- Rules: nothing reaches the Super Brain without approval.
+- Rules: no diagnosis reaches the Super Brain without approval. (What a personal agent establishes in chat it shares itself, as a hypothesis: see 4.5.)
 
 ### 4.5 Super Brain
 - Purpose: one place to see what the group has shared, and to ask it for more detail.
 - Shows, top to bottom, for the project chosen in the top bar: four counts (updates shared, researchers sharing, verified, still hypotheses), a bar chart of updates shared per researcher (hover or focus a bar for the status breakdown, latest date and projects; click it to jump to that researcher), then each researcher's updates, newest first: title, verification tag, the issue (the summary's "Symptom" line), category, project and date.
-- Actions: open an update for the full finding and its links; ask a question in the "Ask Super Brain" box docked at the bottom of the page. Answers stack just above the box, newest at the bottom, from the chosen project.
+- Updates a personal agent shared from chat carry a "shared by their agent" tag. Their page shows "shared by <name>'s agent from a chat" and, apart from the evidence, "The agent's own guess · not evidence".
+- Every update's page has "Added by the group": the notes members added, each labelled More detail, My own guess or Correction, with who and when. Below it, a form to add one (choose the kind, write up to 2,000 characters, **Add to this finding**). When the agent missed something, the empty list says so and points to the form.
+- Actions: open an update for the full finding, its links and notes; add a note; ask a question in the "Ask Super Brain" box docked at the bottom of the page. Answers stack just above the box, newest at the bottom, from the chosen project.
 - Rules: results respect project access; hypotheses never look like verified facts. The chart uses one colour and square bar ends; every number in it is also written in the researcher sections, so the tooltip is never the only way to read it.
 
 ### 4.6 Settings

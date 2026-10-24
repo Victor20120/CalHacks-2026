@@ -18,6 +18,7 @@ from backend.workspaces.store import projects_for_member
 EPISODE_KINDS = ("incident", "debugging_attempt", "test", "diagnosis", "note")
 EPISODE_STATUSES = ("open", "hypothesis", "confirmed", "resolved", "unresolved")
 DRAFT_FIELDS = ("category", "title", "summary", "verification_status")
+CHAT_SETTINGS = {"project": "agent_chat", "all": "agent_chat_all", "personal": "personal_agent_chat"}
 
 
 def _now() -> str:
@@ -160,7 +161,7 @@ class PrivateMemory:
         self._set_project_setting(project_id, "agent_rules", rules)
 
     def chat_history(self, project_id: str, scope: str = "project") -> list[dict]:
-        name = "agent_chat" if scope == "project" else "agent_chat_all"
+        name = CHAT_SETTINGS[scope]
         return json.loads(self._project_setting(project_id, name, "[]"))
 
     def save_chat_exchange(self, project_id: str, question: str, result: dict, scope: str = "project") -> dict:
@@ -168,7 +169,7 @@ class PrivateMemory:
         self._check(project_id)
         with closing(self.db.private(self.member_id)) as conn:
             conn.execute("BEGIN IMMEDIATE")
-            name = "agent_chat" if scope == "project" else "agent_chat_all"
+            name = CHAT_SETTINGS[scope]
             key = f"{name}:{project_id}"
             row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
             history = json.loads(row["value"]) if row else []
@@ -181,7 +182,7 @@ class PrivateMemory:
         return exchange
 
     def clear_chat(self, project_id: str, scope: str = "project") -> None:
-        self._set_project_setting(project_id, "agent_chat" if scope == "project" else "agent_chat_all", "[]")
+        self._set_project_setting(project_id, CHAT_SETTINGS[scope], "[]")
 
     def _project_setting(self, project_id: str, name: str, default: str) -> str:
         self._check(project_id)

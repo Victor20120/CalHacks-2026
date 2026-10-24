@@ -21,6 +21,9 @@
   --verified-bg: #e2f3e7;
   --series-1: #2a78d6; /* chart bars and lines; checked for contrast on --surface */
   --grid: #e6e9ee; /* chart gridlines: one step off the surface */
+  --series-2: #eb6834; /* comparison lines, slots 2 and 3 (validated all-pairs) */
+  --series-3: #1baf7a;
+  --baseline: #8b95a3; /* the original run: de-emphasis gray */
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   color: var(--text);
   background: var(--bg);
@@ -47,6 +50,9 @@
     --verified-bg: #153021;
     --series-1: #3987e5;
     --grid: #262c35;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --baseline: #77818f;
   }
 }
 
@@ -516,6 +522,64 @@ input.range {
 .handed-off {
   border: 1px dashed var(--warning);
   color: var(--warning);
+}
+
+.agent-shared {
+  border: 1px dashed var(--accent);
+  color: var(--accent);
+}
+
+/* --- A finding's agent guess and the notes members add to it --- */
+
+.agent-guess {
+  border-left: 3px solid var(--border);
+  padding: 4px 12px;
+  margin: 12px 0;
+}
+
+.agent-guess p {
+  margin: 4px 0 0;
+  font-style: italic;
+}
+
+.note-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 12px;
+}
+
+.note {
+  border-top: 1px solid var(--border);
+  padding: 8px 0;
+}
+
+.note p {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+}
+
+.note-correction .label {
+  color: var(--warning);
+}
+
+.note-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.note-form label {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.note-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .success-text {
@@ -1023,6 +1087,68 @@ tr.not-found code {
   min-width: 240px;
 }
 
+.lead {
+  line-height: 1.5;
+  max-width: 820px;
+}
+
+.howto {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 10px 16px;
+  margin: 12px 0;
+}
+
+.howto summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.howto ol {
+  margin: 10px 0 6px;
+  padding-left: 22px;
+  line-height: 1.6;
+}
+
+.howto code {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+.severity-guide {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 24px;
+  margin: 8px 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.severity-guide .badge {
+  margin-right: 4px;
+}
+
+.run-actions button {
+  white-space: nowrap;
+}
+
+.strip-title {
+  margin: 0 0 6px;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.no-problems {
+  margin: 0 0 12px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--verified);
+  font-size: 0.9rem;
+}
+
 .latest-alerts {
   list-style: none;
   margin: 0 0 12px;
@@ -1190,4 +1316,103 @@ tr.not-found code {
 
 .line-tip {
   max-width: 210px;
+}
+
+/* --- Experiments: comparisons of a copy against the original run --- */
+
+.new-comparison .folder-row {
+  margin: 12px 0 6px;
+}
+
+.variants input {
+  width: 100%;
+  min-width: 70px;
+  padding: 4px 6px;
+}
+
+.variants input.changed {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.experiments-table td {
+  vertical-align: middle;
+}
+
+.tag.status-running,
+.tag.status-queued {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.experiments-table .row-action button + button {
+  margin-left: 12px;
+}
+
+.tag.status-failed,
+.tag.status-stopped {
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  font-size: 0.85rem;
+}
+
+.legend li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-key {
+  display: inline-block;
+  width: 16px;
+  height: 3px;
+  vertical-align: middle;
+  background: var(--series-1);
+}
+
+.legend-key.line-baseline {
+  background: var(--baseline);
+}
+
+.legend-key.line-2 {
+  background: var(--series-2);
+}
+
+.legend-key.line-3 {
+  background: var(--series-3);
+}
+
+.chart-box .series-line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  stroke: var(--series-1);
+}
+
+.chart-box .series-line.line-baseline {
+  stroke: var(--baseline);
+}
+
+.chart-box .series-line.line-2 {
+  stroke: var(--series-2);
+}
+
+.chart-box .series-line.line-3 {
+  stroke: var(--series-3);
+}
+
+.tip-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }

@@ -22,25 +22,30 @@ export default function RunsView({ session, project }) {
   return (
     <div className="view">
       <h2>Runs</h2>
-      <p className="muted">
+      <p className="lead">
         {isLeader
-          ? `Your researchers' simulation runs in ${project.name}: live while they are being watched, and every earlier run.`
-          : "Watch a simulation's log: it shows here live with its alerts, and earlier runs stay here to open again. Your group leader sees your runs too."}{" "}
-        ExpandRG only reads the log. It never stops a simulation.
+          ? `Your researchers' simulations in ${project.name}. Each run is the log file a researcher's computer is watching: `
+          : "ExpandRG watches the log file your simulation writes while it runs: "}
+        it plots the numbers in it and points out problems. It only reads the file; it never pauses or stops a simulation.
       </p>
+      {isLeader ? (
+        <SeverityGuide />
+      ) : (
+        <HowTo open={runs.list !== null && list.length === 0} />
+      )}
       {!isLeader && <WatchBar session={session} project={project} onStarted={setSelectedId} />}
       <ErrorNote error={runs.error} />
 
       <div className="runs-layout">
         <nav className="run-list" aria-label="Runs">
-          <h4>Live</h4>
-          {!list.some((r) => r.watching) && <p className="muted small">Nothing is being watched right now.</p>}
+          <h4>Being watched now</h4>
+          {!list.some((r) => r.watching) && <p className="muted small">No log file is being watched right now.</p>}
           {list
             .filter((r) => r.watching)
             .map((r) => (
               <RunItem key={r.id} run={r} selected={r.id === selected?.id} onSelect={setSelectedId} showWho={isLeader} />
             ))}
-          <h4>Earlier runs</h4>
+          <h4>Finished</h4>
           {!list.some((r) => !r.watching) && <p className="muted small">None yet.</p>}
           {list
             .filter((r) => !r.watching)
@@ -62,8 +67,8 @@ export default function RunsView({ session, project }) {
               {runs.list === null
                 ? "Loading…"
                 : isLeader
-                  ? "No runs in this project yet."
-                  : "No runs yet. Pick a log above and click Start watching."}
+                  ? "No runs in this project yet. A run appears here when a researcher starts watching a log file."
+                  : "No runs yet. Follow the three steps above."}
             </p>
           </section>
         )}
@@ -80,13 +85,51 @@ function RunItem({ run, selected, onSelect, showWho }) {
         {showWho && `${run.member_name} · `}
         {stamp(run.started_at)}
       </span>
-      {(run.critical > 0 || run.warning > 0) && (
+      {run.critical > 0 || run.warning > 0 ? (
         <span className="alert-counts">
           {run.critical > 0 && <span className="badge severity-critical">{run.critical} critical</span>}
           {run.warning > 0 && <span className="badge severity-warning">{run.warning} warning</span>}
         </span>
+      ) : (
+        <span className="small muted">No problems found</span>
       )}
     </button>
+  );
+}
+
+// What the page is for and how to use it, open until the first run exists.
+function HowTo({ open }) {
+  return (
+    <details className="howto" open={open}>
+      <summary>How to use it</summary>
+      <ol>
+        <li>
+          Start your simulation as usual, sending its output to a log file, for example
+          <code>python heat2d.py config.json &gt; live.log</code>
+        </li>
+        <li>
+          Below, pick that log file and click <strong>Start watching</strong>.
+        </li>
+        <li>
+          Its numbers (lines like <code>step 200  max|T| = 2.75e+14</code>) appear as graphs while it runs, and any problems
+          are listed at the top of the run. Your group leader sees your runs too.
+        </li>
+      </ol>
+      <SeverityGuide />
+    </details>
+  );
+}
+
+function SeverityGuide() {
+  return (
+    <div className="severity-guide">
+      <span>
+        <SeverityBadge severity="warning" /> something looks off: a value suddenly jumped, or the residual keeps rising
+      </span>
+      <span>
+        <SeverityBadge severity="critical" /> the run is failing: NaN or Inf, values too large to be real, or an error line
+      </span>
+    </div>
   );
 }
 
@@ -135,12 +178,12 @@ function RunViewer({ session, run, watch }) {
         <div>
           <h3>
             <code>{run.run_label}</code>{" "}
-            {run.watching ? <span className="tag live">Live</span> : <span className="tag">Stopped</span>}
+            {run.watching ? <span className="tag live">Watching now</span> : <span className="tag">Finished</span>}
           </h3>
           <p className="muted small">
-            {run.member_name} · started {stamp(run.started_at)} ·{" "}
-            {replayStep !== null ? `replaying, step ${replayStep} of ${lastStep}` : `step ${lastStep}`} · last update{" "}
-            {stamp(run.updated_at).slice(11)}
+            The log file {run.member_name}'s simulation writes · watching since {stamp(run.started_at)} ·{" "}
+            {replayStep !== null ? `replaying, step ${replayStep} of ${lastStep}` : `reached step ${lastStep}`} · last
+            new line {stamp(run.updated_at).slice(11)}
           </p>
         </div>
         <div className="run-actions">
@@ -158,8 +201,14 @@ function RunViewer({ session, run, watch }) {
       {detail && !detail.metrics.length && (
         <p className="muted">
           {run.watching
-            ? "Waiting for the first step numbers from the log…"
-            : "This log had no step numbers to plot (lines like: step 200  max|T| = 2.75e+14)."}
+            ? "Waiting for the simulation to write its first step line (like: step 200  max|T| = 2.75e+14)…"
+            : "This log file had no step lines to plot (lines like: step 200  max|T| = 2.75e+14)."}
+        </p>
+      )}
+      {detail && detail.metrics.length > 0 && (
+        <p className="muted small">
+          Each graph is one number the simulation writes at every step. A vertical line marks the step where a problem was
+          found.
         </p>
       )}
       {detail && detail.metrics.length > 0 && <RunCharts run={shown} full={detail} limit={GRAPHS} />}
@@ -171,8 +220,8 @@ function RunViewer({ session, run, watch }) {
 
       {shown && (
         <>
-          <h4>All alerts</h4>
-          {!shown.alerts.length && <p className="muted small">No alerts{replayStep !== null ? " yet" : ""}.</p>}
+          <h4>All problems found</h4>
+          {!shown.alerts.length && <p className="muted small">No problems found{replayStep !== null ? " yet" : ""}.</p>}
           <table className="alert-table">
             <tbody>
               {[...shown.alerts].reverse().map((a) => (
@@ -202,17 +251,20 @@ function RunViewer({ session, run, watch }) {
 // The newest Warning and Critical alerts, right under the run's header, so they're seen without scrolling.
 function LatestAlerts({ alerts }) {
   const latest = alerts.filter((a) => a.severity !== "informational").slice(-2).reverse();
-  if (!latest.length) return null;
+  if (!latest.length) return <p className="no-problems">No problems found so far.</p>;
   return (
-    <ul className="latest-alerts" aria-label="Latest alerts">
-      {latest.map((a) => (
-        <li key={a.id} className={`severity-border-${a.severity}`}>
-          <SeverityBadge severity={a.severity} />
-          {a.step !== null && <span className="num">step {a.step}</span>}
-          <span>{a.message}</span>
-        </li>
-      ))}
-    </ul>
+    <>
+      <p className="strip-title">Latest problems found</p>
+      <ul className="latest-alerts" aria-label="Latest problems found">
+        {latest.map((a) => (
+          <li key={a.id} className={`severity-border-${a.severity}`}>
+            <SeverityBadge severity={a.severity} />
+            {a.step !== null && <span className="num">step {a.step}</span>}
+            <span>{a.message}</span>
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }
 
@@ -277,7 +329,7 @@ function WatchBar({ session, project, onStarted }) {
   return (
     <section className="watch-bar">
       <div className="watch-row">
-        <span className="label">Watch a run</span>
+        <span className="label">Log file to watch</span>
         <select value={choice} onChange={(e) => setChoice(e.target.value)} aria-label="Log file">
           {!logs.length && <option value="">No log files in your folders yet</option>}
           {logs.map((l) => (

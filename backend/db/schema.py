@@ -29,6 +29,8 @@ SHARED_TABLES = (
     "simulation_runs",
     "run_points",
     "run_alerts",
+    "auto_shares",
+    "finding_notes",
 )
 PRIVATE_TABLES = ("runs", "private_episodes", "share_drafts", "settings", "alerts", "project_context")
 
@@ -129,6 +131,26 @@ CREATE TABLE IF NOT EXISTS handoff_records (
     finding_id  TEXT NOT NULL UNIQUE REFERENCES shared_findings(id),
     source      TEXT NOT NULL CHECK (source IN ('episode', 'draft')),
     PRIMARY KEY (handoff_id, finding_id)
+);
+
+-- Findings a researcher's personal agent shared by itself from a chat (the group's
+-- choice, 2026-10-24): not approved one by one, always a hypothesis, marked as such.
+-- agent_guess keeps the agent's own interpretation apart from what was established.
+CREATE TABLE IF NOT EXISTS auto_shares (
+    finding_id   TEXT PRIMARY KEY REFERENCES shared_findings(id),
+    source       TEXT NOT NULL CHECK (source IN ('chat')),
+    agent_guess  TEXT NOT NULL DEFAULT '',
+    created_at   TEXT NOT NULL
+);
+
+-- More detail, a member's own guess, or a correction added to a shared finding.
+CREATE TABLE IF NOT EXISTS finding_notes (
+    id          TEXT PRIMARY KEY,
+    finding_id  TEXT NOT NULL REFERENCES shared_findings(id),
+    member_id   TEXT NOT NULL REFERENCES members(id),
+    kind        TEXT NOT NULL CHECK (kind IN ('detail', 'guess', 'correction')),
+    text        TEXT NOT NULL,
+    created_at  TEXT NOT NULL
 );
 
 -- Runs watched on a researcher's computer, seen by them and the group leader.

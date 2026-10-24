@@ -4,7 +4,115 @@ One entry per commit, newest first. Each commit adds its own entry with the hash
 
 ---
 
-## 2026-10-24 · `pending` · Runs page, Super Brain page with CREAO chat, and project-map fixes
+## 2026-10-24 · `pending` · Agent runtime Phase 1, the VS Code extension with personal agent chat, and chat sharing to the Super Brain
+
+**Why:** Personal agents should be able to investigate problems on their own, but they must never start a run. The design for that is in `Documents/agent-runtime-design.md`. Phase 1 builds its base without any AI: a researcher tries a change in a copy of the project, runs it with a click, and compares it with the original run. Researchers' code lives in VS Code, so their agent should be there too: watching runs and talking with them, and passing what matters to the web dashboard and the Super Brain. The Runs page also had to become clear ("I don't know what I'm looking at").
+
+**Design**
+- Added `Documents/agent-runtime-design.md`: the local agent runtime design. It covers the principles, the architecture, the six decisions, the investigation flow, the experiment environment, checks and labels, privacy, CREAO usage, the Super Brain and the leader, the VS Code extension, the risks and the build order.
+  - Agents never start a run; every run waits for **Run**.
+  - CREAO only reasons; everything runs locally.
+  - Changed later the same day: what a personal agent establishes in chat it shares itself, as a hypothesis (principle 6, decision 5).
+
+**Experiments (Phase 1)**
+- Run manifest (`expandrg.json` in the project folder, `local_connector/experiments/manifest.py`): the commands experiments may run (`{python}` is ExpandRG's Python), the JSON config keys they may change, and per-run time, memory and output limits (capped). Bad manifests are explained. The sample projects have one.
+- Experiment copies (`local_connector/experiments/workspace.py`):
+  - the project is copied under `~/.expandrg/experiments/<id>/`, without `.git`, `.env`, keys or tool folders, and copies over 500 MB are refused;
+  - only the manifest's config keys can change, and only to values of the same type.
+
+  The project folder is only ever read.
+- Process sandbox (`local_connector/experiments/sandbox.py`):
+  - time, memory and output limits, and a stop button;
+  - on Windows a Job Object caps memory, and stopping a run ends everything it started; elsewhere, resource limits and a process group;
+  - keys and tokens are removed from the run's environment.
+- Experiment manager (`local_connector/experiments/manager.py`):
+  - **Prepare** makes the copy and runs nothing;
+  - **Run** / **Run all** queue experiments, which run one at a time;
+  - **Stop** cancels a queued or running one;
+  - results are summarized from the log with the existing parsers (numbers per step, alerts, last step);
+  - experiments left running when the connector stopped are marked stopped.
+- Connector endpoints: `POST /manifest`, `POST /experiments`, `GET /experiments`, `GET /experiments/{id}` (with the baseline log's summary), `POST /experiments/run`, `POST /experiments/{id}/stop`, `DELETE /experiments/{id}`.
+- Dashboard **Experiments** page (researchers):
+  - a new comparison: the folder, "Compare with" (a log), and up to three experiments as parameter rows;
+  - one card per comparison with **Run**, **Run all** (showing the total time limit), **Stop** and **Delete**;
+  - comparison charts: the original in gray, experiments in blue, orange and green (validated all-pairs; the light green's sub-3:1 contrast is covered by the legend and the table), a shared legend, and a hover readout of every run at a step;
+  - a table with each run's result and alerts, last step, final values and first Warning and Critical steps.
+
+**Runs page, in plain words**
+- One sentence on what it watches: the log file the simulation writes, which ExpandRG only reads.
+- A "How to use it" box with the three steps and an example command, open until the first run exists.
+- A guide to what Warning and Critical mean (shown to the leader too).
+- Plain labels: "Log file to watch", "Being watched now" / "Finished", "Watching now", "Latest problems found", "No problems found so far"; one line explaining the graphs.
+
+**Streamed runs**
+- `local_connector/simulation_monitor/stream.py`: the connector accepts a run's output line by line, from a VS Code terminal, instead of only a log file. It applies the same checks and reporting, and a non-zero exit code is a Critical problem (`exit_code`).
+  - The command line becomes the run's name, with secrets blanked.
+  - Only granted folders can stream.
+  - Endpoints: `POST /streams`, `POST /streams/{id}/lines`, `POST /streams/{id}/end`, `GET /streams`.
+
+**VS Code extension (`vscode-extension/`, TypeScript, 0.2.0 to 0.7.4)**
+- Status bar showing what is watched and its Critical problems (red when there are any), which opens the dashboard. Commands to watch a log file (asking once to allow the folder), stop watching, choose the project and open the dashboard.
+- Runs started in the VS Code terminal (`src/runs.ts`), as decided in the design:
+  - a command running an `expandrg.json` entry point is watched automatically;
+  - other commands that look like runs (`python`, `./program`, `mpirun`, `julia`, `Rscript`) ask "Watch this run?";
+  - everything else is ignored, and its output is never read;
+  - output going to a file (`> live.log`, `| tee`) is watched through that file; otherwise the terminal's output is streamed line by line, with colour codes removed;
+  - typed `cd X; python ...` and `cd X && ./solver` count as the run in folder X;
+  - pop-ups for the first Warning and Critical, and at the end (with the exit code of a failed run), each with **Open dashboard**;
+  - the folder permission covers subfolders of an allowed folder; setting `expandrg.watchTerminalRuns`.
+- After the first real try in VS Code (command reporting was turned off in the user settings, `run_demo.py` in a VS Code terminal stopped when the window reloaded, and lines pasted with a trailing `` ` `` joined into one broken command):
+  - **▶ Run a simulation** (bottom-bar button and command): the researcher picks an `expandrg.json` entry point and the extension starts the process itself, in the project folder (`{python}` becomes `expandrg.pythonPath`, unbuffered). Its output shows in a terminal named "ExpandRG: <name>" while it's watched, whatever the terminal settings; closing that terminal stops the run. The researcher starts the run, so the no-automatic-runs rule holds.
+  - ExpandRG starts in the background (`run_demo.py --no-browser`, detached) when `expandrg.connectorFolder` is set and it isn't running, so reloading or closing VS Code doesn't stop it. When it isn't running, a warning offers **Start ExpandRG**, and a pop-up says when it's connected.
+  - The **ExpandRG** output panel logs what the extension saw: start-up, whether ExpandRG is reachable, each terminal command (watched, ignored or asked about, and why) and each run's result.
+  - Fixed: the last lines of a run could be lost when it ended while a batch was still being sent.
+- Personal agent chat beside the code (0.7.0 to 0.7.4), named **ExpandRG AI**, with a visible **Powered by CREAO** note:
+  - **My agent** and **Talk to my personal agent** open private chat; each researcher uses their own CREAO agent and its saved model;
+  - **Understand project** reads a granted folder locally and shows the exact project-map payload; **Send to my agent** explicitly starts the overview workflow, saved for later conversations; **Discuss simulation setup** prepares a question on compilers, build systems, libraries, parameters and output, and sending stays explicit;
+  - the panel shows the assigned **Agent 1**, **Agent 2** in its tab, header, welcome and reply labels;
+  - its own slate-and-teal style, sans-serif type and a text wordmark; instructions behind a settings button; project previews open the context panel, and Escape closes it;
+  - private state resets when the member, project or backend changes, late replies from an old identity are ignored, and pending replies reconnect; text is rendered as plain text under a nonce-based content policy, and tokens stay in the extension host;
+  - a missing personal-chat route explains that ExpandRG must be restarted (it was an older backend still running).
+- `vscode-extension/README.md`: what you see (with a sketch), commands, workspace settings, install and "If nothing happens".
+- `run_demo.py --no-browser` starts everything without opening dashboard windows (the extension uses it).
+
+**Personal agent chat (backend)**
+- `POST /personal-agent/chat`, `GET` / `DELETE /projects/{id}/personal-chat`: private history, separate from Super Brain conversations. Context is the saved project overview, recent conversation, the researcher's instructions and the project's shared findings. Leaders have no personal agent and are refused; one reply per researcher and project at a time.
+- Agents are numbered by registration/activation order in the workspace (`/me` returns the identity), independent of CREAO credential names; retired agents keep their place. Each request names the agent and asks for a short introduction in a new conversation.
+- Replies answer the question directly, in short paragraphs for simple questions. A narrow filter removes a leaked opening sentence about reading internal skill files (including "the agent's skill and manifest"), and keeps explanations about skills, quotes and statements about missing access. "Be conversational and answer directly" saves through the rules workflow.
+
+**Personal agents share chat findings; members add detail and guesses**
+- Checked first: neither chat could pass anything to the Super Brain (0 drafts and 0 findings before and after a chat). The group chose that each personal agent shares what it establishes in chat itself, while anyone can add more detail or their own guess when the agent didn't cover it well enough.
+- The personal agent ends each reply with a share block (title, summary, category, evidence, its own guess), or `null` for greetings and general answers. The app removes the block, publishes a usable one at once as a **hypothesis** in that project, and adds a plain line to the reply naming what was shared. An agent can't mark its share verified. The same title from the same researcher isn't shared twice, secrets are blanked, and a researcher removed mid-reply keeps the reply but shares nothing. Diagnoses still need approval.
+- New shared tables `auto_shares` (which findings an agent shared, and its guess) and `finding_notes` (detail, guesses and corrections), created on start; existing databases keep working. `POST /findings/{id}/notes` adds a note to a finding you can read; `GET /findings/{id}` returns the notes. Findings carry `auto_shared` and `agent_guess`.
+- The Super Brain and every personal agent receive each finding's notes and the agent's guess, marked as shared by an agent, so corrections reach their next answers.
+- Dashboard Super Brain: a "shared by their agent" tag, "The agent's own guess · not evidence", and "Added by the group" with the notes and a form (More detail / My own guess / Correction).
+
+**Docs and tests**
+- Updated `README.md`, `backend/README.md` ("Sharing from chat", personal chat, endpoints, tables), `Documents/dashboard-design.md`, `Documents/demo-script.md` and the connector's description.
+- `tests/test_definition_of_done.py`: the connector may now write its experiment copies and logs under `~/.expandrg/experiments`, besides its grants file. The project folder staying unchanged is checked directly in the new tests.
+
+**Checks**
+- `python -m pytest`: 356 passed, 1 skipped (symlink test on Windows). `npm run build` succeeds. `npm test` in `vscode-extension/`: compiles, 19 tests pass.
+- New tests:
+  - `tests/test_experiments.py` (24): manifest checks; copies leaving out secrets and tool folders, with the project byte-for-byte unchanged after preparing and after running; preparing never running anything; the time, output and memory limits and the stop button (including a process the run started); no keys or tokens in the run's environment; a real heat-solver experiment; Run all one at a time; restart recovery; the service end to end.
+  - `tests/test_streams.py` (5): streamed lines get the same checks as a log file; a failing exit code is Critical and ends the run; a terminal run reaches the researcher and the leader but not other researchers, with a secret in the command blanked; only granted folders can stream.
+  - `tests/test_personal_chat.py`: identity, privacy from other members and hub chat, rules in chat, pending replies, failures, redaction, and the skill-preamble filter.
+  - `tests/test_chat_sharing.py` (15): a share block becomes a hypothesis finding without a draft; unusable blocks share nothing; no forced "verified"; no duplicate titles; secrets blanked; shares stay in their project; notes and who may add them; the Super Brain and other agents see the guess and the notes.
+- The extension, with a stand-in for VS Code against a real connector and backend:
+  - terminal runs: the `expandrg.json` command was watched automatically (Warning and Critical pop-ups, "ended with exit code 1"; on the dashboard to step 2223); another run asked first; `git status` was ignored and its output never read; `> live.log` was watched through the file;
+  - **Run a simulation**, three times after the fix: the terminal showed the solver's output, the pop-ups appeared, and each run reached the dashboard to step 2223 with 6 Critical problems.
+- Installed in the user's VS Code from the `.vsix` (now 0.7.4). The extension's own log confirmed it started, connected, and could not see typed commands while command reporting was off.
+- Experiments end to end on scratch data, as Researcher A on test ports: dt = 0.02, 0.025 and 0.028 stayed "prepared" until **Run all**, then ran one at a time. 0.02 and 0.025 stayed stable for 3000 steps; 0.028 diverged (Critical at step 1300); the original blew up at step 2223. The project folder was unchanged. Charts, legend, hover and table were checked in light and dark.
+- The Runs page as a new researcher sees it, on fresh scratch data, following the three steps with the real solver; the leader's view too.
+- Real Agent 1 runs:
+  - personal chat request: 32.1 s, saved to private history;
+  - two conversational replies without skill-file preambles or report headings;
+  - on a scratch database: a greeting shared nothing (28 s); a dt-bracket result was shared at once as a hypothesis with the agent's guess kept apart, and Researcher B saw it (38 s).
+- Secret scan: no API key or app ID in the commit.
+
+---
+
+## 2026-10-24 · `c9bf423` · Runs page, Super Brain page with CREAO chat, and project-map fixes
 
 **Why:** The dashboard was too complicated. The leader needs one clear page of what each researcher has shared, and a way to ask the group's knowledge for more detail. Simulations should be watched live on the dashboard, with their alerts, and old runs opened again later. The first real-project test of the project overview (build plan step 8) also showed three gaps in the project map.
 

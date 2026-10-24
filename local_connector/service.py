@@ -2,8 +2,10 @@
 
 A browser can't read local files, so the dashboard asks this service, which runs
 on the researcher's computer, to list granted folders and their files, extract
-evidence, and watch run logs. It enforces the same folder grants and evidence
-rules as the command line, and it never starts, pauses or stops a simulation.
+evidence, watch run logs and run experiments. It enforces the same folder grants
+and evidence rules as the command line. It never starts, pauses or stops the
+researcher's own simulations; experiments run only in copies, and only when the
+researcher clicks Run.
 
     python -m local_connector serve        (listens on 127.0.0.1:8001)
 """
@@ -12,6 +14,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 import uuid
 from typing import Any, Callable
 
@@ -19,12 +22,16 @@ import requests
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from backend.orchestration.evidence_policy import MAX_ITEMS
+from backend.orchestration.evidence_policy import MAX_ITEMS, redact_secrets
 from local_connector.evidence.extract import extract_evidence, file_kind
 from local_connector.evidence.project_map import build_project_map
+from local_connector.experiments.manager import ExperimentManager, ExperimentNotFound, summarize
+from local_connector.experiments.manifest import ManifestError
+from local_connector.experiments.workspace import ExperimentRefused, read_parameters
 from local_connector.file_access.grants import AccessDenied, Grant, GrantRegistry
 from local_connector.file_access.walk import iter_project_files
 from local_connector.simulation_monitor.checks import Alert, Sample
+from local_connector.simulation_monitor.stream import StreamWatch
 from local_connector.simulation_monitor.watcher import LogWatcher
 
 log = logging.getLogger(__name__)
@@ -34,6 +41,7 @@ MAX_LISTED_FILES = 500
 MAX_REPORT_POINTS = 2_000  # per request to the backend
 MAX_REPORT_ALERTS = 50
 MAX_PENDING_POINTS = 5_000  # waiting while the backend can't be reached; the oldest go first
+MAX_KEPT_STREAMS = 50  # finished streamed runs listed; older ones are forgotten (the backend keeps them)
 
 
 class RootIn(BaseModel):
@@ -50,6 +58,36 @@ class WatchIn(BaseModel):
     file: str = Field(min_length=1, max_length=500)
     project_id: str = Field(min_length=1, max_length=64)
     member_id: str = Field(min_length=1, max_length=64)
+
+
+class StreamIn(BaseModel):
+    root: str = Field(min_length=1, max_length=1000)  # the VS Code workspace folder; must be granted
+    project_id: str = Field(min_length=1, max_length=64)
+    member_id: str = Field(min_length=1, max_length=64)
+    command: str = Field(min_length=1, max_length=1000)  # what was run; becomes the run's name
+
+
+class LinesIn(BaseModel):
+    lines: list[str] = Field(max_length=5000)
+
+
+class EndIn(BaseModel):
+    exit_code: int | None = None
+
+
+class ExperimentIn(BaseModel):
+    root: str = Field(min_length=1, max_length=1000)
+    project_id: str = Field(min_length=1, max_length=64)
+    member_id: str = Field(min_length=1, max_length=64)
+    entry: str = Field(min_length=1, max_length=40)
+    changes: dict[str, bool | int | float | str] = Field(default_factory=dict, max_length=20)
+    set_id: str | None = Field(default=None, max_length=40)
+    baseline: str | None = Field(default=None, max_length=500)  # a log in the project to compare with
+    label: str = Field(default="", max_length=120)
+
+
+class RunExperimentsIn(BaseModel):
+    ids: list[str] = Field(min_length=1, max_length=20)
 
 
 class BackendPoster:
@@ -142,6 +180,7 @@ def create_service(
     backend_url: str | None = None,
     http: Any = None,
     watcher_factory: Callable[..., LogWatcher] = LogWatcher,
+    experiments: ExperimentManager | None = None,
 ) -> FastAPI:
     app = FastAPI(title="ExpandRG local connector", version="0.1.0")
     registry = registry or GrantRegistry()
@@ -226,6 +265,137 @@ def create_service(
         w["watcher"].stop()
         w["poster"].stopped()
         return {"status": "stopped", "detail": "Stopped watching. The simulation was not touched."}
+
+    # --- Streamed runs: a VS Code terminal's output, line by line, instead of a log file ---
+
+    streams: dict[str, dict] = {}
+
+    def stream_for(stream_id: str) -> dict:
+        with lock:
+            stream = streams.get(stream_id)
+        if stream is None:
+            raise HTTPException(status_code=404, detail="No streamed run with that ID.")
+        return stream
+
+    def stream_status(stream_id: str, s: dict) -> dict:
+        return {"id": stream_id, "label": s["label"], "project_id": s["project_id"], "member_id": s["member_id"],
+                "run_id": s["poster"].run_id, "started_at": s["started_at"], **s["watch"].status()}
+
+    @app.post("/streams")
+    def start_stream(body: StreamIn) -> dict:
+        """A run the researcher started in a VS Code terminal of a granted folder. Its output is
+        sent here line by line; it is never paused or stopped."""
+        grant_for(body.root)
+        label, _ = redact_secrets(" ".join(body.command.split()))
+        label = label if len(label) <= 100 else label[:97] + "..."
+        poster = BackendPoster(backend, body.member_id, body.project_id, label, http)
+        poster.start()
+        stream_id = str(uuid.uuid4())
+        with lock:
+            streams[stream_id] = {"watch": StreamWatch(poster), "poster": poster, "label": label,
+                                  "project_id": body.project_id, "member_id": body.member_id,
+                                  "started_at": time.strftime("%Y-%m-%dT%H:%M:%S")}
+            finished = [k for k, v in streams.items() if v["watch"].state != "watching"]
+            for old in finished[: max(0, len(streams) - MAX_KEPT_STREAMS)]:
+                del streams[old]
+        return stream_status(stream_id, streams[stream_id])
+
+    @app.post("/streams/{stream_id}/lines")
+    def stream_lines(stream_id: str, body: LinesIn) -> dict:
+        s = stream_for(stream_id)
+        new = s["watch"].feed(body.lines)
+        return {**stream_status(stream_id, s), "new_alerts": [a.to_dict() for a in new]}
+
+    @app.post("/streams/{stream_id}/end")
+    def end_stream(stream_id: str, body: EndIn) -> dict:
+        s = stream_for(stream_id)
+        s["watch"].end(body.exit_code)
+        return stream_status(stream_id, s)
+
+    @app.get("/streams")
+    def list_streams(member_id: str | None = None) -> list[dict]:
+        with lock:
+            items = list(streams.items())
+        return [stream_status(k, v) for k, v in items if member_id is None or v["member_id"] == member_id]
+
+    # --- Experiments: prepared in a copy, run only on the researcher's click ---
+
+    lab = experiments or ExperimentManager()
+
+    def refused(exc: Exception) -> HTTPException:
+        if isinstance(exc, AccessDenied):
+            return HTTPException(status_code=403, detail=str(exc))
+        if isinstance(exc, ExperimentNotFound):
+            return HTTPException(status_code=404, detail=str(exc))
+        return HTTPException(status_code=422, detail=str(exc))
+
+    @app.post("/manifest")
+    def manifest(body: RootIn) -> dict:
+        """What experiments may run in this project (expandrg.json), the current values
+        of the parameters they may change, and the logs they can be compared with."""
+        g = grant_for(body.root)
+        try:
+            entries = lab.entry_points(g.root)
+            points = [{**e.to_dict(), "values": read_parameters(g.root, e)} for e in entries.values()]
+        except (ManifestError, ExperimentRefused) as exc:
+            raise refused(exc) from None
+        logs = [f["path"] for f in list_files(g)[0] if f["kind"] == "log"]
+        return {"project": g.name, "entry_points": points, "logs": logs}
+
+    @app.post("/experiments", status_code=201)
+    def prepare_experiment(body: ExperimentIn) -> dict:
+        """Copy the project and apply the change. Nothing runs until POST /experiments/run."""
+        g = grant_for(body.root)
+        try:
+            baseline = registry.check_path(body.baseline, g)[1] if body.baseline else None
+            return lab.prepare(g.root, g.name, body.member_id, body.project_id, body.entry, body.changes,
+                               body.set_id, baseline, body.label)
+        except (AccessDenied, ManifestError, ExperimentRefused) as exc:
+            raise refused(exc) from None
+
+    @app.get("/experiments")
+    def list_experiments(member_id: str | None = None, project_id: str | None = None) -> list[dict]:
+        return lab.list(member_id, project_id)
+
+    @app.post("/experiments/run")
+    def run_experiments(body: RunExperimentsIn) -> list[dict]:
+        """The researcher's Run / Run all. Experiments run one at a time, within their limits."""
+        try:
+            return lab.run(body.ids)
+        except ExperimentNotFound as exc:
+            raise refused(exc) from None
+
+    @app.get("/experiments/{experiment_id}")
+    def experiment(experiment_id: str) -> dict:
+        """One experiment with its numbers, alerts and summary, and the same for its baseline log."""
+        try:
+            detail = lab.detail(experiment_id)
+        except ExperimentNotFound as exc:
+            raise refused(exc) from None
+        detail["baseline_result"] = None
+        if detail["baseline"]:
+            try:
+                g = registry.grant_for_root(detail["root"])
+                _, text, _ = registry.read_file(detail["baseline"], g)
+                detail["baseline_result"] = summarize(text.splitlines())
+            except (AccessDenied, OSError):
+                pass  # the folder is no longer granted or the log is gone
+        return detail
+
+    @app.post("/experiments/{experiment_id}/stop")
+    def stop_experiment(experiment_id: str) -> dict:
+        try:
+            return lab.stop(experiment_id)
+        except ExperimentNotFound as exc:
+            raise refused(exc) from None
+
+    @app.delete("/experiments/{experiment_id}")
+    def delete_experiment(experiment_id: str) -> dict:
+        try:
+            lab.delete(experiment_id)
+        except (ExperimentNotFound, ExperimentRefused) as exc:
+            raise refused(exc) from None
+        return {"status": "deleted"}
 
     return app
 

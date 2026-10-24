@@ -1,0 +1,11 @@
+{
+  "entry_points": [
+    {
+      "name": "heat2d",
+      "command": ["{python}", "heat2d.py", "config.json"],
+      "config": "config.json",
+      "parameters": ["dt", "dx", "alpha", "steps", "grid_points"],
+      "limits": {"wall_seconds": 300, "memory_mb": 1024, "output_mb": 20}
+    }
+  ]
+}

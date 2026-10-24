@@ -51,11 +51,11 @@ class JobStore:
             job = self._jobs.get(job_id)
             return asdict(job) if job else None
 
-    def running_chat(self, member_id: str, project_id: str) -> dict[str, Any] | None:
+    def running_chat(self, member_id: str, project_id: str, kind: str = "chat") -> dict[str, Any] | None:
         with self._lock:
             return next((asdict(j) for j in self._jobs.values()
                          if j.member_id == member_id and j.project_id == project_id
-                         and j.kind == "chat" and j.status == "running"), None)
+                         and j.kind == kind and j.status == "running"), None)
 
     def finish(self, job_id: str, result: dict[str, Any], draft_id: str | None, warning: str | None = None) -> None:
         with self._lock:

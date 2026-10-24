@@ -1,9 +1,14 @@
 """Turning a private diagnosis into a shared Super Brain finding.
 
-Sharing always needs the researcher's explicit approval. Until then the draft
-stays in their private memory; a rejected draft never leaves it. Approving
-writes the approval record, the finding and its links together, in one
-transaction, so a finding can't exist without its approval.
+A diagnosis is shared only with the researcher's explicit approval. Until then
+the draft stays in their private memory; a rejected draft never leaves it.
+Approving writes the approval record, the finding and its links together, in
+one transaction, so a finding can't exist without its approval.
+
+What a personal agent establishes in chat is shared by the agent itself (the
+group's choice): always as a hypothesis, marked "shared by the agent from chat",
+with the agent's own guess kept apart. Members can then add detail, their own
+guess or a correction to any finding they can read.
 """
 from __future__ import annotations
 
@@ -18,7 +23,7 @@ from backend.auth.permissions import require_project_member
 from backend.db.database import Database
 from backend.db.schema import FINDING_CATEGORIES, VERIFICATION_STATUSES
 from backend.memory.private_memory import DRAFT_FIELDS, PrivateMemory
-from backend.memory.shared_findings import get_finding
+from backend.memory.shared_findings import finding_notes, get_finding, get_readable_finding
 from backend.orchestration.evidence_policy import redact_secrets
 from backend.workspaces.store import is_project_member
 
@@ -117,6 +122,79 @@ def approve_draft(db: Database, member_id: str, draft_id: str, edits: dict[str, 
         finding = get_finding(conn, finding_id)
     memory.decide_draft(draft_id, "approved", finding_id)
     return finding
+
+
+MAX_GUESS_CHARS = 1_000
+MAX_NOTE_CHARS = 2_000
+NOTE_KINDS = ("detail", "guess", "correction")
+
+
+def share_from_chat(db: Database, member_id: str, project_id: str, share: Any, run_id: str | None) -> dict | None:
+    """Share what the member's personal agent established in a chat, or None if the
+    agent's share block is empty or unusable. Always a hypothesis: an agent can't
+    verify anything. The same title from the same member in the project isn't shared twice."""
+    if not isinstance(share, dict):
+        return None
+    title = str(share.get("title") or "").strip()
+    summary = str(share.get("summary") or "").strip()
+    if not title or not summary:
+        return None
+    evidence = str(share.get("evidence") or "").strip()
+    if evidence:
+        summary = f"{summary}\nEvidence: {evidence}"
+    summary += "\nShared by the researcher's personal agent from a chat; not yet reviewed by the researcher."
+    category = share.get("category") if share.get("category") in FINDING_CATEGORIES else "research_result"
+    title, _ = redact_secrets(title[:MAX_TITLE_CHARS])
+    summary, _ = redact_secrets(summary[:MAX_SUMMARY_CHARS])
+    guess, _ = redact_secrets(str(share.get("agent_guess") or "").strip()[:MAX_GUESS_CHARS])
+
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    approval_id, finding_id = str(uuid.uuid4()), str(uuid.uuid4())
+    with closing(db.shared()) as conn:
+        require_project_member(conn, member_id, project_id)
+        repeat = conn.execute(
+            """SELECT f.id FROM shared_findings f JOIN auto_shares s ON s.finding_id = f.id
+               WHERE f.project_id = ? AND f.contributed_by = ? AND lower(f.title) = lower(?)""",
+            (project_id, member_id, title),
+        ).fetchone()
+        if repeat:
+            return None
+        workspace_id = conn.execute("SELECT workspace_id FROM projects WHERE id = ?", (project_id,)).fetchone()[0]
+        with conn:
+            conn.execute(
+                """INSERT INTO approvals (id, workspace_id, project_id, member_id, draft_id, edited, approved_at)
+                   VALUES (?, ?, ?, ?, ?, 0, ?)""",
+                (approval_id, workspace_id, project_id, member_id, f"chat:{finding_id}", now),
+            )
+            conn.execute(
+                """INSERT INTO shared_findings
+                   (id, workspace_id, project_id, category, title, summary, verification_status,
+                    contributed_by, approval_id, source_creao_run_id, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, 'hypothesis', ?, ?, ?, ?)""",
+                (finding_id, workspace_id, project_id, category, title, summary, member_id, approval_id, run_id, now),
+            )
+            conn.execute("INSERT INTO auto_shares (finding_id, source, agent_guess, created_at) VALUES (?, 'chat', ?, ?)",
+                         (finding_id, guess, now))
+        return get_finding(conn, finding_id)
+
+
+def add_finding_note(db: Database, member_id: str, finding_id: str, kind: str, text: str) -> dict:
+    """Add detail, the member's own guess, or a correction to a finding they can read."""
+    if kind not in NOTE_KINDS:
+        raise InvalidDraft(f"kind must be one of {', '.join(NOTE_KINDS)}.")
+    text, _ = redact_secrets(text.strip()[:MAX_NOTE_CHARS])
+    if not text:
+        raise InvalidDraft("Write something first.")
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with closing(db.shared()) as conn:
+        if get_readable_finding(conn, member_id, finding_id) is None:
+            raise DraftNotFound("No finding with that ID.")
+        with conn:
+            conn.execute(
+                "INSERT INTO finding_notes (id, finding_id, member_id, kind, text, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), finding_id, member_id, kind, text, now),
+            )
+        return finding_notes(conn, finding_id)[-1]
 
 
 def reject_draft(db: Database, member_id: str, draft_id: str) -> None:

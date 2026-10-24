@@ -55,7 +55,7 @@ I refined the grid to dx = 0.005 for better resolution. Now the run blows up: ma
 > "While my agent works, ExpandRG also watches my running simulations."
 
 1. In the terminal, press Enter to start the solver (it runs slowly on purpose).
-2. In A's window, click **Runs**, pick `sample_project / live.log`, and click **Start watching**.
+2. In A's window, click **Runs**, pick `sample_project / live.log`, and click **Start watching**. (Or, in VS Code with the ExpandRG extension, skip the terminal command: click **▶ Run a simulation** in the bottom bar and pick **heat2d**; pop-ups appear in VS Code and the run shows on the Runs page.)
 3. The run appears under **Live** and its graphs grow as the solver writes. Within seconds: **Warning** (sudden jump at step 200), then **Critical** (overflow at step 800), marked on the graphs and listed under them.
 
 > "These are cheap local checks, no AI needed. The Warning came 600 steps before the crash. And ExpandRG never stops my simulation, even on a Critical alert. It only reads the log."

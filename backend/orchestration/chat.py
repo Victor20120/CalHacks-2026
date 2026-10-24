@@ -38,10 +38,10 @@ def rule_command(message: str) -> tuple[str, str] | None:
         return None
     if re.match(
         r"^(?:act as (?:a |an |my |our )?(?:researcher|scientist|research assistant)\b|"
-        r"(?:always )?be (?:clear|concise|professional|formal|precise)\b|"
+        r"(?:always )?be (?:clear|concise|professional|formal|precise|natural|conversational)\b|"
         r"keep (?:your |the )?(?:answers|responses|replies|tone)\b|"
         r"(?:do not|don't|avoid) (?:joke|jokes|joking|goofing|roleplay)\b|"
-        r"use (?:a )?(?:professional|formal|clear|concise)\b)", text, re.I
+        r"use (?:a )?(?:professional|formal|clear|concise|natural|conversational)\b)", text, re.I
     ):
         return "append", message
     return None
@@ -53,10 +53,18 @@ def knowledge_context(findings: list[dict], stats: dict) -> dict:
     Send the complete selected finding, rather than cutting off its evidence
     or validation steps after a few sentences. Publication bounds each summary.
     """
-    rows = [{"id": f["id"], "title": f["title"][:160], "project": f["project_id"],
-             "researcher": f["contributed_by_name"], "verification_status": f["verification_status"],
-             "source_agent_run": f.get("source_creao_run_id"),
-             "summary": f["summary"][:4000]} for f in findings]
+    rows = []
+    for f in findings:
+        row = {"id": f["id"], "title": f["title"][:160], "project": f["project_id"],
+               "researcher": f["contributed_by_name"], "verification_status": f["verification_status"],
+               "source_agent_run": f.get("source_creao_run_id"), "summary": f["summary"][:4000]}
+        if f.get("auto_shared"):
+            row["shared_by"] = "the researcher's personal agent, from a chat (not reviewed by the researcher)"
+        if f.get("agent_guess"):
+            row["agent_guess"] = f["agent_guess"][:1000]
+        if f.get("notes"):  # detail, guesses and corrections members added later
+            row["notes"] = [{"by": n["member_name"], "kind": n["kind"], "text": n["text"][:1000]} for n in f["notes"]]
+        rows.append(row)
     payload = {"available_knowledge": stats, "selected_findings": rows}
     # Drop entire records instead of cutting JSON or losing a record's provenance.
     while rows and len(json.dumps(payload, ensure_ascii=False)) > MAX_CHAT_CONTEXT_CHARS:

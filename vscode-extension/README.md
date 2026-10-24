@@ -1,0 +1,105 @@
+# ExpandRG for VS Code
+
+The VS Code side of ExpandRG. The extension is the face; the local connector (Python, in this repo) is the engine: it reads your runs, runs the checks and sends numbers and problems to the backend, which the web dashboard shows to you and your group leader. ExpandRG never stops a simulation on its own.
+
+## Talk to your personal agent
+
+Click **ExpandRG AI** in the bottom bar, or run **ExpandRG: Talk to ExpandRG AI** from the command palette. The panel uses a chat layout with slate and teal colors, clean typography, and a rounded composer, light and dark themes, and instructions behind the settings icon. The visible agent is ExpandRG AI, with a Powered by CREAO note. The panel opens beside your code, using the researcher and project configured for this workspace. Researcher A talks to A's own CREAO agent, and B talks to B's; this conversation is separate from Super Brain chat. The tab, chat header, welcome, and replies identify the personal agent as **Agent 1**, **Agent 2**, and so on. Numbers follow the order agents were registered/activated in the group; retired agents keep their place, and changing project or clearing a conversation does not renumber them. In the existing demo, A has Agent 1 and B has Agent 2. The agent is instructed to introduce itself by that name on the first reply of a new conversation.
+
+- **Understand project** maps a permitted workspace folder locally. Review the exact context in the panel, then click **Send to my agent**. Nothing goes to CREAO before that click. The saved private overview becomes context for later personal messages and diagnoses.
+- The settings icon → **Agent instructions** lets you save how the agent should help you. You can also say "Act as a researcher and explain compiler flags clearly" or "Be conversational and answer directly" in chat. Simple questions default to short, natural replies without internal skill-loading narration. Preferences apply to future personal conversations, diagnoses, and overviews for this project; they are request instructions, not edits to the hosted CREAO skill.
+- **Plan a simulation** fills in a question about the project's compiler, build system, libraries, inputs, and logs; click **Send** to ask it. For Fortran, discuss compilation and linking before execution. The agent proposes commands and asks about missing choices. This chat does not execute commands or modify files.
+- Conversation history is saved privately per researcher/project and restored when reopening. A pending personal reply can reconnect. **Clear chat** keeps the saved overview and instructions. Changing the configured researcher/project clears the panel's old context before loading the new conversation.
+
+CREAO remains the brain and skills provider. Personal chat uses the researcher's existing agent and its model configuration, independently of Super Brain chat settings. Sending a message or approved project map uses CREAO credits. Leaders have no personal agent in this prototype and must choose a researcher profile.
+
+## What you see
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│ ☰  ←  →        [ 🔍 your folder                 ]   ◄ command box     │
+│                                                                      │
+│                                     ┌───────────────────────────┐   │
+│                                     │ ExpandRG is watching ...  │◄ pop-ups
+│                                     └───────────────────────────┘   │
+├──────────────────────────────────────────────────────────────────────┤
+│ ExpandRG: watching ... · 1 critical   ▶ Run a simulation   ◄ bottom bar │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+- **▶ Run a simulation** (bottom bar, also a command): pick one of the project's `expandrg.json` entry points. The extension starts it in the project folder and shows its output in a terminal named **ExpandRG: <name>**, and watches it.
+  - `{python}` in the manifest becomes `expandrg.pythonPath`.
+  - Python output is not buffered, so lines appear as they are printed.
+  - This works even when VS Code's terminal command reporting is off.
+  - Closing that terminal stops the run, like any terminal. You start the run; ExpandRG itself never starts or stops one.
+- **Runs you type in the terminal** are watched too, when VS Code's terminal command reporting (shell integration) is on:
+  - a command that runs an `expandrg.json` entry point (e.g. `python heat2d.py config.json`) is watched automatically;
+  - another command that looks like a run (`python ...`, `./program`, `mpirun ...`, `julia ...`, `Rscript ...`) gets one pop-up: **Watch this run?**;
+  - everything else (`git`, `cd`, `ls`, ...) is ignored and its output is never read;
+  - `cd C:\sim; python heat2d.py` and `cd sim && ./solver` count as the run in that folder;
+  - if the output goes to a file (`> live.log`, `| tee run.log`), that file is watched instead.
+- **Pop-ups** (bottom right): when watching starts, at the first Warning, at the first Critical, and when the run ends (with its exit code if it failed). Each has **Open dashboard**.
+- **Status bar** (bottom left): what is being watched and its Critical problems, e.g. `ExpandRG: watching live.log · 2 critical` (red when there's a Critical problem). Click it to open the dashboard.
+- **ExpandRG starts by itself.** If `expandrg.connectorFolder` is set and ExpandRG isn't running, the extension starts it in the background (`run_demo.py --no-browser`, outside VS Code), so reloading or closing VS Code doesn't stop it. If it stops, a warning offers **Start ExpandRG**; a pop-up says when it's connected. Its logs are in `.demo-logs/` in the ExpandRG folder.
+- **Output → ExpandRG** shows what the extension saw: start-up, whether ExpandRG is reachable, every terminal command and whether it was watched, ignored or asked about, and each run's result.
+
+## Commands
+
+Open the command box (the search box at the top middle of VS Code, or Ctrl+Shift+P), type `>` and then:
+
+| Command | What it does |
+|---|---|
+| **ExpandRG: Talk to ExpandRG AI** | Open private CREAO chat, understand the project, and refine instructions |
+| **ExpandRG: Run a simulation** | Same as the ▶ button |
+| **ExpandRG: Watch a log file** | Pick a log file your simulation writes; the first time, it asks to allow the folder |
+| **ExpandRG: Stop watching** | Stops watching a log file (the simulation keeps running) |
+| **ExpandRG: Choose project** | Which ExpandRG project this folder belongs to |
+| **ExpandRG: Open dashboard** | The Runs page for you and this project |
+| **ExpandRG: Start ExpandRG** | Starts ExpandRG in the background if it isn't running |
+
+## Settings
+
+Put these in the workspace's `.vscode/settings.json`:
+
+```json
+{
+  "expandrg.connectorFolder": "C:\\path\\to\\CalHacks-2026",
+  "expandrg.pythonPath": "C:\\path\\to\\your-venv\\Scripts\\python.exe",
+  "expandrg.project": "heat-diffusion",
+  "terminal.integrated.shellIntegration.enabled": true
+}
+```
+
+| Setting | Default | What it is |
+|---|---|---|
+| `expandrg.member` | `researcher_a` | Who you are (prototype sign-in) |
+| `expandrg.project` | empty | The ExpandRG project; **Choose project** sets it |
+| `expandrg.connectorFolder` | empty | The ExpandRG folder (with `run_demo.py`), so the extension can start it |
+| `expandrg.pythonPath` | `python` | The Python that runs ExpandRG and `{python}` entry points (one with ExpandRG's packages) |
+| `expandrg.watchTerminalRuns` | on | Watch runs typed in the VS Code terminal |
+| `expandrg.backendUrl`, `expandrg.connectorUrl`, `expandrg.dashboardUrl` | `127.0.0.1` ports 8000, 8001, 5173 | Where the parts run |
+| `terminal.integrated.shellIntegration.enabled` (VS Code's own) | on | Must be on for typed runs to be seen. **Run a simulation** works either way |
+
+## Install it
+
+```
+cd vscode-extension
+npm install
+npm test                                     (compiles and runs the tests)
+npx @vscode/vsce@3.2.1 package --no-dependencies --allow-missing-repository --skip-license -o expandrg-0.7.4.vsix
+code --install-extension expandrg-0.7.4.vsix --force
+```
+
+Or in VS Code: open the **Extensions** sidebar (Ctrl+Shift+X), click **…** at its top right, choose **Install from VSIX…** and pick the `.vsix` file. After installing a new version, run `>Reload Window` from the command box. To remove it, uninstall "ExpandRG" from the Extensions sidebar.
+
+## Or try it in a test window
+
+Open the `vscode-extension` folder in VS Code, then **Run → Start Debugging** (the F5 key; Fn + F5 on most laptops). A second VS Code window opens with the extension loaded; open your project folder in that window.
+
+## If nothing happens
+
+- **Output → ExpandRG** says what the extension saw.
+- "The running ExpandRG backend does not have personal chat": an older backend is still running. Stop its `run_demo.py` launcher and start `python run_demo.py` again, then click **Refresh** in the chat. Reloading VS Code alone does not update an already-running backend. Keep existing data; no reset is needed.
+- "ExpandRG isn't running": click **Start ExpandRG**, or run `python run_demo.py`. Don't run it in a VS Code terminal you are about to reload, since reloading stops it.
+- A typed run isn't noticed: VS Code's terminal command reporting is off (`terminal.integrated.shellIntegration.enabled`). Use **▶ Run a simulation**, or turn the setting on.
+- PowerShell shows `>>` instead of running a command: the line ends with a `` ` `` (often copied by accident), which tells PowerShell the command continues. Press Ctrl+C and retype it.

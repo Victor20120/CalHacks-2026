@@ -52,6 +52,29 @@ def get_member(conn: sqlite3.Connection, member_id: str) -> dict | None:
     return dict(row) if row else None
 
 
+def personal_agent_for_member(conn: sqlite3.Connection, member_id: str) -> dict | None:
+    """An active personal agent, numbered by first activation in its workspace.
+
+    Agent registration is activation in this prototype. Keep retired records in
+    the ordering so offboarding never renumbers the remaining agents. Creation
+    order breaks ties for agents registered in the same second (the demo seed).
+    The CREAO environment prefix chooses credentials, never the public number.
+    """
+    row = conn.execute(
+        """WITH numbered AS (
+            SELECT a.id, a.member_id, a.creao_env_prefix, a.status, m.status AS member_status,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY m.workspace_id ORDER BY a.created_at, a.rowid
+                   ) AS number
+            FROM agents a JOIN members m ON m.id = a.member_id
+        )
+        SELECT id, creao_env_prefix, number FROM numbered
+        WHERE member_id = ? AND status = 'active' AND member_status = 'active'""",
+        (member_id,),
+    ).fetchone()
+    return {**dict(row), "name": f"Agent {row['number']}"} if row else None
+
+
 def projects_for_member(conn: sqlite3.Connection, member_id: str) -> list[dict]:
     rows = conn.execute(
         """

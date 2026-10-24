@@ -4,6 +4,7 @@
                                  then open Researcher A and Researcher B in two windows
     python run_demo.py --fresh   first reset the demo data to a clean starting point
     python run_demo.py --check   start everything, check it works, then stop (no browser)
+    python run_demo.py --no-browser   start everything without opening windows (the VS Code extension uses this)
 
 Ctrl+C stops everything. Needs backend/.env filled in and `npm install` run in frontend/.
 Service output goes to .demo-logs/ in case something doesn't start.
@@ -51,6 +52,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run the ExpandRG demo on this computer.")
     parser.add_argument("--fresh", action="store_true", help="reset the demo data first (deletes local demo databases)")
     parser.add_argument("--check", action="store_true", help="start everything, check it, then stop")
+    parser.add_argument("--no-browser", action="store_true", help="don't open dashboard windows")
     args = parser.parse_args()
 
     if not (ROOT / "backend" / ".env").exists():
@@ -87,10 +89,10 @@ def main() -> int:
             "Researcher A": f"{DASHBOARD}/?as=researcher_a&view=diagnose&project=heat-diffusion",
             "Researcher B": f"{DASHBOARD}/?as=researcher_b&view=superbrain&project=heat-diffusion",
         }
-        for url in windows.values():
+        for url in [] if args.no_browser else windows.values():
             webbrowser.open_new(url)
             time.sleep(1)
-        print("\nOpened:")
+        print("\nDashboard links:" if args.no_browser else "\nOpened:")
         for person, url in windows.items():
             print(f"  {person}: {url}")
         print(f"  Group leader (open when you need it): {DASHBOARD}/?as=leader&view=offboarding")

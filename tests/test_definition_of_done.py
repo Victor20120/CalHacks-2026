@@ -107,7 +107,7 @@ def test_a_full_connector_session_leaves_every_project_file_unchanged(tmp_path):
     assert (project / "live.log").read_text() == "step 1 max|T| = nan\n"  # the log itself is only read
 
 
-def test_the_connector_writes_nothing_but_its_own_grants_file():
+def test_the_connector_writes_only_its_grants_file_and_experiment_copies():
     writers = re.compile(r"open\([^)]*['\"][wax]b?\+?['\"]|\.write_(text|bytes)\(|\.unlink\(|os\.remove|shutil\.|\.rename\(")
     offenders = {}
     for path in (REPO / "local_connector").rglob("*.py"):
@@ -115,6 +115,10 @@ def test_the_connector_writes_nothing_but_its_own_grants_file():
         if hits:
             offenders[path.relative_to(REPO).as_posix()] = len(hits)
 
-    assert offenders == {"local_connector/file_access/grants.py": 1}  # GrantRegistry._save, in ~/.expandrg
+    # Experiments write only their own copies and logs under ~/.expandrg/experiments;
+    # tests/test_experiments.py checks the project folder is left byte-for-byte unchanged.
+    experiments = {p for p in offenders if p.startswith("local_connector/experiments/")}
+    assert {p: n for p, n in offenders.items() if p not in experiments} == {
+        "local_connector/file_access/grants.py": 1}  # GrantRegistry._save, in ~/.expandrg
     grants_source = (REPO / "local_connector" / "file_access" / "grants.py").read_text(encoding="utf-8")
     assert "self.state_file.write_text" in grants_source

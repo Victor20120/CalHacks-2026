@@ -14,13 +14,15 @@ from backend.workspaces.store import is_project_member
 _FINDING_COLUMNS = """
     f.id, f.workspace_id, f.project_id, f.category, f.title, f.summary, f.verification_status,
     f.contributed_by, m.display_name AS contributed_by_name, f.source_creao_run_id, f.created_at,
-    a.edited AS edited_before_approval, a.approved_at, hr.finding_id IS NOT NULL AS handed_off
+    a.edited AS edited_before_approval, a.approved_at, hr.finding_id IS NOT NULL AS handed_off,
+    aus.finding_id IS NOT NULL AS auto_shared, COALESCE(aus.agent_guess, '') AS agent_guess
 """
 _FROM = """
     FROM shared_findings f
     JOIN members m ON m.id = f.contributed_by
     JOIN approvals a ON a.id = f.approval_id
     LEFT JOIN handoff_records hr ON hr.finding_id = f.id
+    LEFT JOIN auto_shares aus ON aus.finding_id = f.id
 """
 _TOKEN = re.compile(r"[a-z0-9_.]+")
 _STOPWORDS = frozenset(
@@ -122,7 +124,7 @@ def select_chat_findings(conn: sqlite3.Connection, member_id: str, query: str,
             for bucket in buckets.values():
                 if bucket and len(selected) < 8:
                     selected.append(bucket.pop(0))
-    return selected, stats
+    return attach_notes(conn, selected), stats
 
 
 def related_findings(conn: sqlite3.Connection, member_id: str, finding_id: str) -> list[dict]:
@@ -170,8 +172,27 @@ def _terms(text: str) -> set[str]:
     return terms
 
 
+def finding_notes(conn: sqlite3.Connection, finding_id: str) -> list[dict]:
+    """Detail, guesses and corrections members added to a finding, oldest first."""
+    rows = conn.execute(
+        """SELECT n.id, n.kind, n.text, n.created_at, n.member_id, m.display_name AS member_name
+           FROM finding_notes n JOIN members m ON m.id = n.member_id
+           WHERE n.finding_id = ? ORDER BY n.created_at, n.rowid""",
+        (finding_id,),
+    )
+    return [dict(r) for r in rows]
+
+
+def attach_notes(conn: sqlite3.Connection, findings: list[dict]) -> list[dict]:
+    """The same findings, each with its notes (so agents see corrections too)."""
+    for finding in findings:
+        finding["notes"] = finding_notes(conn, finding["id"])
+    return findings
+
+
 def _row(row: sqlite3.Row) -> dict:
     finding = dict(row)
     finding["edited_before_approval"] = bool(finding["edited_before_approval"])
     finding["handed_off"] = bool(finding["handed_off"])  # from an offboarding handoff, not approved by its author
+    finding["auto_shared"] = bool(finding["auto_shared"])  # shared by a personal agent from chat, not approved by its author
     return finding

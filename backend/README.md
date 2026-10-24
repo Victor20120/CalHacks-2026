@@ -65,7 +65,7 @@ It listens on this computer only (`127.0.0.1`), because sign-in is only a protot
 | `GET /health` | Returns `{"status": "ok"}` |
 | `GET /demo/members` | Demo members you can sign in as |
 | `POST /sign-in` | Body: `member_id`. Returns a `token`; send it as `Authorization: Bearer <token>` |
-| `GET /me` | The signed-in member and the projects they belong to |
+| `GET /me` | The signed-in member, their projects, and public personal-agent identity (`id`, `number`, `name`), or `null` for no active agent |
 | `POST /diagnose` | Signed in. Body: `project_id` (one of your projects), `symptom`, `focus_areas` (list; default `["numerical"]`), `analysis_depth` (default `standard`), `evidence` (list of `path`, `kind`, `excerpt`, `truncated`), `use_super_brain` (default `true`). Checks the evidence, looks up earlier findings, starts a run on **your own** personal agent and returns `202` with `job_id`, `evidence_sent`, `redactions` and `prior_findings` |
 | `GET /diagnose/{job_id}` | Signed in, your own jobs only. `status` is `running`, `completed` (with `diagnosis`: `reply`, `issues`, `summary`, `run_id`; `prior_findings`; and `draft_id`) or `failed` (with `error`: `type`, `message`, sometimes `run_id`). A completed diagnosis is saved to your private memory |
 | `GET /drafts` | Your pending drafts for the Super Brain. Only you can see them |
@@ -74,7 +74,8 @@ It listens on this computer only (`127.0.0.1`), because sign-in is only a protot
 | `GET /projects/{project_id}/findings` | Approved findings in a project you belong to |
 | `GET /superbrain/findings` | Approved findings across every project you belong to, newest first, with who shared each one. Optional `project_id` narrows it |
 | `GET /superbrain/search?q=...` | "Ask Super Brain": approved findings in your projects, ranked by shared words. Optional `project_id` narrows it |
-| `GET /findings/{finding_id}` | One finding and its links, leaving out links to findings you can't read. Findings in projects you can't read return `404` |
+| `GET /findings/{finding_id}` | One finding, its links (leaving out links to findings you can't read) and its `notes`. Findings in projects you can't read return `404` |
+| `POST /findings/{finding_id}/notes` | Body: `kind` (`detail`, `guess` or `correction`), `text` (up to 2,000 characters). Adds your note to a finding you can read and returns it (`201`). Secrets are blanked. Findings you can't read return `404` |
 | `POST /alerts` | From your local watcher. Body: `project_id` (one of your projects), `run_label`, `alerts` (list of `severity`, `check`, `message`, `metric`, `line_number`, `line`). Kept in memory for this session only |
 | `GET /alerts` | Your own alerts, newest first (optional `project_id`). Other researchers never see them |
 | `DELETE /alerts` | Clear your alerts |
@@ -110,15 +111,15 @@ A watched run is kept in the shared database (`simulation_runs`, `run_points`, `
 | `GET /projects/{project_id}/agent-rules` | Your saved `instructions` and `default_instructions` |
 | `PUT /projects/{project_id}/agent-rules` | Body: `instructions` (up to 2,000 characters). Blank restores defaults. Applied to subsequent chat, diagnosis, and overview requests |
 
-**Knowledge flow:** personal CREAO agent A/B diagnosis → private draft → researcher approval → shared `shared_findings` record → retrieval for the current question → `CREAO_CHAT` (or `CREAO_HUB`) request → synthesized answer. There is no second provider ingestion call at approval time: the shared database is the durable knowledge store, and the hub receives the retrieved specialized records when answering. New approved contributions are available on the next question.
+**Knowledge flow:** personal CREAO agent A/B diagnosis → private draft → researcher approval → shared `shared_findings` record (or: personal agent chat → the agent shares it, see [Sharing from chat](#sharing-from-chat)) → retrieval for the current question → `CREAO_CHAT` (or `CREAO_HUB`) request → synthesized answer. There is no second provider ingestion call at approval time: the shared database is the durable knowledge store, and the hub receives the retrieved specialized records when answering. New approved contributions are available on the next question.
 
-All chat replies use `hub_agent()`, regardless of who asks. Personal diagnoses and overviews still use the researcher's personal agent. The hub receives the user's current message, saved response rules, bounded recent conversation, and structured specialized knowledge. Each selected record retains its full published summary (up to 4,000 characters), author, project, verification label, and source agent run. At most eight records enter a 40,000-character context, and recent conversation stays under 4,500 characters. The prompt permits general scientific knowledge and reasoning, while requiring project-specific claims to come from retrieved records. No private project overview is sent to the shared hub.
+All chat replies use `hub_agent()`, regardless of who asks. Personal diagnoses and overviews still use the researcher's personal agent. The hub receives the user's current message, saved response rules, bounded recent conversation, and structured specialized knowledge. Each selected record retains its full published summary (up to 4,000 characters), author, project, verification label, and source agent run, plus `shared_by` for chat shares, the agent's own guess, and members' notes (detail, guesses and corrections). At most eight records enter a 40,000-character context, and recent conversation stays under 4,500 characters. The prompt permits general scientific knowledge and reasoning, while requiring project-specific claims to come from retrieved records. No private project overview is sent to the shared hub.
 
 Greetings, empty retrieval, and preference changes also go to CREAO; there is no local-answer or lookup branch. Natural standalone style directives are saved before starting the request. `/rules <text>` replaces preferences, `/rules show` asks the hub to explain them, and `/rules reset` restores defaults. The hub is told which preference action the application completed, so acknowledgments reflect saved state.
 
 Chat polls CREAO every second; the browser polls the local job every 750 ms. `elapsed_ms`, `provider_ms`, and `prompt_chars` expose latency. Selected sources are shown while the provider works. This reduces delivery overhead without replacing CREAO's reasoning.
 
-Retrieval and local history/job reads check current project membership. All-project scope uses only the viewer's projects; older combined answers are hidden if relevant access is removed. These checks govern application-supplied records. The configured shared CREAO hub may retain provider-side memory across runs; strict isolation of that memory requires provider configuration or separate hubs and is not guaranteed by prompt instructions. Rules and conversation history are persisted in the user's private settings table; no schema reset is needed. Chat never creates a sharing draft. One hub chat run per user/project at a time; duplicates return `409`.
+Retrieval and local history/job reads check current project membership. All-project scope uses only the viewer's projects; older combined answers are hidden if relevant access is removed. These checks govern application-supplied records. The configured shared CREAO hub may retain provider-side memory across runs; strict isolation of that memory requires provider configuration or separate hubs and is not guaranteed by prompt instructions. Rules and conversation history are persisted in the user's private settings table; no schema reset is needed. Super Brain chat never creates a draft or a finding. One hub chat run per user/project at a time; duplicates return `409`.
 
 ### Chat agent, model and latency
 
@@ -129,6 +130,34 @@ Chat speed is set by CREAO's run, not by the app: the app prepares a question in
 - sends `chatModelId` from `CREAO_CHAT_MODEL_ID` (empty: `gemini-3-flash`; `saved`: the agent's own model).
 
 Diagnoses and project overviews still use each researcher's own agent with its saved model and workflow. The [speed benchmark](../Documents/benchmarks/hub-chat-speed-2026-10-24.md) records the earlier comparison of these settings.
+
+### Personal CREAO agent chat
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /personal-agent/chat` | Body: `project_id`, `message` (up to 4,000 characters). Starts a reply on the signed-in researcher's own active CREAO agent. Returns `202` with `job_id`, any updated `instructions`, `agent` identity, and `used_project_overview`. Poll `/jobs/{job_id}`; `diagnosis.shared_finding` is the finding the agent shared from this reply, or `null` |
+| `GET /projects/{project_id}/personal-chat` | That user's personal conversation, public `agent` identity, and any `pending_job_id` |
+| `DELETE /projects/{project_id}/personal-chat` | Clear personal history while keeping instructions and overview. Refuses while a personal reply is running |
+
+This uses the existing personal agent contract (`AGENT_1` for A, `AGENT_2` for B), with configured CREAO skills, no hub/dedicated-chat routing, and no chat model override. The required personal-agent `analysis_depth` input is `standard`. Context consists of the user's saved project overview, recent personal conversation, their response instructions, and approved shared findings in this project. User text and replies are redacted; history uses a separate project-scoped private settings key, so it cannot appear in Super Brain chat or offboarding findings. Only what the agent shares (below) leaves it.
+
+Personal chat defaults to direct, conversational answers: short paragraphs for simple questions, more structure when requested, and no visible skill-loading narration. Configured CREAO skills remain available. A narrow presentation filter removes a leaked opening sentence about reading internal skill files before saving a reply; it preserves explanations about skills and statements about unavailable access. Older setup narration is also removed from the bounded conversation context sent on follow-up requests. Say "Be conversational and answer directly" to save that preference through the normal rules workflow.
+
+Natural style directives and `/rules` commands reuse the existing per-user/project agent instructions. Chat only returns proposals and executes no commands. Leaders have no personal agent and are refused. Job/history endpoints re-check membership, and one personal chat job per user/project runs at a time independently of hub chat. The VS Code panel uses the existing `/project-map` → preview → `/overview` flow for project understanding.
+
+Personal agents are numbered within their workspace by registration/activation order (`agents.created_at`, with insertion order breaking timestamp ties). Retired agents remain in the ordering, so the remaining agents are not renumbered. The CREAO credential prefix does not determine the public number. Identity is returned by `/me` and personal-chat endpoints, included in each personal CREAO prompt, and saved with replies. New conversations request an introduction using the assigned name. No extra provider request or database reset is needed to show an identity. Restart a backend already running older code to load this change.
+
+### Sharing from chat
+
+The group chose to have personal agents share what they establish in chat, without a draft or approval (2026-10-24; diagnoses still need approval). The rules (`share_from_chat` and `add_finding_note` in `backend/knowledge_sharing/publishing.py`):
+
+1. The agent is asked to end each reply with a JSON block, `{"share": ...}`: a title, summary, category, evidence and its own guess when the exchange established a result, a cause, a fix, a measured value or an approach that failed; `null` for greetings, questions and general explanations. It may share only what the user said or the supplied context shows.
+2. The app removes the block from the reply. A usable block (title and summary) becomes a shared finding in that project at once, always a **hypothesis** (an agent can't verify anything). An unknown category becomes `research_result`. Evidence goes into the summary, which also says it was shared by the agent and not yet reviewed. The agent's guess is kept apart, in `auto_shares.agent_guess`, never mixed with the evidence. Secrets are blanked everywhere.
+3. The reply ends with a plain line naming what was shared, so the researcher knows. The same title from the same researcher in the project isn't shared twice.
+4. Findings carry `auto_shared` and `agent_guess`. The dashboard marks them "shared by their agent".
+5. Anyone who can read a finding can add **more detail**, **their own guess** or a **correction** (`finding_notes`). Notes go to the Super Brain and to every personal agent with the finding, so a correction reaches the agents' next answers.
+
+If the researcher is removed from the project while the agent is replying, the reply is kept and nothing is shared.
 
 ### Offboarding
 
@@ -154,7 +183,7 @@ SQLite files in `backend/data/` (git ignores it; set `EXPANDRG_DATA_DIR` to move
 
 | File | Holds |
 |---|---|
-| `superbrain.db` | The group's shared Super Brain: workspace, members, projects, agents, approvals, shared findings, their links, and offboarding handoffs |
+| `superbrain.db` | The group's shared Super Brain: workspace, members, projects, agents, approvals, shared findings, their links, offboarding handoffs, chat shares (`auto_shares`) and members' notes (`finding_notes`) |
 | `private/<member>.db` | One researcher's private memory (runs, episodes, drafts for the Super Brain, settings, and saved alerts if they turned history on), split by project. In the product this lives on the researcher's own computer |
 
 Private and shared data are in different files with different tables, so no shared query can return private memory. `approvals` stores no draft text: rejected drafts never reach the shared database. Approving writes the approval and the finding in one transaction.

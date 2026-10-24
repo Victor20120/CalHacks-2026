@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { backend, remember } from "./api.js";
 import DiagnoseView from "./views/DiagnoseView.jsx";
 import DraftsView from "./views/DraftsView.jsx";
+import ExperimentsView from "./views/ExperimentsView.jsx";
 import ProjectView from "./views/ProjectView.jsx";
 import OffboardingView from "./views/OffboardingView.jsx";
 import RunsView from "./views/RunsView.jsx";
@@ -14,11 +15,12 @@ const VIEWS = [
   ["drafts", "Drafts"],
   ["superbrain", "Super Brain"],
   ["alerts", "Runs"],
+  ["experiments", "Experiments"],
   ["offboarding", "Offboarding"],
 ];
 // The group leader has no personal agent; researchers don't manage membership.
 const VIEWS_FOR_ROLE = {
-  researcher: ["project", "diagnose", "drafts", "superbrain", "alerts"],
+  researcher: ["project", "diagnose", "drafts", "superbrain", "alerts", "experiments"],
   leader: ["superbrain", "alerts", "offboarding"],
 };
 
@@ -127,6 +129,7 @@ export default function App() {
         {project && current === "drafts" && <DraftsView {...shared} />}
         {project && current === "superbrain" && <SuperBrainView {...shared} />}
         {project && current === "alerts" && <RunsView {...shared} />}
+        {project && current === "experiments" && <ExperimentsView {...shared} />}
         {current === "offboarding" && <OffboardingView {...shared} />}
       </main>
     </div>

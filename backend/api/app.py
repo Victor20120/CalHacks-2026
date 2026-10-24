@@ -32,8 +32,10 @@ from backend.knowledge_sharing.publishing import (
     DraftAlreadyDecided,
     DraftNotFound,
     InvalidDraft,
+    add_finding_note,
     approve_draft,
     reject_draft,
+    share_from_chat,
 )
 from backend.memory.private_memory import PrivateMemory
 from backend.monitoring.alerts import AlertStore, InvalidAlert
@@ -48,6 +50,7 @@ from backend.monitoring.runs import (
     visible_runs,
 )
 from backend.memory.shared_findings import (
+    finding_notes,
     get_readable_finding,
     list_project_findings,
     list_readable_findings,
@@ -65,12 +68,15 @@ from backend.orchestration.diagnosis import (
 )
 from backend.orchestration.evidence_policy import MAX_ITEMS, redact_secrets
 from backend.orchestration.jobs import JobStore, run_job
+from backend.orchestration.personal_chat import run_personal_chat
 from backend.orchestration.chat import (
     DEFAULT_AGENT_RULES, MAX_RULE_CHARS, knowledge_context, rule_command, run_chat,
 )
 from backend.orchestration.overview import context_text, prepare_overview, run_overview
 from backend.workspaces.demo import seed_demo
-from backend.workspaces.store import InvalidProject, create_project, get_member, list_members, projects_for_member
+from backend.workspaces.store import (
+    InvalidProject, create_project, get_member, list_members, personal_agent_for_member, projects_for_member,
+)
 
 
 class EvidenceIn(BaseModel):
@@ -104,6 +110,12 @@ class AgentRulesIn(BaseModel):
     instructions: str = Field(max_length=MAX_RULE_CHARS)
 
 
+class PersonalChatIn(BaseModel):
+    model_config = {"extra": "forbid"}
+    project_id: str = Field(min_length=1, max_length=64)
+    message: str = Field(min_length=1, max_length=4000)
+
+
 class OverviewExcerptIn(BaseModel):
     path: str = Field(min_length=1, max_length=300)
     kind: str = Field(default="code outline", max_length=30)
@@ -124,6 +136,11 @@ class ProjectIn(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     description: str = Field(default="", max_length=500)
     member_ids: list[str] = Field(default_factory=list, max_length=50)
+
+
+class NoteIn(BaseModel):
+    kind: Literal["detail", "guess", "correction"]
+    text: str = Field(min_length=1, max_length=2000)
 
 
 class ApproveIn(BaseModel):
@@ -237,25 +254,25 @@ def create_app(
     def me(member: dict[str, Any] = Depends(current_member)) -> dict[str, Any]:
         with closing(db.shared()) as conn:
             projects = projects_for_member(conn, member["id"])
-        return {"member": member, "projects": projects}
+            agent = personal_agent_for_member(conn, member["id"])
+        return {"member": member, "projects": projects,
+                "agent": {k: agent[k] for k in ("id", "number", "name")} if agent else None}
 
-    def project_and_agent(member: dict[str, Any], project_id: str) -> tuple[str, str]:
-        """The project's name and the member's personal agent slot, after checking access."""
+    def project_and_agent(member: dict[str, Any], project_id: str) -> tuple[str, str, dict]:
+        """Project name, personal CREAO slot, and public identity after checking access."""
         with closing(db.shared()) as conn:
             require_member_of(conn, member["id"], project_id)
             project_name = conn.execute("SELECT name FROM projects WHERE id = ?", (project_id,)).fetchone()[0]
-            agent = conn.execute(
-                "SELECT creao_env_prefix FROM agents WHERE member_id = ? AND status = 'active'", (member["id"],)
-            ).fetchone()
+            agent = personal_agent_for_member(conn, member["id"])
         if agent is None:
             raise HTTPException(status_code=403, detail="You have no active personal agent.")
-        return project_name, agent["creao_env_prefix"]
+        return project_name, agent["creao_env_prefix"], {k: agent[k] for k in ("id", "number", "name")}
 
     @app.post("/diagnose", status_code=202)
     def start_diagnosis(
         request: DiagnoseIn, background: BackgroundTasks, member: dict[str, Any] = Depends(current_member)
     ) -> dict[str, Any]:
-        project_name, prefix = project_and_agent(member, request.project_id)
+        project_name, prefix, _ = project_and_agent(member, request.project_id)
         try:
             prepared = prepare_diagnosis(
                 project_name, request.symptom, request.focus_areas, request.analysis_depth,
@@ -300,7 +317,7 @@ def create_app(
         request: OverviewIn, background: BackgroundTasks, member: dict[str, Any] = Depends(current_member)
     ) -> dict[str, Any]:
         """Your agent explains the project from a map you approved; saved privately when done."""
-        project_name, prefix = project_and_agent(member, request.project_id)
+        project_name, prefix, _ = project_and_agent(member, request.project_id)
         try:
             prepared = prepare_overview(project_name, request.tree, [e.model_dump() for e in request.excerpts],
                                         request.files, request.stats)
@@ -423,6 +440,77 @@ def create_app(
         return {"job_id": job.job_id, "status": job.status, "prior_findings": prior,
                 "knowledge_stats": stats, "instructions": instructions, "agent_slot": settings.slot}
 
+    @app.get("/projects/{project_id}/personal-chat")
+    def personal_history(project_id: str, member: dict[str, Any] = Depends(current_member)) -> dict:
+        _, _, agent = project_and_agent(member, project_id)
+        memory = PrivateMemory(db, member["id"])
+        pending = store.running_chat(member["id"], project_id, kind="personal_chat")
+        return {"agent": agent, "exchanges": memory.chat_history(project_id, "personal"),
+                "pending_job_id": pending["job_id"] if pending else None}
+
+    @app.delete("/projects/{project_id}/personal-chat")
+    def clear_personal_history(project_id: str, member: dict[str, Any] = Depends(current_member)) -> dict:
+        project_and_agent(member, project_id)
+        with chat_lock:
+            if store.running_chat(member["id"], project_id, kind="personal_chat"):
+                raise HTTPException(status_code=409, detail="Wait for your personal agent's current reply.")
+            PrivateMemory(db, member["id"]).clear_chat(project_id, "personal")
+        return {"exchanges": []}
+
+    @app.post("/personal-agent/chat", status_code=202)
+    def start_personal_chat(body: PersonalChatIn, background: BackgroundTasks,
+                            member: dict[str, Any] = Depends(current_member)) -> dict:
+        project_name, prefix, agent = project_and_agent(member, body.project_id)
+        message, _ = redact_secrets(body.message.strip())
+        if not message:
+            raise HTTPException(status_code=422, detail="Enter a message first.")
+        memory = PrivateMemory(db, member["id"])
+        with chat_lock:
+            if store.running_chat(member["id"], body.project_id, kind="personal_chat"):
+                raise HTTPException(status_code=409, detail="Your personal agent is still replying in this project.")
+            history = memory.chat_history(body.project_id, "personal")
+            rules = memory.agent_rules(body.project_id)
+            command = rule_command(message)
+            instructions, action = None, None
+            if command:
+                action, text = command
+                if action != "show":
+                    instructions = rules + "\n" + text if action == "append" else text
+                    if len(instructions) > MAX_RULE_CHARS:
+                        raise HTTPException(status_code=422, detail="Instructions are too long; edit them in Agent instructions (2,000 characters maximum).")
+                    memory.set_agent_rules(body.project_id, instructions)
+                    rules = instructions
+            with closing(db.shared()) as conn:
+                matches, stats = select_chat_findings(conn, member["id"], message, [body.project_id])
+            knowledge = knowledge_context(matches, stats)
+            included = {f["id"] for f in knowledge["selected_findings"]}
+            prior = [{k: f[k] for k in ("id", "project_id", "title", "verification_status", "contributed_by_name")}
+                     for f in matches if f["id"] in included]
+            overview = context_text(memory.project_context(body.project_id))
+            job = store.create(member["id"], body.project_id, prior, kind="personal_chat", scope="personal")
+
+        def task() -> dict:
+            client = factory(prefix) if client_factory else CreaoClient(personal_agent(prefix), poll_interval=1.0)
+            result = run_personal_chat(client, project_name, message, rules, history, overview, knowledge, action,
+                                       agent_name=agent["name"])
+            # What the agent established is shared with the group by the agent itself (the group's choice).
+            try:
+                shared = share_from_chat(db, member["id"], body.project_id, result.pop("share", None), result.get("run_id"))
+            except PermissionDenied:  # removed from the project during the run: keep the reply, share nothing
+                shared = None
+            if shared:
+                result["reply"] += (f"\n\nShared with your group in the Super Brain, as a hypothesis: "
+                                    f"\"{shared['title']}\". Anyone in the project can add detail or their own guess to it.")
+            return {**result, "agent": agent, "agent_slot": prefix, "used_project_overview": bool(overview),
+                    "shared_finding": {"id": shared["id"], "title": shared["title"]} if shared else None}
+
+        def save(result: dict) -> None:
+            memory.save_chat_exchange(body.project_id, message, {**result, "sources": prior}, "personal")
+
+        background.add_task(run_job, store, job.job_id, task, save)
+        return {"job_id": job.job_id, "status": job.status, "instructions": instructions,
+                "agent": agent, "used_project_overview": bool(overview)}
+
     @app.get("/projects/{project_id}/overview")
     def project_overview(project_id: str, member: dict[str, Any] = Depends(current_member)) -> dict[str, Any]:
         """Your saved overview of a project. Only you can see it."""
@@ -451,7 +539,7 @@ def create_app(
         job = store.get(job_id)
         if job is None or job["member_id"] != member["id"]:  # other members' jobs look like they don't exist
             raise HTTPException(status_code=404, detail="No diagnosis job with that ID.")
-        if job["kind"] == "chat":
+        if job["kind"] in ("chat", "personal_chat"):
             with closing(db.shared()) as conn:
                 allowed = {p["id"] for p in projects_for_member(conn, member["id"])}
             used = {source["project_id"] for source in job["prior_findings"]}
@@ -526,7 +614,19 @@ def create_app(
             finding = get_readable_finding(conn, member["id"], finding_id)
             if finding is None:  # findings in projects you can't read look like they don't exist
                 raise HTTPException(status_code=404, detail="No finding with that ID.")
-            return {"finding": finding, "related": related_findings(conn, member["id"], finding_id)}
+            return {"finding": finding, "related": related_findings(conn, member["id"], finding_id),
+                    "notes": finding_notes(conn, finding_id)}
+
+    @app.post("/findings/{finding_id}/notes", status_code=201)
+    def add_note(finding_id: str, body: NoteIn, member: dict[str, Any] = Depends(current_member)) -> dict[str, Any]:
+        """Add more detail, your own guess, or a correction to a finding you can read,
+        e.g. when an agent's shared summary isn't accurate enough."""
+        try:
+            return add_finding_note(db, member["id"], finding_id, body.kind, body.text)
+        except DraftNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+        except InvalidDraft as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
 
     @app.get("/policy")
     def policy() -> dict[str, str]:

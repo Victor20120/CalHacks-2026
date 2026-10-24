@@ -1,0 +1,106 @@
+{
+  "name": "expandrg",
+  "displayName": "ExpandRG",
+  "description": "Talk to ExpandRG AI, powered by CREAO, understand your project, and monitor simulations in VS Code.",
+  "version": "0.7.4",
+  "publisher": "expandrg",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.93.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "expandrg.openPersonalAgent",
+        "title": "ExpandRG: Talk to ExpandRG AI"
+      },
+      {
+        "command": "expandrg.runSimulation",
+        "title": "ExpandRG: Run a simulation"
+      },
+      {
+        "command": "expandrg.openDashboard",
+        "title": "ExpandRG: Open dashboard"
+      },
+      {
+        "command": "expandrg.chooseProject",
+        "title": "ExpandRG: Choose project"
+      },
+      {
+        "command": "expandrg.watchLogFile",
+        "title": "ExpandRG: Watch a log file"
+      },
+      {
+        "command": "expandrg.stopWatching",
+        "title": "ExpandRG: Stop watching"
+      },
+      {
+        "command": "expandrg.startConnector",
+        "title": "ExpandRG: Start ExpandRG"
+      }
+    ],
+    "configuration": {
+      "title": "ExpandRG",
+      "properties": {
+        "expandrg.member": {
+          "type": "string",
+          "default": "researcher_a",
+          "description": "Who you are in ExpandRG (prototype sign-in), e.g. researcher_a."
+        },
+        "expandrg.project": {
+          "type": "string",
+          "default": "",
+          "description": "The ExpandRG project this folder belongs to. Set it with \"ExpandRG: Choose project\"."
+        },
+        "expandrg.backendUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8000",
+          "description": "The ExpandRG backend."
+        },
+        "expandrg.connectorUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8001",
+          "description": "The local connector on this computer."
+        },
+        "expandrg.dashboardUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:5173",
+          "description": "The ExpandRG web dashboard."
+        },
+        "expandrg.connectorFolder": {
+          "type": "string",
+          "default": "",
+          "description": "The ExpandRG folder (the one with run_demo.py). When set, the extension starts ExpandRG in the background if it isn't running; reloading VS Code doesn't stop it."
+        },
+        "expandrg.watchTerminalRuns": {
+          "type": "boolean",
+          "default": true,
+          "description": "Watch runs started in the VS Code terminal: commands in the project's expandrg.json automatically, other runs (python, ./program, mpirun, ...) after you click Watch. Other commands are ignored and never read."
+        },
+        "expandrg.pythonPath": {
+          "type": "string",
+          "default": "python",
+          "description": "The Python that runs ExpandRG (one with its packages installed, e.g. your virtual environment's python.exe)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -watch -p .",
+    "test": "tsc -p . && node --test \"out/test/**/*.test.js\""
+  },
+  "devDependencies": {
+    "@types/node": "20.16.11",
+    "@types/vscode": "1.93.0",
+    "typescript": "5.6.3"
+  }
+}

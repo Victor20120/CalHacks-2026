@@ -28,3 +28,8 @@ Thumbs.db
 
 # Demo launcher output
 .demo-logs/
+
+# VS Code extension: build output and packages (its F5 launch file is kept)
+vscode-extension/out/
+*.vsix
+!vscode-extension/.vscode/

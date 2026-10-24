@@ -15,7 +15,8 @@ from datetime import datetime, timezone
 from backend.orchestration.evidence_policy import redact_secrets
 
 SEVERITIES = ("informational", "warning", "critical")
-CHECKS = ("nan_inf", "overflow", "error_line", "sudden_jump", "worsening", "threshold", "stalled", "missing_output")
+CHECKS = ("nan_inf", "overflow", "error_line", "sudden_jump", "worsening", "threshold", "stalled", "missing_output",
+          "exit_code")
 MAX_ALERTS_PER_MEMBER = 500
 MAX_MESSAGE_CHARS = 500
 MAX_LINE_CHARS = 300
