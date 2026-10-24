@@ -1,4 +1,6 @@
-# SimGuard
+# ExpandRG
+
+**Expand Researching Globally.**
 
 A collaborative AI research assistant for research groups that build custom numerical solvers. Each researcher has a personal agent that helps them understand their code, monitor simulation runs and investigate bugs. Findings a researcher approves go into the group's private shared knowledge base, the **Super Brain**, so the next researcher who hits a related problem can find them.
 
@@ -8,6 +10,7 @@ A collaborative AI research assistant for research groups that build custom nume
 
 - [Build plan](Documents/build-plan.md): ordered steps for the first milestone, with a checkpoint test after each
 - [Dashboard design](Documents/dashboard-design.md): desktop layout and views
+- [Demo script](Documents/demo-script.md): how to present ExpandRG on your own
 - [Changelog](CHANGELOG.md): what each commit changed
 
 ## Folder map
@@ -23,12 +26,37 @@ A collaborative AI research assistant for research groups that build custom nume
 ## Setup
 
 1. Copy `backend/.env.example` to `backend/.env` and fill in the CREAO keys and app IDs. Never commit `.env`.
-2. Install the Python packages: `python -m pip install -r backend/requirements.txt`
+2. Install the Python packages: `python -m pip install -r backend/requirements.txt`. If you use a virtual environment (VS Code may turn one on in its terminal), run this with that environment active, so the packages go into it.
 3. Install the dashboard: `cd frontend` then `npm install`
 4. Run the tests from the repo root (no network, no credits): `python -m pytest`
 5. Check that CREAO works (this starts a real run and uses credits): `cd backend` then `python testcreo.py`
 
-## Run the dashboard
+## Show it
+
+```
+python run_demo.py           # starts everything and opens Researcher A and Researcher B side by side
+python run_demo.py --fresh   # the same, starting from clean demo data
+```
+
+Ctrl+C stops everything. The step-by-step demo for one presenter (what to click and what to say) is in [Documents/demo-script.md](Documents/demo-script.md).
+
+## Use it on your own research project
+
+1. Add your project to the workspace (until ExpandRG is packaged with your own identity, you work as Researcher A):
+   ```
+   python -m backend.workspaces.demo --add-project my-research --name "My research" --members researcher_a
+   ```
+2. Run `python run_demo.py`, and in Researcher A's window pick **My research** in the **Project** list at the top.
+3. **Project** → **Build overview** → paste your project's folder path into **Grant access** → **Map this folder**. Check exactly what will be sent, then **Send to my agent** (one CREAO run, about a minute).
+4. The overview is saved privately, and every later **Diagnose** on that project includes it automatically.
+
+From the command line instead:
+```
+python -m local_connector grant "C:\path\to\your\project"
+python -m local_connector overview "C:\path\to\your\project" --as researcher_a --project my-research
+```
+
+## Run the dashboard by hand
 
 From the repo root, in three terminals:
 
@@ -40,7 +68,7 @@ cd frontend && npm run dev                             # 3. the dashboard
 
 Open http://127.0.0.1:5173 and choose a demo member. To show two researchers side by side, open http://127.0.0.1:5173/?as=researcher_a and http://127.0.0.1:5173/?as=researcher_b in two windows (add `&view=alerts`, `drafts` or `superbrain` to start on a view).
 
-To see live alerts, grant a project folder in the Alerts view, start watching its log, then run the sample solver slowly so you can watch it fail: `python tests/fixtures/sample_project/heat2d.py tests/fixtures/sample_project/config.json --delay 0.5 > tests/fixtures/sample_project/live.log`. SimGuard only reads the log; the solver keeps running until it stops on its own. Alerts are kept for the session only, unless you tick "Save alert history" (off by default).
+To see live alerts, grant a project folder in the Alerts view, start watching its log, then run the sample solver slowly so you can watch it fail: `python tests/fixtures/sample_project/heat2d.py tests/fixtures/sample_project/config.json --delay 0.5 > tests/fixtures/sample_project/live.log`. ExpandRG only reads the log; the solver keeps running until it stops on its own. Alerts are kept for the session only, unless you tick "Save alert history" (off by default).
 
 To show offboarding, first run `python -m backend.workspaces.demo` once (it adds Researcher C's sample work history), then sign in as the Group Leader and use the Offboarding view on Researcher C. The handed-off work appears in the Super Brain marked "handed off at offboarding". Offboarding can't be undone except with `python -m backend.workspaces.demo --reset`, which starts the demo over.
 
@@ -52,7 +80,7 @@ From the repo root, in two terminals. The diagnosis starts a real CREAO run and 
 # Terminal 1: start the backend
 python -m uvicorn backend.api.app:app --port 8000
 
-# Terminal 2: allow SimGuard to read the sample project, then diagnose it as Researcher A
+# Terminal 2: allow ExpandRG to read the sample project, then diagnose it as Researcher A
 python -m local_connector grant tests/fixtures/sample_project
 python -m local_connector diagnose tests/fixtures/sample_project --as researcher_a --project heat-diffusion --symptom "max|T| reaches inf at step 2223" --file run.log --file config.json --file heat2d.py:18-25
 
@@ -75,4 +103,4 @@ python -m local_connector finding <finding id> --as researcher_b
 python -m local_connector watch tests/fixtures/sample_project --file live.log --as researcher_a --project heat-diffusion
 ```
 
-The connector shows exactly what will be sent and asks before sending. Each researcher's diagnosis runs on their own CREAO agent, and drafts stay private until approved. Granted folders are remembered in `~/.simguard/grants.json`; take access back with `python -m local_connector revoke <folder>`. If the backend says the database is from an older version, run `python -m backend.workspaces.demo --reset`.
+The connector shows exactly what will be sent and asks before sending. Each researcher's diagnosis runs on their own CREAO agent, and drafts stay private until approved. Granted folders are remembered in `~/.expandrg/grants.json`; take access back with `python -m local_connector revoke <folder>`. If the backend says the database is from an older version, run `python -m backend.workspaces.demo --reset`.

@@ -13,23 +13,23 @@ import logging
 import os
 import threading
 import uuid
-from pathlib import Path
 from typing import Any, Callable
 
 import requests
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from backend.orchestration.evidence_policy import MAX_ITEMS, path_problem
+from backend.orchestration.evidence_policy import MAX_ITEMS
 from local_connector.evidence.extract import extract_evidence, file_kind
+from local_connector.evidence.project_map import build_project_map
 from local_connector.file_access.grants import AccessDenied, Grant, GrantRegistry
+from local_connector.file_access.walk import iter_project_files
 from local_connector.simulation_monitor.checks import Alert
 from local_connector.simulation_monitor.watcher import LogWatcher
 
 log = logging.getLogger(__name__)
 
 DEFAULT_BACKEND = "http://127.0.0.1:8000"
-SKIP_DIRS = {"node_modules", "__pycache__", ".venv", "venv", ".mypy_cache", ".pytest_cache", ".idea", ".vscode"}
 MAX_LISTED_FILES = 500
 
 
@@ -78,21 +78,12 @@ class BackendPoster:
 
 def list_files(grant: Grant) -> tuple[list[dict], bool]:
     """Files the dashboard may offer for selection: no sensitive or binary files,
-    nothing inside .git or similar folders. Returns (files, truncated)."""
+    nothing inside .git, virtual environments or similar folders. Returns (files, truncated)."""
     files: list[dict] = []
-    for dirpath, dirnames, filenames in os.walk(grant.root):
-        rel_dir = Path(dirpath).relative_to(grant.root)
-        dirnames[:] = sorted(
-            d for d in dirnames if d not in SKIP_DIRS and path_problem((rel_dir / d / "x").as_posix()) is None
-        )
-        for name in sorted(filenames):
-            relative = (rel_dir / name).as_posix()
-            full = Path(dirpath) / name
-            if path_problem(relative) or _looks_binary(full):
-                continue
-            files.append({"path": relative, "size": full.stat().st_size, "kind": file_kind(relative)})
-            if len(files) >= MAX_LISTED_FILES:
-                return files, True
+    for relative, full in iter_project_files(grant):
+        files.append({"path": relative, "size": full.stat().st_size, "kind": file_kind(relative)})
+        if len(files) >= MAX_LISTED_FILES:
+            return files, True
     return files, False
 
 
@@ -102,9 +93,9 @@ def create_service(
     http: Any = None,
     watcher_factory: Callable[..., LogWatcher] = LogWatcher,
 ) -> FastAPI:
-    app = FastAPI(title="SimGuard local connector", version="0.1.0")
+    app = FastAPI(title="ExpandRG local connector", version="0.1.0")
     registry = registry or GrantRegistry()
-    backend = (backend_url or os.environ.get("SIMGUARD_BACKEND") or DEFAULT_BACKEND).rstrip("/")
+    backend = (backend_url or os.environ.get("EXPANDRG_BACKEND") or DEFAULT_BACKEND).rstrip("/")
     http = http or requests.Session()
     watches: dict[str, dict] = {}
     lock = threading.Lock()
@@ -145,6 +136,13 @@ def create_service(
         return {"project": ev.project, "evidence": ev.to_payload(), "total_chars": ev.total_chars,
                 "redactions": ev.redactions, "skipped": ev.skipped}
 
+    @app.post("/project-map")
+    def project_map(body: RootIn) -> dict:
+        """A map of the whole granted folder for a project overview: the tree and the start of key files."""
+        m = build_project_map(registry, grant_for(body.root))
+        return {"project": m.project, **m.to_payload(), "total_chars": m.total_chars,
+                "redactions": m.redactions, "left_out": m.left_out}
+
     @app.post("/watches")
     def start_watch(body: WatchIn) -> dict:
         g = grant_for(body.root)
@@ -183,10 +181,3 @@ def _status(watch_id: str, w: dict) -> dict:
     return {"root": w["root"], "project_id": w["project_id"], "member_id": w["member_id"],
             **w["watcher"].status(), "file": w["file"], "undelivered": w["poster"].undelivered}
 
-
-def _looks_binary(path: Path) -> bool:
-    try:
-        with open(path, "rb") as f:
-            return b"\x00" in f.read(1024)
-    except OSError:
-        return True

@@ -1,7 +1,7 @@
-"""Which project folders the researcher has allowed SimGuard to read.
+"""Which project folders the researcher has allowed ExpandRG to read.
 
 Grants are stored on the researcher's computer only, in
-$SIMGUARD_HOME/grants.json (default: ~/.simguard/grants.json). Every read
+$EXPANDRG_HOME/grants.json (default: ~/.expandrg/grants.json). Every read
 goes through GrantRegistry.read_file, which refuses anything outside a
 granted folder, sensitive files and binary files.
 """
@@ -19,7 +19,7 @@ MAX_READ_BYTES = 5_000_000  # larger files are read from the end, where logs fai
 
 
 class AccessDenied(Exception):
-    """SimGuard is not allowed to read this."""
+    """ExpandRG is not allowed to read this."""
 
 
 @dataclass(frozen=True)
@@ -30,7 +30,7 @@ class Grant:
 
 
 def default_state_file() -> Path:
-    home = os.environ.get("SIMGUARD_HOME") or Path.home() / ".simguard"
+    home = os.environ.get("EXPANDRG_HOME") or Path.home() / ".expandrg"
     return Path(home) / "grants.json"
 
 
@@ -43,7 +43,7 @@ class GrantRegistry:
         return list(self._grants)
 
     def grant(self, folder: str | Path) -> Grant:
-        """Allow SimGuard to read a project folder."""
+        """Allow ExpandRG to read a project folder."""
         root = Path(folder).expanduser().resolve()
         if not root.is_dir():
             raise AccessDenied(f"{root} is not a folder.")

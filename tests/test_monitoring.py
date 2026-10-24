@@ -158,7 +158,7 @@ def test_a_replaced_log_is_read_from_the_start(tmp_path):
 def test_the_simulation_keeps_running_after_a_critical_alert(tmp_path):
     """Watch a real solver run. The Critical alert must arrive while the solver is
     still running, and the solver must end on its own (exit code 1 from its own
-    ERROR), not because SimGuard stopped it."""
+    ERROR), not because ExpandRG stopped it."""
     log = tmp_path / "run.log"
     solver = FIXTURES / "sample_project" / "heat2d.py"
     config = FIXTURES / "sample_project" / "config.json"

@@ -1,6 +1,6 @@
 """Cheap, deterministic anomaly checks on simulation output.
 
-They only read output. SimGuard never pauses, stops or kills a simulation, even
+They only read output. ExpandRG never pauses, stops or kills a simulation, even
 on a Critical alert, and CREAO is not involved: explanations come later, when
 the researcher asks for a diagnosis.
 

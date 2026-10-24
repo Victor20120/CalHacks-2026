@@ -4,11 +4,13 @@ import { SeverityBadge } from "./components.jsx";
 import AlertsView from "./views/AlertsView.jsx";
 import DiagnoseView from "./views/DiagnoseView.jsx";
 import DraftsView from "./views/DraftsView.jsx";
+import ProjectView from "./views/ProjectView.jsx";
 import OffboardingView from "./views/OffboardingView.jsx";
 import SignIn from "./views/SignIn.jsx";
 import SuperBrainView from "./views/SuperBrainView.jsx";
 
 const VIEWS = [
+  ["project", "Project"],
   ["diagnose", "Diagnose"],
   ["drafts", "Drafts"],
   ["superbrain", "Super Brain"],
@@ -17,7 +19,7 @@ const VIEWS = [
 ];
 // The group leader has no personal agent; researchers don't manage membership.
 const VIEWS_FOR_ROLE = {
-  researcher: ["diagnose", "drafts", "superbrain", "alerts"],
+  researcher: ["project", "diagnose", "drafts", "superbrain", "alerts"],
   leader: ["superbrain", "alerts", "offboarding"],
 };
 
@@ -29,7 +31,7 @@ const START_VIEW = VIEWS.some(([id]) => id === START.get("view")) ? START.get("v
 export default function App() {
   const [session, setSession] = useState(null); // { token, member }
   const [projects, setProjects] = useState([]);
-  const [projectId, setProjectId] = useState(START.get("project") || remember.get("simguard.project"));
+  const [projectId, setProjectId] = useState(START.get("project") || remember.get("expandrg.project"));
   const [view, setView] = useState(START_VIEW);
   const [alerts, setAlerts] = useState([]);
   const [draftCount, setDraftCount] = useState(0);
@@ -39,24 +41,24 @@ export default function App() {
   async function signIn(memberId) {
     const { token, member } = await backend("/sign-in", { method: "POST", body: { member_id: memberId } });
     const me = await backend("/me", { token });
-    remember.set("simguard.member", memberId);
+    remember.set("expandrg.member", memberId);
     setSession({ token, member });
     setProjects(me.projects);
     setProjectId((current) => (me.projects.some((p) => p.id === current) ? current : me.projects[0]?.id || null));
   }
 
   function signOut() {
-    remember.set("simguard.member", null);
+    remember.set("expandrg.member", null);
     setSession(null);
     setAlerts([]);
   }
 
   useEffect(() => {
-    const requested = START.get("as") || remember.get("simguard.member");
-    if (requested) signIn(requested).catch(() => remember.set("simguard.member", null));
+    const requested = START.get("as") || remember.get("expandrg.member");
+    if (requested) signIn(requested).catch(() => remember.set("expandrg.member", null));
   }, []);
 
-  useEffect(() => remember.set("simguard.project", projectId), [projectId]);
+  useEffect(() => remember.set("expandrg.project", projectId), [projectId]);
 
   // Poll this researcher's alerts and pending drafts.
   useEffect(() => {
@@ -102,9 +104,9 @@ export default function App() {
 
   return (
     <div className={`app ${panelOpen ? "" : "panel-closed"}`}>
-      <div className="narrow-notice">SimGuard is built for laptop and desktop screens. Widen the window for the best view.</div>
+      <div className="narrow-notice">ExpandRG is built for laptop and desktop screens. Widen the window for the best view.</div>
       <header className="topbar">
-        <span className="brand">SimGuard</span>
+        <span className="brand" title="Expand Researching Globally">ExpandRG</span>
         <label className="project-select">
           Project
           <select value={projectId || ""} onChange={(e) => setProjectId(e.target.value)}>
@@ -145,6 +147,7 @@ export default function App() {
 
       <main className="main">
         {!project && <p>You are not a member of any project yet.</p>}
+        {project && current === "project" && <ProjectView {...shared} />}
         {project && current === "diagnose" && <DiagnoseView {...shared} onOpenDrafts={() => setView("drafts")} />}
         {project && current === "drafts" && <DraftsView {...shared} />}
         {project && current === "superbrain" && <SuperBrainView {...shared} query={searchQuery} onQuery={setSearchQuery} />}

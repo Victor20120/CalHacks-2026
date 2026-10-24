@@ -27,7 +27,7 @@ SHARED_TABLES = (
     "handoff_events",
     "handoff_records",
 )
-PRIVATE_TABLES = ("runs", "private_episodes", "share_drafts", "settings", "alerts")
+PRIVATE_TABLES = ("runs", "private_episodes", "share_drafts", "settings", "alerts", "project_context")
 
 SHARED_SCHEMA = """
 CREATE TABLE IF NOT EXISTS workspaces (
@@ -187,5 +187,16 @@ CREATE TABLE IF NOT EXISTS alerts (
     line_number  INTEGER,
     line         TEXT NOT NULL DEFAULT '',
     created_at   TEXT NOT NULL
+);
+
+-- "What is this project?": the researcher's saved overview of each project,
+-- written by their agent from a project map they approved. Private.
+CREATE TABLE IF NOT EXISTS project_context (
+    project_id    TEXT PRIMARY KEY,
+    overview      TEXT NOT NULL,  -- JSON: purpose, structure, how_to_run, key_parameters, open_questions
+    reply         TEXT NOT NULL,  -- the agent's prose answer
+    map_stats     TEXT NOT NULL,  -- JSON: file counts of the map it was built from
+    creao_run_id  TEXT,
+    updated_at    TEXT NOT NULL
 );
 """

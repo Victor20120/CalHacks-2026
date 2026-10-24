@@ -25,6 +25,7 @@
 | 5 | Scoped lookup for Researcher B | `backend/memory/`, `backend/auth/` | Done |
 | 6 | Dashboard and local anomaly checks | `frontend/`, `local_connector/simulation_monitor/`, `backend/monitoring/` | Done |
 | 7 | Optional: alert history and handoff | `backend/memory/`, `backend/knowledge_sharing/` | Done |
+| 8 | Project overview | `local_connector/evidence/`, `backend/orchestration/overview.py` | Built; real-project test pending |
 
 ---
 
@@ -42,14 +43,14 @@
 **Tasks**
 - [x] CREAO API Trigger key (`capi_`) and app ID for the hub agent in `backend/.env`
 - [x] `backend/.env.example` listing every variable name (no values)
-- [ ] Every teammate installs Python and Node.js, clones the repo and creates their own `backend/.env`
+- [x] Python and Node.js installed, repo cloned, `backend/.env` created (solo project, so there are no teammates to set up)
 - [x] `backend/requirements.txt` (requests, python-dotenv, pytest; FastAPI and uvicorn get added in step 2)
-- [ ] Python virtual environment (optional; packages are currently installed in the global Python)
+- [x] Python virtual environment: `calhack`, in the folder above the repo (VS Code turns it on in its terminal). The project's packages are installed in it
 
 **Checkpoint 0**
 - [x] `git check-ignore backend/.env` prints `backend/.env`
 - [x] `backend/testcreo.py` starts a run and gets the result back (2026-10-23) **(uses credits)**
-- [ ] Every teammate can run `testcreo.py` with their own `.env`
+- [x] `testcreo.py` runs with the developer's own `.env` (solo project)
 
 ---
 
@@ -111,11 +112,11 @@
 ## Step 4 — Approval path to publish a finding
 
 **Tasks**
-- [x] Set up separate CREAO agents for Researchers A and B (`CREAO_AGENT_1_*` and `CREAO_AGENT_2_*` in `backend/.env`; the demo data already points A and B at these). If both used the one hub agent, CREAO's own long-term agent memory could carry A's evidence into B's runs, outside SimGuard's access checks. Both agents verified with a short run on 2026-10-23
+- [x] Set up separate CREAO agents for Researchers A and B (`CREAO_AGENT_1_*` and `CREAO_AGENT_2_*` in `backend/.env`; the demo data already points A and B at these). If both used the one hub agent, CREAO's own long-term agent memory could carry A's evidence into B's runs, outside ExpandRG's access checks. Both agents verified with a short run on 2026-10-23
 - [x] Give both personal agents the same input contract (verified 2026-10-23: `AGENT_2` is now a copy of `AGENT_1`; see `backend/README.md`)
 - [x] Configure the adapter for the personal agents' inputs (`personal_agent()`: `focus_areas` choices sent as comma-separated text, required `analysis_depth`, issue-list request). Verified on run `aaa9f564` **(uses credits)**
 - [x] Use each signed-in researcher's own personal agent for `/diagnose` (requires sign-in and project membership; only the researcher can read their own diagnosis jobs)
-- [x] An editable, minimum-necessary draft in one of the three categories. SimGuard builds it from the agent's top issue (symptom, likely cause, evidence, how to validate), always as a hypothesis, and keeps it in the researcher's private memory with the diagnosis
+- [x] An editable, minimum-necessary draft in one of the three categories. ExpandRG builds it from the agent's top issue (symptom, likely cause, evidence, how to validate), always as a hypothesis, and keeps it in the researcher's private memory with the diagnosis
 - [x] The researcher approves (optionally after editing) or rejects it (`POST /drafts/{id}/approve`, `POST /drafts/{id}/reject`)
 - [x] On approval, store the shared finding with provenance (who, when, source project, CREAO run, verification status, whether it was edited) and its project label. Links between findings come with step 5, when a second finding exists to link to
 
@@ -176,6 +177,30 @@
 - [x] Automated: the handoff excludes credentials and private conversations (also personal notes, drafts the member rejected, and other groups' content)
 - [x] Automated: a failed handoff is reported as failed, never as complete (nothing is stored, the agent stays active, and the leader can retry)
 - [x] Manual: the leader offboarded Researcher C by clicking in the dashboard — 3 records handed off, 2 left out, every step ✓; C disappeared from sign-in and B saw C's work marked "handed off at offboarding"
+
+---
+
+## Step 8 — Project overview ("What is this project?")
+
+**Tasks**
+- [x] `local_connector/evidence/project_map.py`: a map of the whole granted folder, built on the researcher's computer: the folder tree (big folders summarized by file type) and the start of key files (README, dependency and build files, configs, an outline of the main scripts, notebook headings). Tests, tool folders, sensitive and binary files are left out; secrets are blanked; the map stays under 24,000 characters
+- [x] The researcher previews the exact map before sending (dashboard **Project** view, or `python -m local_connector overview`)
+- [x] `backend/orchestration/overview.py` and `POST /overview`: the backend re-checks the map, then asks the researcher's own agent for an overview (purpose, structure, how to run, key parameters, open questions). Paths the agent invents are marked "not found in the project"
+- [x] The overview is saved privately (`GET /projects/{id}/overview`) and included as project context in every later diagnosis on that project
+- [x] Real projects can be added to the workspace: `POST /projects` (leader) or `python -m backend.workspaces.demo --add-project ...`
+
+**Checkpoint 8**
+- [x] Automated: the map covers the project but never includes sensitive, binary, tool or test files; it stays within its size limit (`tests/test_project_overview.py`)
+- [x] Automated: unsafe or oversized maps are refused by the backend; the overview is private; later diagnoses include it
+- [ ] Manual: build an overview of a real research project **(uses credits)**, and check whether the personal agent (an audit agent) explains the project or only audits it
+
+---
+
+## Presenting
+
+- [x] One-command demo launcher: `python run_demo.py` (or `--fresh`) starts the backend, local connector and dashboard, grants the sample folders, and opens Researcher A and B side by side. Checked with `--check`: everything starts, and everything stops afterwards
+- [x] Demo script for one presenter playing every role: [demo-script.md](demo-script.md)
+- [ ] Rehearse once and make a backup screen recording **(uses credits)**
 
 ---
 

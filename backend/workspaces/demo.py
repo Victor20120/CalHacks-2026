@@ -7,6 +7,8 @@ Load the demo (adds what's missing, keeps everything else):
     python -m backend.workspaces.demo
 Delete the databases and start again:
     python -m backend.workspaces.demo --reset
+Add a real project for testing (members: the leader plus the ones listed):
+    python -m backend.workspaces.demo --add-project my-research --name "My research" --members researcher_a
 """
 from __future__ import annotations
 
@@ -17,6 +19,7 @@ from datetime import datetime, timezone
 
 from backend.db.database import Database
 from backend.db.schema import SHARED_TABLES
+from backend.workspaces.store import InvalidProject, create_project
 
 WORKSPACE = ("demo-lab", "Computational Physics Lab (demo)")
 MEMBERS = [
@@ -114,7 +117,10 @@ def seed_demo_private(db: Database) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m backend.workspaces.demo", description=__doc__.splitlines()[0])
-    parser.add_argument("--reset", action="store_true", help="delete all SimGuard databases first")
+    parser.add_argument("--reset", action="store_true", help="delete all ExpandRG databases first")
+    parser.add_argument("--add-project", metavar="ID", help="also create a project, e.g. my-research")
+    parser.add_argument("--name", help="the new project's name")
+    parser.add_argument("--members", default="researcher_a", help="comma-separated member IDs (the leader is always added)")
     args = parser.parse_args(argv)
 
     db = Database(seed=seed_demo)
@@ -128,6 +134,15 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {table}: {conn.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]}")
     seed_demo_private(db)
     print("Researcher C's demo work history is in place for the offboarding demo.")
+    if args.add_project:
+        members = ["leader", *[m.strip() for m in args.members.split(",") if m.strip()]]
+        with closing(db.shared()) as conn:
+            try:
+                project = create_project(conn, WORKSPACE[0], args.add_project, args.name or args.add_project, "", members)
+            except InvalidProject as exc:
+                print(f"Project not added: {exc}")
+                return 1
+        print(f"Added project {project['id']} ({project['name']}) with members: {', '.join(project['members'])}")
     return 0
 
 

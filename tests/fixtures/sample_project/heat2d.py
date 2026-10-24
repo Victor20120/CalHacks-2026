@@ -1,4 +1,4 @@
-"""Explicit 2D heat equation solver (SimGuard demo project).
+"""Explicit 2D heat equation solver (ExpandRG demo project).
 
 Forward Euler in time, 5-point Laplacian, Dirichlet 0 walls.
 Usage: python heat2d.py config.json [--delay SECONDS] > run.log

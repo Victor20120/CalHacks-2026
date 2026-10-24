@@ -6,7 +6,7 @@ Two kinds of database, in separate files:
 - private/<member_id>.db: one researcher's private project memory (runs and
   episodes). In the product this lives on the researcher's own computer.
 
-Files live in $SIMGUARD_DATA_DIR (default: backend/data/), which git ignores.
+Files live in $EXPANDRG_DATA_DIR (default: backend/data/), which git ignores.
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ RESET_COMMAND = "python -m backend.workspaces.demo --reset"
 
 
 class OutdatedDatabase(Exception):
-    """A database file was made by an older SimGuard version."""
+    """A database file was made by an older ExpandRG version."""
 
 
 def connect(path: Path) -> sqlite3.Connection:
@@ -42,7 +42,7 @@ def _create_tables(conn: sqlite3.Connection, schema: str, path: Path) -> None:
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     if has_tables and version != SCHEMA_VERSION:
         raise OutdatedDatabase(
-            f"{path} was made by an older SimGuard version. Delete the databases and reload the demo: {RESET_COMMAND}"
+            f"{path} was made by an older ExpandRG version. Delete the databases and reload the demo: {RESET_COMMAND}"
         )
     conn.executescript(schema)
     conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
@@ -59,7 +59,7 @@ class Database:
 
     @property
     def data_dir(self) -> Path:
-        return self._data_dir or Path(os.environ.get("SIMGUARD_DATA_DIR") or DEFAULT_DATA_DIR)
+        return self._data_dir or Path(os.environ.get("EXPANDRG_DATA_DIR") or DEFAULT_DATA_DIR)
 
     @property
     def shared_path(self) -> Path:

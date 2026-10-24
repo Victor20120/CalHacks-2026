@@ -1,4 +1,4 @@
-"""CREAO API adapter: the only module in SimGuard that talks to CREAO.
+"""CREAO API adapter: the only module in ExpandRG that talks to CREAO.
 
 Uses the API Trigger contract verified in backend/README.md:
     POST {base}/runs        {"appId": ..., "inputs": {...}}  -> {"id": ...}
@@ -235,19 +235,24 @@ def _analysis_ran(structured: dict[str, Any], summary: dict[str, Any], issues: l
     return any(_is_number(v) and v > 0 for k, v in summary.items() if k != "reproducibility_score")
 
 
+def extract_json_block(reply: str, key: str) -> tuple[str, Any]:
+    """Split the last ```json {"<key>": ...} block off a reply. Returns the reply
+    without it and the value under key, or the reply unchanged and None."""
+    for block in reversed(list(ISSUE_BLOCK.finditer(reply))):
+        try:
+            data = json.loads(block.group(1))
+        except ValueError:
+            continue
+        if isinstance(data, dict) and key in data:
+            return (reply[: block.start()] + reply[block.end() :]).strip(), data[key]
+    return reply, None
+
+
 def _extract_issues(reply: str) -> tuple[str, list[dict[str, Any]]]:
-    """Split the last ```json {"issues": [...]} block off the reply. Agent output is
+    """Split the ```json {"issues": [...]} block off the reply. Agent output is
     untrusted: entries without a title are dropped, and anything not labelled
     exactly "confirmed" is treated as suspected."""
-    matches = list(ISSUE_BLOCK.finditer(reply))
-    if not matches:
-        return reply, []
-    block = matches[-1]
-    try:
-        data = json.loads(block.group(1))
-    except ValueError:
-        return reply, []
-    entries = data.get("issues") if isinstance(data, dict) else None
+    cleaned, entries = extract_json_block(reply, "issues")
     if not isinstance(entries, list):
         return reply, []
 
@@ -260,8 +265,6 @@ def _extract_issues(reply: str) -> tuple[str, list[dict[str, Any]]]:
         confidence = entry.get("confidence")
         issue["confidence"] = confidence if confidence in CONFIDENCE_LEVELS else None
         issues.append(issue)
-
-    cleaned = (reply[: block.start()] + reply[block.end() :]).strip()
     return cleaned, issues
 
 

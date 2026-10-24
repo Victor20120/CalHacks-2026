@@ -49,10 +49,14 @@ class PreparedDiagnosis:
     redactions: int
     known_context: str = ""  # earlier Super Brain findings, as sent to the agent
     context_finding_ids: list[str] = field(default_factory=list)
+    project_context: str = ""  # from the researcher's saved project overview
 
     def creao_inputs(self) -> dict[str, str]:
         """Inputs for a personal agent. Only the project name is sent, never a local path."""
         parts = [self.symptom]
+        if self.project_context:
+            parts.append("Project context (from the researcher's saved overview of this project; "
+                         f"it may be out of date):\n{self.project_context}")
         if self.evidence:
             parts.append(
                 f"Evidence from the researcher's project ({len(self.evidence)} excerpt(s), "

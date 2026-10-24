@@ -1,4 +1,4 @@
-# SimGuard — Dashboard Design
+# ExpandRG — Dashboard Design
 
 **Status:** Skeleton v0.2 · UI only.
 **Target devices:** Laptops and desktop computers (desktop-first; phones are not a design target)

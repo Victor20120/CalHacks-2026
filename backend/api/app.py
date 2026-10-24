@@ -1,4 +1,4 @@
-"""SimGuard backend API.
+"""ExpandRG backend API.
 
 Run locally (binds to this computer only):
     python -m uvicorn backend.api.app:app --port 8000
@@ -47,11 +47,13 @@ from backend.orchestration.diagnosis import (
     known_context_from,
     prepare_diagnosis,
     record_diagnosis,
+    run_diagnosis,
 )
 from backend.orchestration.evidence_policy import MAX_ITEMS
 from backend.orchestration.jobs import JobStore, run_job
+from backend.orchestration.overview import context_text, prepare_overview, run_overview
 from backend.workspaces.demo import seed_demo
-from backend.workspaces.store import get_member, list_members, projects_for_member
+from backend.workspaces.store import InvalidProject, create_project, get_member, list_members, projects_for_member
 
 
 class EvidenceIn(BaseModel):
@@ -72,6 +74,28 @@ class DiagnoseIn(BaseModel):
 
 class SignInIn(BaseModel):
     member_id: str = Field(min_length=1, max_length=64)
+
+
+class OverviewExcerptIn(BaseModel):
+    path: str = Field(min_length=1, max_length=300)
+    kind: str = Field(default="code outline", max_length=30)
+    excerpt: str
+    truncated: bool = False
+
+
+class OverviewIn(BaseModel):
+    project_id: str = Field(min_length=1, max_length=64)
+    tree: str = Field(min_length=1)
+    files: list[str] = Field(default_factory=list)
+    excerpts: list[OverviewExcerptIn] = Field(default_factory=list)
+    stats: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectIn(BaseModel):
+    id: str = Field(min_length=2, max_length=50)
+    name: str = Field(min_length=1, max_length=100)
+    description: str = Field(default="", max_length=500)
+    member_ids: list[str] = Field(default_factory=list, max_length=50)
 
 
 class ApproveIn(BaseModel):
@@ -114,7 +138,7 @@ def create_app(
     """client_factory(agent_env_prefix) builds the CREAO client for a member's
     personal agent; tests pass a fake one. The databases are created (with the
     demo workspace) on first use. Alerts are kept in memory only."""
-    app = FastAPI(title="SimGuard backend", version="0.1.0")
+    app = FastAPI(title="ExpandRG backend", version="0.1.0")
     factory = client_factory or (lambda prefix: CreaoClient(personal_agent(prefix)))
     store = jobs or JobStore()
     alert_store = alerts or AlertStore()
@@ -165,18 +189,23 @@ def create_app(
             projects = projects_for_member(conn, member["id"])
         return {"member": member, "projects": projects}
 
-    @app.post("/diagnose", status_code=202)
-    def start_diagnosis(
-        request: DiagnoseIn, background: BackgroundTasks, member: dict[str, Any] = Depends(current_member)
-    ) -> dict[str, Any]:
+    def project_and_agent(member: dict[str, Any], project_id: str) -> tuple[str, str]:
+        """The project's name and the member's personal agent slot, after checking access."""
         with closing(db.shared()) as conn:
-            require_member_of(conn, member["id"], request.project_id)
-            project_name = conn.execute("SELECT name FROM projects WHERE id = ?", (request.project_id,)).fetchone()[0]
+            require_member_of(conn, member["id"], project_id)
+            project_name = conn.execute("SELECT name FROM projects WHERE id = ?", (project_id,)).fetchone()[0]
             agent = conn.execute(
                 "SELECT creao_env_prefix FROM agents WHERE member_id = ? AND status = 'active'", (member["id"],)
             ).fetchone()
         if agent is None:
             raise HTTPException(status_code=403, detail="You have no active personal agent.")
+        return project_name, agent["creao_env_prefix"]
+
+    @app.post("/diagnose", status_code=202)
+    def start_diagnosis(
+        request: DiagnoseIn, background: BackgroundTasks, member: dict[str, Any] = Depends(current_member)
+    ) -> dict[str, Any]:
+        project_name, prefix = project_and_agent(member, request.project_id)
         try:
             prepared = prepare_diagnosis(
                 project_name, request.symptom, request.focus_areas, request.analysis_depth,
@@ -197,10 +226,11 @@ def create_app(
                 for f in matches if f["id"] in prepared.context_finding_ids
             ]
 
+        prepared.project_context = context_text(PrivateMemory(db, member["id"]).project_context(request.project_id))
+
         job = store.create(member["id"], request.project_id, prior)
-        prefix = agent["creao_env_prefix"]
         background.add_task(
-            run_job, store, job.job_id, lambda: factory(prefix), prepared,
+            run_job, store, job.job_id, lambda: run_diagnosis(factory(prefix), prepared),
             lambda diagnosis: record_diagnosis(
                 db, member["id"], request.project_id, prepared.symptom, diagnosis, prepared.context_finding_ids
             ),
@@ -211,8 +241,53 @@ def create_app(
             "evidence_sent": [{"path": e["path"], "chars": len(e["excerpt"])} for e in prepared.evidence],
             "redactions": prepared.redactions,
             "prior_findings": prior,
+            "used_project_overview": bool(prepared.project_context),
         }
 
+    @app.post("/overview", status_code=202)
+    def start_overview(
+        request: OverviewIn, background: BackgroundTasks, member: dict[str, Any] = Depends(current_member)
+    ) -> dict[str, Any]:
+        """Your agent explains the project from a map you approved; saved privately when done."""
+        project_name, prefix = project_and_agent(member, request.project_id)
+        try:
+            prepared = prepare_overview(project_name, request.tree, [e.model_dump() for e in request.excerpts],
+                                        request.files, request.stats)
+        except EvidenceRejected as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from None
+
+        def save(result: dict[str, Any]) -> None:
+            PrivateMemory(db, member["id"]).save_project_context(
+                request.project_id, result["overview"], result["reply"], prepared.stats, result["run_id"])
+
+        job = store.create(member["id"], request.project_id, kind="overview")
+        background.add_task(run_job, store, job.job_id, lambda: run_overview(factory(prefix), prepared), save)
+        return {"job_id": job.job_id, "status": job.status, "chars_sent": len(prepared.creao_inputs()["observed_symptom"]),
+                "redactions": prepared.redactions}
+
+    @app.get("/projects/{project_id}/overview")
+    def project_overview(project_id: str, member: dict[str, Any] = Depends(current_member)) -> dict[str, Any]:
+        """Your saved overview of a project. Only you can see it."""
+        try:
+            context = PrivateMemory(db, member["id"]).project_context(project_id)
+        except PermissionDenied:
+            raise HTTPException(status_code=403, detail="You are not a member of that project.") from None
+        if context is None:
+            raise HTTPException(status_code=404, detail="No overview of this project yet.")
+        return context
+
+    @app.post("/projects", status_code=201)
+    def add_project(request: ProjectIn, member: dict[str, Any] = Depends(current_member)) -> dict[str, Any]:
+        """Create a project in your group and choose its members (leader only)."""
+        require_leader(member)
+        with closing(db.shared()) as conn:
+            try:
+                return create_project(conn, member["workspace_id"], request.id, request.name, request.description,
+                                      [member["id"], *request.member_ids])
+            except InvalidProject as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from None
+
+    @app.get("/jobs/{job_id}")
     @app.get("/diagnose/{job_id}")
     def get_diagnosis(job_id: str, member: dict[str, Any] = Depends(current_member)) -> dict[str, Any]:
         job = store.get(job_id)

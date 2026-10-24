@@ -26,7 +26,8 @@ export default function SignIn({ onSignIn }) {
 
   return (
     <div className="sign-in">
-      <h1>SimGuard</h1>
+      <h1>ExpandRG</h1>
+      <p className="tagline">Expand Researching Globally</p>
       <p className="muted">Prototype sign-in: choose a demo member.</p>
       <div className="member-list">
         {members.map((m) => (

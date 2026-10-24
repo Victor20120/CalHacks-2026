@@ -1,7 +1,7 @@
-"""Diagnosis jobs. A CREAO run takes about a minute, so the API starts a job
-and the caller polls it. Prototype: jobs live in memory and are lost when the
-backend restarts; the diagnosis itself is saved to the researcher's private
-memory when it finishes."""
+"""Agent jobs (diagnoses and project overviews). A CREAO run takes about a
+minute, so the API starts a job and the caller polls it. Prototype: jobs live
+in memory and are lost when the backend restarts; results are saved to the
+researcher's private memory when they finish."""
 from __future__ import annotations
 
 import logging
@@ -12,7 +12,6 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from backend.creao import CreaoConfigError, CreaoInputError, CreaoRequestError, CreaoRunFailed, CreaoTimeout
-from backend.orchestration.diagnosis import PreparedDiagnosis, run_diagnosis
 
 log = logging.getLogger(__name__)
 
@@ -24,8 +23,9 @@ class Job:
     project_id: str
     status: str  # "running", "completed" or "failed"
     created_at: str
+    kind: str = "diagnosis"  # or "overview"
     prior_findings: list[dict[str, Any]] = field(default_factory=list)  # Super Brain findings given as context
-    diagnosis: dict[str, Any] | None = None
+    diagnosis: dict[str, Any] | None = None  # the result (also for overviews)
     draft_id: str | None = None  # the private draft proposed for sharing, if any
     error: dict[str, Any] | None = None
     warning: str | None = None
@@ -36,9 +36,10 @@ class JobStore:
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
 
-    def create(self, member_id: str, project_id: str, prior_findings: list[dict[str, Any]] | None = None) -> Job:
+    def create(self, member_id: str, project_id: str, prior_findings: list[dict[str, Any]] | None = None,
+               kind: str = "diagnosis") -> Job:
         job = Job(job_id=str(uuid.uuid4()), member_id=member_id, project_id=project_id, status="running",
-                  created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                  created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"), kind=kind,
                   prior_findings=list(prior_findings or []))
         with self._lock:
             self._jobs[job.job_id] = job
@@ -49,10 +50,10 @@ class JobStore:
             job = self._jobs.get(job_id)
             return asdict(job) if job else None
 
-    def finish(self, job_id: str, diagnosis: dict[str, Any], draft_id: str | None, warning: str | None = None) -> None:
+    def finish(self, job_id: str, result: dict[str, Any], draft_id: str | None, warning: str | None = None) -> None:
         with self._lock:
             job = self._jobs[job_id]
-            job.status, job.diagnosis, job.draft_id, job.warning = "completed", diagnosis, draft_id, warning
+            job.status, job.diagnosis, job.draft_id, job.warning = "completed", result, draft_id, warning
 
     def fail(self, job_id: str, error: dict[str, Any]) -> None:
         with self._lock:
@@ -63,14 +64,13 @@ class JobStore:
 def run_job(
     store: JobStore,
     job_id: str,
-    client_factory: Callable[[], Any],
-    prepared: PreparedDiagnosis,
+    task: Callable[[], dict[str, Any]],
     on_success: Callable[[dict[str, Any]], str | None] | None = None,
 ) -> None:
-    """Run one diagnosis and record the outcome. on_success saves it privately and
-    returns a draft ID. Never logs evidence or replies."""
+    """Run one agent task and record the outcome. on_success saves it privately and may
+    return a draft ID. Never logs evidence or replies."""
     try:
-        diagnosis = run_diagnosis(client_factory(), prepared)
+        result = task()
     except CreaoTimeout as exc:
         store.fail(job_id, {"type": "timeout", "message": str(exc), "run_id": exc.run_id})
     except CreaoRunFailed as exc:
@@ -82,15 +82,15 @@ def run_job(
     except CreaoRequestError as exc:
         store.fail(job_id, {"type": "creao_request", "message": str(exc)})
     except Exception:
-        log.exception("Diagnosis job %s failed unexpectedly", job_id)
+        log.exception("Job %s failed unexpectedly", job_id)
         store.fail(job_id, {"type": "internal", "message": "Unexpected error; see the backend log."})
     else:
         draft_id, warning = None, None
         if on_success:
             try:
-                draft_id = on_success(diagnosis)
+                draft_id = on_success(result)
             except Exception:
-                log.exception("Diagnosis job %s: could not save to private memory", job_id)
-                warning = "The diagnosis could not be saved to private memory, so no draft was made."
-        store.finish(job_id, diagnosis, draft_id, warning)
-        log.info("Diagnosis job %s completed (CREAO run %s)", job_id, diagnosis["run_id"])
+                log.exception("Job %s: could not save to private memory", job_id)
+                warning = "The result could not be saved to private memory."
+        store.finish(job_id, result, draft_id, warning)
+        log.info("Job %s completed (CREAO run %s)", job_id, result.get("run_id"))

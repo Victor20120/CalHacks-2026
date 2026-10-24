@@ -99,7 +99,7 @@ export default function AlertsView({ session, project, alerts, onCleared }) {
     <div className="view">
       <h2>Simulation alerts</h2>
       <p className="notice">
-        SimGuard only reads your run's log. It never pauses, stops or kills a simulation, even on a Critical alert.
+        ExpandRG only reads your run's log. It never pauses, stops or kills a simulation, even on a Critical alert.
       </p>
 
       <section className="card">

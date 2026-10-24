@@ -6,6 +6,7 @@ active member of the project.
 """
 from __future__ import annotations
 
+import json
 import uuid
 from contextlib import closing
 from datetime import datetime, timezone
@@ -121,6 +122,33 @@ class PrivateMemory:
                 (status, finding_id, _now(), draft_id),
             )
             conn.commit()
+
+    # --- Project context: the saved overview of each project ---
+
+    def save_project_context(self, project_id: str, overview: dict | None, reply: str, map_stats: dict,
+                             creao_run_id: str | None) -> None:
+        self._check(project_id)
+        with closing(self.db.private(self.member_id)) as conn:
+            conn.execute(
+                """INSERT INTO project_context (project_id, overview, reply, map_stats, creao_run_id, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(project_id) DO UPDATE SET overview = excluded.overview, reply = excluded.reply,
+                       map_stats = excluded.map_stats, creao_run_id = excluded.creao_run_id,
+                       updated_at = excluded.updated_at""",
+                (project_id, json.dumps(overview or {}), reply, json.dumps(map_stats), creao_run_id, _now()),
+            )
+            conn.commit()
+
+    def project_context(self, project_id: str) -> dict | None:
+        self._check(project_id)
+        with closing(self.db.private(self.member_id)) as conn:
+            row = conn.execute("SELECT * FROM project_context WHERE project_id = ?", (project_id,)).fetchone()
+        if row is None:
+            return None
+        context = dict(row)
+        context["overview"] = json.loads(context["overview"]) or None
+        context["map_stats"] = json.loads(context["map_stats"])
+        return context
 
     # --- Settings and alert history (history stays off unless the researcher turns it on) ---
 

@@ -4,7 +4,32 @@ One entry per commit, newest first. Each commit adds its own entry with the hash
 
 ---
 
-## 2026-10-24 · `pending` · Add alert history, offboarding and the definition-of-done checks
+## 2026-10-24 · `pending` · Rename to ExpandRG, straight design, demo launcher and project overview
+
+**Why:** The project is now called ExpandRG (Expand Researching Globally), the dashboard gets a straight, clean look, a solo presenter gets a one-command demo, and a new member's agent can understand a whole project before diagnosing.
+
+**Changed**
+- Renamed the project to ExpandRG everywhere except past changelog entries and saved CREAO requests: text, docs, messages, settings (`EXPANDRG_HOME`, `EXPANDRG_DATA_DIR`, ...), the grants folder (`~/.expandrg`) and browser storage keys.
+- Dashboard design: square edges everywhere (no rounded corners, pills or round counts), rectangular tags, a straight accent bar on the active page, thin dividers, a square "RG" tab icon, and the tagline on the sign-in page.
+- Added `run_demo.py`: starts the backend, local connector and dashboard, grants the sample folders, and opens Researcher A and B side by side (`--fresh` resets the demo data, `--check` verifies and stops). It names a missing package and the Python it's running, instead of failing silently.
+- Added `Documents/demo-script.md`: a minute-by-minute demo for one presenter playing every role.
+- Project overview (build plan step 8): `local_connector/evidence/project_map.py` maps a granted folder on the researcher's computer (tree, plus the start of the README, dependency files, configs, main-script outlines and notebook headings; never sensitive, binary, tool or test files; under 24,000 characters). `POST /overview` re-checks the map and asks the researcher's own agent for an overview, saved privately (`GET /projects/{id}/overview`) and included in every later diagnosis on that project. Paths the agent invents are marked. Dashboard **Project** view and `python -m local_connector overview`.
+- Real projects can join the workspace: `POST /projects` (leader) and `python -m backend.workspaces.demo --add-project ...`.
+- Shared folder walking (`local_connector/file_access/walk.py`) now also skips `build/`, `dist/` and notebook checkpoints; the CREAO adapter reads any named JSON block (`extract_json_block`); one job runner serves diagnoses and overviews (`GET /jobs/{id}`).
+- The dashboard's dev server refuses to move to another port, so the launcher can't be fooled by a leftover server.
+- `.gitignore`: ignores `.demo-logs/`.
+- Added `tests/test_project_overview.py`; updated `README.md` (show it, use it on your own project), `backend/README.md`, `frontend/README.md` and `Documents/build-plan.md`.
+
+**Checks**
+- `python -m pytest`: 229 passed, 1 skipped (symlink test on Windows), with both the main Python and the `calhack` virtual environment. `npm run build` succeeds.
+- `run_demo.py --check` with the `calhack` environment: everything starts, and nothing is left running afterwards.
+- Screenshots of the restyled sign-in, Super Brain, finding, Alerts, Diagnose and Project views, in light and dark.
+- The project map run on this repo picked the README, dependency files, configs and main scripts, and left out tests, tool folders and sensitive files.
+- Secret scan: no API key or app ID in the commit.
+
+---
+
+## 2026-10-24 · `2a26834` · Add alert history, offboarding and the definition-of-done checks
 
 **Why:** Build plan step 7 and the last items of the prototype definition of done, plus the dashboard click-through check from step 6.
 

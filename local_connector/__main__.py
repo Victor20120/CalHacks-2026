@@ -1,4 +1,4 @@
-"""SimGuard local connector, command-line version (the dashboard replaces it in build step 6).
+"""ExpandRG local connector, command-line version (the dashboard replaces it in build step 6).
 
     python -m local_connector grant <project folder>
     python -m local_connector list
@@ -11,12 +11,13 @@
     python -m local_connector ask "blows up after refining the grid" --as researcher_b
     python -m local_connector finding <finding id> --as researcher_b
     python -m local_connector watch <folder> --file run.log --as researcher_a --project heat-diffusion
+    python -m local_connector overview <folder> --as researcher_a --project my-research
     python -m local_connector serve        (the local service the dashboard talks to)
 
 `diagnose` shows exactly what will be sent and asks before sending it, and
 gives your agent earlier approved findings from the Super Brain unless you
 pass --no-super-brain. Drafts stay private until you approve them. --as
-defaults to $SIMGUARD_MEMBER.
+defaults to $EXPANDRG_MEMBER.
 """
 from __future__ import annotations
 
@@ -47,7 +48,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "grant":
             grant = registry.grant(args.folder)
-            print(f"Granted: {grant.root}\nProject name sent to SimGuard: {grant.name}")
+            print(f"Granted: {grant.root}\nProject name sent to ExpandRG: {grant.name}")
         elif args.command == "revoke":
             print("Revoked." if registry.revoke(args.folder) else "That folder was not granted.")
         elif args.command == "list":
@@ -70,6 +71,8 @@ def main(argv: list[str] | None = None) -> int:
             _ask(args)
         elif args.command == "finding":
             _finding(args)
+        elif args.command == "overview":
+            return _overview(registry, args)
         elif args.command == "watch":
             return _watch(registry, args)
         elif args.command == "serve":
@@ -92,7 +95,7 @@ def _diagnose(registry: GrantRegistry, args: argparse.Namespace) -> int:
     grant = registry.grant_for_root(args.folder)
     evidence = extract_evidence(registry, grant, args.files)
     _preview(evidence, args)
-    if not args.yes and input("\nSend this to SimGuard? [y/N] ").strip().lower() not in ("y", "yes"):
+    if not args.yes and input("\nSend this to ExpandRG? [y/N] ").strip().lower() not in ("y", "yes"):
         print("Nothing was sent.")
         return 1
 
@@ -131,7 +134,7 @@ def _preview(evidence: Evidence, args: argparse.Namespace) -> None:
         print(f"Secrets blanked out: {evidence.redactions}")
     if evidence.skipped:
         print(f"Left out (size limit reached): {', '.join(evidence.skipped)}")
-    if os.environ.get("SIMGUARD_SHOW_EVIDENCE"):
+    if os.environ.get("EXPANDRG_SHOW_EVIDENCE"):
         for item in evidence.items:
             print(f"\n--- {item.path} ---\n{item.excerpt}")
 
@@ -204,6 +207,74 @@ def _finding(args: argparse.Namespace) -> None:
             print(f"  {arrow} {link['relation']}: {other['title']} (finding {other['id']}, {other['project_id']})")
 
 
+def _overview(registry: GrantRegistry, args: argparse.Namespace) -> int:
+    """Map the whole project, show what will be sent, then have your agent explain it."""
+    from local_connector.evidence.project_map import build_project_map
+
+    grant = registry.grant_for_root(args.folder)
+    project_map = build_project_map(registry, grant)
+    print(f"Signed in as: {args.member}   Project: {args.project}")
+    print(f"Project map: {project_map.stats['files']} files, {project_map.total_chars} characters to send")
+    left_out = project_map.stats["left_out_by_rule"]
+    if left_out:
+        print("Never included: " + ", ".join(f"{n} {why}" for why, n in left_out.items()))
+    print("Key files (only their start is sent):")
+    for item in project_map.items:
+        print(f"  - {item.path} ({item.kind}, {len(item.excerpt)} characters)")
+    if project_map.redactions:
+        print(f"Secrets blanked out: {project_map.redactions}")
+    print("\nFolder tree (first lines):\n" + "\n".join(project_map.tree.splitlines()[:25]))
+    if os.environ.get("EXPANDRG_SHOW_EVIDENCE"):
+        for item in project_map.items:
+            print(f"\n--- {item.path} ---\n{item.excerpt}")
+    if not args.yes and input("\nSend this map to your agent? [y/N] ").strip().lower() not in ("y", "yes"):
+        print("Nothing was sent.")
+        return 1
+
+    headers = _sign_in(args)
+    started = _call(args, "POST", "/overview", json={"project_id": args.project, **project_map.to_payload()},
+                    headers=headers)
+    print(f"\nSent. Overview job {started['job_id']}; waiting for your agent", end="", flush=True)
+    deadline = time.monotonic() + POLL_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        time.sleep(POLL_SECONDS)
+        job = _call(args, "GET", f"/jobs/{started['job_id']}", headers=headers)
+        if job["status"] != "running":
+            print()
+            if job["status"] == "failed":
+                print(f"Overview failed ({job['error']['type']}): {job['error']['message']}")
+                return 1
+            _show_overview(job["diagnosis"])
+            print("\nSaved to your private memory. Later diagnoses on this project include it automatically.")
+            return 0
+        print(".", end="", flush=True)
+    print(f"\nStill running after {POLL_TIMEOUT_SECONDS}s.")
+    return 1
+
+
+def _show_overview(result: dict) -> None:
+    overview = result.get("overview")
+    print(f"CREAO run {result['run_id']}")
+    if overview:
+        print(f"\nPurpose: {overview['purpose']}")
+        if overview["structure"]:
+            print("\nStructure:")
+            for s in overview["structure"]:
+                flag = "" if s["in_project"] else "   (not found in the project)"
+                print(f"  {s['path']}: {s['role']}{flag}")
+        if overview["how_to_run"]:
+            print(f"\nHow to run: {overview['how_to_run']}")
+        if overview["key_parameters"]:
+            print("\nKey parameters:")
+            for p in overview["key_parameters"]:
+                print(f"  {p['name']} = {p['value']}  {p['meaning']}")
+        if overview["open_questions"]:
+            print("\nOpen questions:")
+            for q in overview["open_questions"]:
+                print(f"  - {q}")
+    print(f"\n{result['reply']}")
+
+
 def _watch(registry: GrantRegistry, args: argparse.Namespace) -> int:
     """Watch a run log in the foreground. Only reads the log; never touches the simulation."""
     from local_connector.service import BackendPoster
@@ -232,7 +303,7 @@ def _watch(registry: GrantRegistry, args: argparse.Namespace) -> int:
 
 def _sign_in(args: argparse.Namespace) -> dict[str, str]:
     if not args.member:
-        raise BackendError("Say who you are: --as <member id> (or set SIMGUARD_MEMBER).")
+        raise BackendError("Say who you are: --as <member id> (or set EXPANDRG_MEMBER).")
     token = _call(args, "POST", "/sign-in", json={"member_id": args.member})["token"]
     return {"Authorization": f"Bearer {token}"}
 
@@ -255,20 +326,20 @@ def _call(args: argparse.Namespace, method: str, path: str, **kwargs) -> dict:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="python -m local_connector", description="SimGuard local connector")
+    parser = argparse.ArgumentParser(prog="python -m local_connector", description="ExpandRG local connector")
     sub = parser.add_subparsers(dest="command", required=True)
     backend = argparse.ArgumentParser(add_help=False)
-    backend.add_argument("--as", dest="member", default=os.environ.get("SIMGUARD_MEMBER"),
+    backend.add_argument("--as", dest="member", default=os.environ.get("EXPANDRG_MEMBER"),
                          help="your member ID, e.g. researcher_a")
-    backend.add_argument("--backend", default=os.environ.get("SIMGUARD_BACKEND", "http://127.0.0.1:8000"))
+    backend.add_argument("--backend", default=os.environ.get("EXPANDRG_BACKEND", "http://127.0.0.1:8000"))
 
-    sub.add_parser("grant", help="allow SimGuard to read a project folder").add_argument("folder")
+    sub.add_parser("grant", help="allow ExpandRG to read a project folder").add_argument("folder")
     sub.add_parser("revoke", help="take back access to a project folder").add_argument("folder")
     sub.add_parser("list", help="show granted project folders")
 
     d = sub.add_parser("diagnose", parents=[backend], help="send selected evidence for a diagnosis")
     d.add_argument("folder", help="a granted project folder")
-    d.add_argument("--project", required=True, help="SimGuard project ID, e.g. heat-diffusion")
+    d.add_argument("--project", required=True, help="ExpandRG project ID, e.g. heat-diffusion")
     d.add_argument("--symptom", required=True, help="what looked wrong")
     d.add_argument("--file", dest="files", action="append", required=True,
                    help="file to include, optionally with a line range: solver.py:10-40 (repeatable)")
@@ -292,10 +363,14 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--project", help="only this project")
     o = sub.add_parser("finding", parents=[backend], help="one finding and its links")
     o.add_argument("finding_id")
+    ov = sub.add_parser("overview", parents=[backend], help="have your agent explain a whole project (you preview first)")
+    ov.add_argument("folder", help="a granted project folder")
+    ov.add_argument("--project", required=True, help="ExpandRG project ID")
+    ov.add_argument("--yes", action="store_true", help="send without asking (after the preview)")
     w = sub.add_parser("watch", parents=[backend], help="watch a run log for anomalies (read-only)")
     w.add_argument("folder", help="a granted project folder")
     w.add_argument("--file", required=True, help="the log to watch, e.g. run.log")
-    w.add_argument("--project", required=True, help="SimGuard project ID")
+    w.add_argument("--project", required=True, help="ExpandRG project ID")
     s = sub.add_parser("serve", parents=[backend], help="run the local service the dashboard talks to")
     s.add_argument("--port", type=int, default=8001)
     return parser

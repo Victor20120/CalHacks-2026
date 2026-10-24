@@ -115,6 +115,6 @@ def test_the_connector_writes_nothing_but_its_own_grants_file():
         if hits:
             offenders[path.relative_to(REPO).as_posix()] = len(hits)
 
-    assert offenders == {"local_connector/file_access/grants.py": 1}  # GrantRegistry._save, in ~/.simguard
+    assert offenders == {"local_connector/file_access/grants.py": 1}  # GrantRegistry._save, in ~/.expandrg
     grants_source = (REPO / "local_connector" / "file_access" / "grants.py").read_text(encoding="utf-8")
     assert "self.state_file.write_text" in grants_source
