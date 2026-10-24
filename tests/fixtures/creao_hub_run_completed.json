@@ -1,0 +1,34 @@
+{
+  "note": "Real CREAO run captured 2026-10-23 for the mock CREAO. App ID redacted; no API key.",
+  "request": {
+    "method": "POST",
+    "path": "/runs",
+    "body": {
+      "appId": "<APP_ID>",
+      "inputs": {
+        "project_path": "demo-heat-solver (no files attached: CREAO cannot read local paths, so all evidence is pasted in observed_symptom)",
+        "observed_symptom": "2D heat equation solver, explicit forward Euler in time, 5-point finite-difference Laplacian. Settings: alpha = 1.0e-3 m^2/s, dx = dy = 0.01 m, dt = 0.03 s. The run was stable before; the only change since then is dt raised from 0.02 to 0.03 to speed it up.\nLog excerpt:\nstep  100  max|T| = 400.0     residual = 1.2e-04\nstep  180  max|T| = 401.7     residual = 3.8e-02\nstep  220  max|T| = 9.6e+04   residual = 2.1e+03\nstep  250  max|T| = 3.3e+21   residual = 7.4e+19\nstep  262  max|T| = nan       residual = nan\nA checkerboard (odd/even grid point) oscillation appears in the temperature field before it blows up. Expected: T stays between 0 and 400.",
+        "focus_areas": "numerical stability; time step and stability limits; boundary conditions"
+      }
+    }
+  },
+  "start_response": {
+    "id": "dd8668fa-bb63-41cb-b42a-c5de1633b945",
+    "status": "pending",
+    "appId": "<APP_ID>",
+    "appName": "Research Project Diagnostics"
+  },
+  "final_response": {
+    "id": "dd8668fa-bb63-41cb-b42a-c5de1633b945",
+    "status": "completed",
+    "threadId": "dfa1db6f-a08c-4e89-a81f-2da947f30a3b",
+    "result": {
+      "text": "{\"project_path\":\"demo-heat-solver\",\"analysis_depth\":\"standard\",\"focus_areas\":\"numerical stability; time step and stability limits; boundary conditions\",\"issues_confirmed\":3,\"issues_suspected\":2,\"blocking_count\":3,\"reproducibility_score\":25,\"experiments_proposed\":3}",
+      "chatText": "I'll start by reading the agent's SKILL instructions.Inputs are complete (no artifacts uploaded; all evidence is in `observed_symptom`). No project files exist on disk, so I'll reproduce numerically from the stated settings.Reproduced. Let me test one anomaly in the log: the final 12 steps show growth no linear scheme with r=0.3 can produce.Reproduction confirms the mechanism. Now loading the dashboard renderer.**Verdict: confirmed \u2014 the blow-up is a von Neumann stability violation, not a coding bug in the Laplacian.** With dx=dy=0.01 m and \u03b1=1.0e-3 m\u00b2/s, the explicit 2D limit is dt \u2264 dx\u00b2/(4\u03b1) = **0.025 s**. Your run uses dt=0.03 \u2192 diffusion number r = \u03b1dt/dx\u00b2 = **0.30 > 0.25**. The old dt=0.02 gave r=0.20 (stable, 20 % margin). The checkerboard you see is the signature: the odd/even mode has amplification **1 \u2212 8r = \u22121.40** at dt=0.03 (sign-flipping, growing 40 %/step), **\u22121.00** at dt=0.025 (marginal, never decays), **\u22120.60** at dt=0.02 (decays). I reproduced all three regimes numerically.\n\nOne anomaly I could not explain from the stated cause: between steps 250 (3.3e21) and 262 (NaN) your log grows by ~10\u00b2\u2074 per step, while no linear operator with r=0.3 can exceed 1.4 per step \u2014 so something else (decimated step counter, varying dt, or a solver/normalisation path) is involved in the last 12 steps. That stays *suspected*."
+    },
+    "errorCode": null,
+    "startedAt": "2026-10-24T05:08:04.314Z",
+    "completedAt": "2026-10-24T05:09:02.133Z",
+    "createdAt": "2026-10-24T05:08:04.293Z"
+  }
+}

@@ -1,0 +1,167 @@
+# Build Plan — First Milestone
+
+**Status:** v0.2
+**Milestone:** a single local simulation diagnosis reaches CREAO, is shown in the dashboard, and can become one researcher-approved group finding; a second researcher can retrieve that finding.
+
+## How to use this plan
+
+- Work top to bottom. Each step builds on the one before it.
+- Don't start the next step until the current step's **checkpoint** passes.
+- Tick boxes (`[x]`) as you go, and put your initials next to a task when you take it.
+- Automated tests use a **mock CREAO**, so they cost no credits. Only the checks marked **(uses credits)** call the real API.
+- If a checkpoint fails, fix it or write down the workaround before moving on.
+
+---
+
+## Progress
+
+| # | Step | Main folders | Status |
+|---|---|---|---|
+| 0 | Setup | `backend/` | Mostly done |
+| 1 | Verify CREAO with a known-good input | `backend/creao/`, `tests/` | In progress |
+| 2 | Diagnosis endpoint with file permissions | `backend/api/`, `backend/orchestration/`, `local_connector/` | Not started |
+| 3 | SQLite models and demo data | `backend/db/`, `backend/workspaces/`, `backend/memory/`, `backend/auth/` | Not started |
+| 4 | Approval path to publish a finding | `backend/knowledge_sharing/` | Not started |
+| 5 | Scoped lookup for Researcher B | `backend/memory/`, `backend/auth/` | Not started |
+| 6 | Dashboard and local anomaly checks | `frontend/`, `local_connector/simulation_monitor/`, `backend/monitoring/` | Not started |
+| 7 | Optional: alert history and handoff | `backend/monitoring/`, `backend/memory/` | Not started |
+
+---
+
+## Standing checks (before every push)
+
+- [ ] All tests pass, using mock CREAO only
+- [ ] `git status` shows no `.env`, `.db` files or other secrets about to be committed
+- [ ] No code edits source files or stops a simulation without the researcher's approval
+- [ ] Any dashboard page you changed looks right at 1280px and 1440px wide
+
+---
+
+## Step 0 — Setup
+
+**Tasks**
+- [x] CREAO API Trigger key (`capi_`) and app ID for the hub agent in `backend/.env`
+- [x] `backend/.env.example` listing every variable name (no values)
+- [ ] Every teammate installs Python and Node.js, clones the repo and creates their own `backend/.env`
+- [ ] Python virtual environment and `backend/requirements.txt` (FastAPI, uvicorn, requests, python-dotenv, pytest)
+
+**Checkpoint 0**
+- [x] `git check-ignore backend/.env` prints `backend/.env`
+- [x] `backend/testcreo.py` starts a run and gets the result back (2026-10-23) **(uses credits)**
+- [ ] Every teammate can run `testcreo.py` with their own `.env`
+
+---
+
+## Step 1 — Verify CREAO with a known-good input
+
+**Tasks**
+- [x] For each configured agent, write down the exact input fields it expects. Hub agent: `project_path`, `observed_symptom`, `focus_areas`, plus optional `analysis_depth` (recorded in `backend/README.md`)
+- [x] Run one test with every field filled in, using pasted evidence text (e.g. a short log snippet showing a NaN), not a local path
+- [x] Save that real request and response, with keys removed, in `tests/fixtures/` to use as the mock CREAO (`creao_hub_run_completed.json`)
+- [ ] Decide how the dashboard gets the itemized issue list. The structured output has only counts; the details are only in the prose reply (option: change the agent's instructions to return them as a list)
+- [ ] Move the working request from `testcreo.py` into a small adapter in `backend/creao/` (start run, poll, return result), and keep `testcreo.py` working
+
+**Checkpoint 1**
+- [x] The test run completes, and the answer addresses the symptom instead of reporting missing inputs **(uses credits)** — passed 2026-10-23: correctly found the time-step stability violation
+- [ ] Record the credits that run used (balance before and after)
+- [ ] Automated: the adapter returns the reply text from the saved mock response, with no network
+- [ ] Automated: the adapter raises a clear error for `failed`, `cancelled` and timeouts
+- [ ] The key never appears in logs or printed output
+
+---
+
+## Step 2 — Diagnosis endpoint with file permissions
+
+**Tasks**
+- [ ] FastAPI app in `backend/api/` with `GET /health`
+- [ ] `local_connector/file_access/`: the researcher registers a project folder and explicitly grants access
+- [ ] Reading is allowed only inside granted folders. `.env`, credentials and private keys are always excluded
+- [ ] `local_connector/evidence/`: extract only the relevant lines and files, never the whole repo
+- [ ] `POST /diagnose` in `backend/orchestration/`: symptom + selected evidence → CREAO adapter → diagnosis
+
+**Checkpoint 2**
+- [ ] Automated: `GET /health` returns 200
+- [ ] Automated: reading a file outside the granted folder is refused
+- [ ] Automated: `.env`, `*.pem`, `id_rsa` and similar files are never included, even inside a granted folder
+- [ ] Automated: `/diagnose` with mock CREAO returns a diagnosis, and the evidence stays under a size limit
+- [ ] Manual: one real `/diagnose` call on a sample error gives a sensible answer **(uses credits)**
+
+---
+
+## Step 3 — SQLite models and demo data
+
+**Tasks**
+- [ ] Tables in `backend/db/`: `workspaces`, `members`, `projects`, `project_members`, `agents`, `runs`, `private_episodes`, `shared_findings`, `finding_links`, `approvals` (`alerts` and `handoff_events` come in step 7)
+- [ ] Demo data: 1 workspace, Researchers A and B, 2 projects. A belongs to both; B belongs to only one (needed for the isolation test)
+- [ ] Simple prototype sign-in: pick a demo researcher
+
+**Checkpoint 3**
+- [ ] Delete the database file, recreate it and load the demo data: no errors
+- [ ] Automated: private episodes and shared findings are stored separately, and a private episode never appears in a shared query
+- [ ] Automated: loading the demo data twice does not create duplicates
+
+---
+
+## Step 4 — Approval path to publish a finding
+
+**Tasks**
+- [ ] The agent drafts an editable, minimum-necessary summary in one of the three categories: research result, code bug / new implementation, error diagnosis
+- [ ] The researcher approves (optionally after editing) or rejects it
+- [ ] On approval, store the shared finding with provenance (who, when, source project, verification status), its project label and its links
+
+**Checkpoint 4**
+- [ ] Automated: nothing reaches `shared_findings` without an approval record
+- [ ] Automated: a rejected draft stays private
+- [ ] Automated: a hypothesis is still labelled a hypothesis after publishing, not verified
+- [ ] Manual: approve a draft, and it appears in the Super Brain
+
+---
+
+## Step 5 — Scoped lookup for Researcher B
+
+**Tasks**
+- [ ] Search shared findings filtered by B's workspace and project access, checked in code (never left to the AI)
+- [ ] Follow `finding_links` only to findings B is allowed to see
+- [ ] Add retrieved findings as context to B's diagnosis request
+- [ ] Manual "Ask Super Brain" search
+
+**Checkpoint 5**
+- [ ] Automated: B retrieves A's approved finding from their shared project
+- [ ] Automated: B cannot retrieve a finding from the project they're not in, even by following a link
+- [ ] Automated: unapproved drafts are never returned
+- [ ] Manual: B's diagnosis mentions A's earlier finding **(uses credits)**
+
+---
+
+## Step 6 — Dashboard and local anomaly checks
+
+**Tasks**
+- [ ] React dashboard in `frontend/` (views in [dashboard-design.md](dashboard-design.md)), polling the backend for updates
+- [ ] `local_connector/simulation_monitor/`: local checks for NaN/Inf, large jumps, force spikes, missing outputs and configured thresholds, each labelled Informational, Warning or Critical
+- [ ] Sample simulation output with planted problems in `tests/fixtures/`
+
+**Checkpoint 6**
+- [ ] Automated: each check flags its planted problem at the right severity and leaves clean output alone
+- [ ] Manual: a Critical alert shows in the dashboard while the simulation keeps running
+- [ ] Manual: the full A → approve → B flow works by clicking in the dashboard only **(uses credits)**
+- [ ] Pages look right at 1280px and 1440px wide
+
+---
+
+## Step 7 — Optional: alert history and handoff (if time allows)
+
+**Tasks**
+- [ ] Alert history saving toggle, off by default
+- [ ] Offboarding: revoke access → prepare eligible records → exclude private and sensitive data → transfer → verify → deactivate the agent
+
+**Checkpoint 7**
+- [ ] Automated: with saving off, nothing is written to `alerts`
+- [ ] Automated: after offboarding, the member's requests are denied
+- [ ] Automated: the handoff excludes credentials and private conversations
+- [ ] Automated: a failed handoff is reported as failed, never as complete
+
+---
+
+## Final check
+
+Go through the prototype definition of done and tick every box.

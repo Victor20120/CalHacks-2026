@@ -1,25 +1,34 @@
 # backend
 
-API layer and the supporting systems we own. CREAO is the agent runtime, not the system of record. See `Documents/website-architecture.md` section 8.
+FastAPI (Python) backend. It decides what data may be accessed, what is sent to CREAO and what shared findings each researcher may see. CREAO supplies reasoning, not authorization.
 
-**Language / framework:** TBD.
-
-| Folder | Purpose |
+| Folder / file | Purpose |
 |---|---|
-| `api/routes/` | Endpoints the website calls, grouped by page or service |
-| `api/middleware/` | Sign-in checks, permissions, request logging |
-| `services/provenance/` | Records every run with code version, config, inputs, environment, who and why |
-| `services/knowledge/` | Findings, failures, decisions and lessons, each with an epistemic status |
-| `services/diagnosis/detectors/` | Deterministic checks that flag problems (design deferred) |
-| `services/diagnosis/triage/` | Rules that sort flags into likely error, anomaly, or possibly real result |
-| `services/diagnosis/detector-packs/` | Add-on check sets per research field |
-| `services/governance/` | Roles, approval gates, budgets, audit trail |
-| `services/notifications/` | In-app alerts, digests, email/Slack routing |
-| `integrations/creao/webhooks/` | Receives CREAO completion callbacks |
-| `integrations/creao/mcp-server/` | Our diagnosis service exposed to CREAO agents as a custom MCP server |
-| `integrations/research-sources/` | Connections to code repos, compute and simulation outputs |
-| `database/schema/` | Data model for the core entities |
-| `database/migrations/` | Schema changes over time |
-| `database/seeds/` | Starter data for local development |
-| `config/` | Per-environment settings (secrets stay in `.env`, never committed) |
-| `tests/` | Backend tests |
+| `api/` | FastAPI routes |
+| `auth/` | Identity and project permission checks |
+| `workspaces/` | Workspace and project management |
+| `creao/` | CREAO API adapter |
+| `orchestration/` | Agent workflows and evidence assembly |
+| `memory/` | Hierarchical, episodic and linked-finding memory |
+| `monitoring/` | Alerts and diagnoses |
+| `knowledge_sharing/` | Approval and publishing of findings |
+| `db/` | SQLite persistence |
+| `testcreo.py` | Working CREAO test: starts a hub agent run and polls until it finishes. Uses credits |
+| `.env.example` | Every environment variable name with no values. Copy it to `.env` and fill it in |
+
+## CREAO API: verified so far
+
+Base URL `https://agent.creao.ai/api/v1`, header `Authorization: Bearer <capi_ key>`.
+
+| Request | Verified by | Notes |
+|---|---|---|
+| `POST /runs` with `{"appId": ..., "inputs": {...}}` | `testcreo.py` | Starts a run and returns `id` |
+| `GET /runs/{id}` | `testcreo.py` | Poll until `status` is `completed`, `failed` or `cancelled` |
+| `GET /apps/{appId}/runs` | Manual check, 2026-10-23 | Lists past runs. Uses no credits |
+
+- **Hub agent inputs:** `project_path`, `observed_symptom` and `focus_areas` are required. `analysis_depth` is optional and defaults to `standard`. A run without the required inputs completes but only reports what's missing.
+- **Hub agent output:** `result.chatText` is the prose reply. `result.text` is a JSON string whose shape depends on the outcome: `{"response": ...}` when inputs were missing, or the inputs echoed back plus summary counts (`issues_confirmed`, `issues_suspected`, `blocking_count`, `reproducibility_score`, `experiments_proposed`) when the analysis ran. The itemized issues are only in the prose.
+- A full diagnosis took about 60 seconds. The response includes no credit usage and no artifacts.
+- Known-good example run: `tests/fixtures/creao_hub_run_completed.json` (app ID redacted).
+- CREAO runs in the cloud and cannot read local folders. Send evidence text, not a local path.
+- Replies can contain symbols like `α`, which crash `print()` in a Windows terminal. Set `PYTHONIOENCODING=utf-8` before running scripts that print replies.

@@ -1,6 +1,12 @@
 # Secrets (e.g. CREAO API key)
 .env
 .env.*
+!.env.example
+
+# Local SQLite databases (private project memory and demo data)
+*.db
+*.sqlite
+*.sqlite3
 
 # Dependencies and build output
 node_modules/
@@ -8,6 +14,7 @@ dist/
 build/
 __pycache__/
 .venv/
+.pytest_cache/
 
 # OS and editor files
 .DS_Store
