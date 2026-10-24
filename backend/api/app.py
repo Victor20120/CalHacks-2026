@@ -9,6 +9,7 @@ token as "Authorization: Bearer <token>".
 from __future__ import annotations
 
 from contextlib import closing
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Callable
 
@@ -19,6 +20,12 @@ from backend.auth.permissions import PermissionDenied, context_project_ids, requ
 from backend.auth.sessions import Sessions
 from backend.creao import CreaoClient, personal_agent
 from backend.db.database import Database
+from backend.knowledge_sharing.offboarding import (
+    OFFBOARDING_POLICY,
+    OffboardingError,
+    handoff_history,
+    offboard_member,
+)
 from backend.knowledge_sharing.publishing import (
     DraftAlreadyDecided,
     DraftNotFound,
@@ -88,6 +95,14 @@ class AlertsIn(BaseModel):
     project_id: str = Field(min_length=1, max_length=64)
     run_label: str = Field(min_length=1, max_length=100)
     alerts: list[AlertIn] = Field(max_length=50)
+
+
+class SettingsIn(BaseModel):
+    save_alert_history: bool
+
+
+class OffboardIn(BaseModel):
+    member_id: str = Field(min_length=1, max_length=64)
 
 
 def create_app(
@@ -263,16 +278,69 @@ def create_app(
                 raise HTTPException(status_code=404, detail="No finding with that ID.")
             return {"finding": finding, "related": related_findings(conn, member["id"], finding_id)}
 
+    @app.get("/policy")
+    def policy() -> dict[str, str]:
+        """Membership policies disclosed to every member in advance."""
+        return {"offboarding": OFFBOARDING_POLICY}
+
+    @app.get("/settings")
+    def my_settings(member: dict[str, Any] = Depends(current_member)) -> dict[str, bool]:
+        return {"save_alert_history": PrivateMemory(db, member["id"]).alert_history_enabled()}
+
+    @app.put("/settings")
+    def update_settings(body: SettingsIn, member: dict[str, Any] = Depends(current_member)) -> dict[str, bool]:
+        PrivateMemory(db, member["id"]).set_alert_history(body.save_alert_history)
+        return {"save_alert_history": body.save_alert_history}
+
     @app.post("/alerts")
-    def post_alerts(body: AlertsIn, member: dict[str, Any] = Depends(current_member)) -> dict[str, int]:
-        """From the researcher's local watcher. Kept for this session only, never saved."""
+    def post_alerts(body: AlertsIn, member: dict[str, Any] = Depends(current_member)) -> dict[str, Any]:
+        """From the researcher's local watcher. Kept in memory for the session; also saved to
+        their private memory only if they turned alert history on (off by default)."""
         with closing(db.shared()) as conn:
             require_member_of(conn, member["id"], body.project_id)
         try:
             records = alert_store.add(member["id"], body.project_id, body.run_label, [a.model_dump() for a in body.alerts])
         except InvalidAlert as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from None
-        return {"stored": len(records)}
+        memory = PrivateMemory(db, member["id"])
+        saved = memory.alert_history_enabled()
+        if saved:
+            memory.save_alerts(body.project_id, [asdict(r) for r in records])
+        return {"stored": len(records), "saved": saved}
+
+    @app.get("/alerts/history")
+    def saved_alerts(member: dict[str, Any] = Depends(current_member)) -> list[dict[str, Any]]:
+        """Your saved alert history (only exists if you turned it on)."""
+        return PrivateMemory(db, member["id"]).saved_alerts()
+
+    @app.delete("/alerts/history")
+    def delete_saved_alerts(member: dict[str, Any] = Depends(current_member)) -> dict[str, int]:
+        return {"deleted": PrivateMemory(db, member["id"]).delete_saved_alerts()}
+
+    def require_leader(member: dict[str, Any]) -> None:
+        if member["role"] != "leader":
+            raise HTTPException(status_code=403, detail="Only the group leader can do this.")
+
+    @app.get("/members")
+    def group_members(member: dict[str, Any] = Depends(current_member)) -> list[dict[str, Any]]:
+        """Everyone in the group, including offboarded members (leader only)."""
+        require_leader(member)
+        with closing(db.shared()) as conn:
+            return [m for m in list_members(conn, active_only=False) if m["workspace_id"] == member["workspace_id"]]
+
+    @app.post("/offboarding")
+    def offboard(body: OffboardIn, member: dict[str, Any] = Depends(current_member)) -> dict[str, Any]:
+        """Hand a leaving member's eligible work to the Super Brain, verify it, retire their agent."""
+        try:
+            return offboard_member(db, member["id"], body.member_id)
+        except OffboardingError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from None
+
+    @app.get("/offboarding")
+    def offboarding_history(member: dict[str, Any] = Depends(current_member)) -> list[dict[str, Any]]:
+        require_leader(member)
+        with closing(db.shared()) as conn:
+            return handoff_history(conn, member["workspace_id"])
 
     @app.get("/alerts")
     def get_alerts(project_id: str | None = None, member: dict[str, Any] = Depends(current_member)) -> list[dict[str, Any]]:

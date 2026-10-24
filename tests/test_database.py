@@ -14,8 +14,8 @@ from backend.workspaces.demo import seed_demo
 from backend.workspaces.store import is_project_member, projects_for_member
 
 EXPECTED_DEMO_COUNTS = {
-    "workspaces": 1, "members": 3, "projects": 2, "project_members": 5, "agents": 2,
-    "approvals": 0, "shared_findings": 0, "finding_links": 0,
+    "workspaces": 1, "members": 4, "projects": 2, "project_members": 6, "agents": 3,
+    "approvals": 0, "shared_findings": 0, "finding_links": 0, "handoff_events": 0, "handoff_records": 0,
 }
 MARKER = "PRIVATE-MARKER-7f3c: suspect ghost-cell sign error in my branch"
 
@@ -171,7 +171,7 @@ def sign_in(client, member_id):
 def test_demo_members_can_be_listed(client):
     members = client.get("/demo/members").json()
 
-    assert [m["id"] for m in members] == ["leader", "researcher_a", "researcher_b"]
+    assert [m["id"] for m in members] == ["leader", "researcher_a", "researcher_b", "researcher_c"]
 
 
 def test_signed_in_researchers_see_only_their_projects(client):

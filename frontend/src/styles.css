@@ -492,7 +492,42 @@ input.range {
   color: var(--muted);
 }
 
+.handed-off {
+  border: 1px dashed var(--warning);
+  color: var(--warning);
+}
+
+.success-text {
+  color: var(--verified);
+}
+
+.error-text {
+  color: var(--critical);
+}
+
+.steps {
+  padding-left: 0;
+  list-style: none;
+}
+
+.steps li {
+  padding: 4px 0;
+}
+
+.steps .done {
+  color: var(--verified);
+}
+
+.steps .not-done {
+  color: var(--critical);
+}
+
 /* --- Sign-in --- */
+
+.policy {
+  margin-top: 28px;
+  line-height: 1.5;
+}
 
 .sign-in {
   max-width: 440px;

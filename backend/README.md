@@ -78,7 +78,24 @@ It listens on this computer only (`127.0.0.1`), because sign-in is only a protot
 | `GET /alerts` | Your own alerts, newest first (optional `project_id`). Other researchers never see them |
 | `DELETE /alerts` | Clear your alerts |
 
-Alerts are never written to a database, so they disappear when the backend restarts. Saving alert history is opt-in and comes in build step 7.
+| `GET /settings`, `PUT /settings` | Your settings: `save_alert_history` (off by default) |
+| `GET /alerts/history`, `DELETE /alerts/history` | Your saved alerts (only while history is on), or delete them |
+| `GET /policy` | Membership policies disclosed in advance (offboarding) |
+| `GET /members` | Everyone in the group, including offboarded members. Leader only |
+| `POST /offboarding` | Body: `member_id`. Hand a leaving member's eligible work to the Super Brain, verify it, retire their agent. Leader only. Returns a step-by-step report |
+| `GET /offboarding` | Past handoffs. Leader only |
+
+Session alerts are never written to a database, so they disappear when the backend restarts. With alert history turned on, alerts are also saved in your private memory file, never in the shared database.
+
+### Offboarding
+
+The one exception to per-finding approval, published in advance as a membership policy (`backend/knowledge_sharing/offboarding.py`):
+
+1. The group leader starts it, and the member's access is revoked at once.
+2. Eligible work is prepared from their private memory: diagnoses (outcome and issue list, not the agent's conversation), test results, debugging outcomes, unresolved tasks and drafts they hadn't decided on.
+3. Left out: personal notes, drafts they rejected, anything already shared and anything outside this group's projects. Secrets are blanked, and each record keeps its project, so only that project's members can read it. A handoff never marks anything "verified".
+4. The records are transferred and verified in one transaction. If that fails, nothing is stored, the handoff is recorded as failed, and the agent stays active so the leader can retry.
+5. The member's personal agent is retired. Their private memory is not deleted (separate retention policy).
 
 ### How the Super Brain is used in a diagnosis
 
@@ -94,17 +111,18 @@ SQLite files in `backend/data/` (git ignores it; set `SIMGUARD_DATA_DIR` to move
 
 | File | Holds |
 |---|---|
-| `superbrain.db` | The group's shared Super Brain: workspace, members, projects, agents, approvals, shared findings and their links |
-| `private/<member>.db` | One researcher's private memory (runs, episodes and drafts for the Super Brain), split by project. In the product this lives on the researcher's own computer |
+| `superbrain.db` | The group's shared Super Brain: workspace, members, projects, agents, approvals, shared findings, their links, and offboarding handoffs |
+| `private/<member>.db` | One researcher's private memory (runs, episodes, drafts for the Super Brain, settings, and saved alerts if they turned history on), split by project. In the product this lives on the researcher's own computer |
 
 Private and shared data are in different files with different tables, so no shared query can return private memory. `approvals` stores no draft text: rejected drafts never reach the shared database. Approving writes the approval and the finding in one transaction.
 
 When the tables change, `SCHEMA_VERSION` in `backend/db/schema.py` goes up and older database files are refused with instructions to reset them (there are no migrations in the prototype).
 
-Demo workspace: a group leader, Researcher A (projects `heat-diffusion` and `wave-propagation`) and Researcher B (`heat-diffusion` only). Delete everything and reload it with:
+Demo workspace: a group leader, Researcher A (projects `heat-diffusion` and `wave-propagation`), Researcher B (`heat-diffusion` only) and Researcher C (`heat-diffusion`, for the offboarding demo, with sample private work history).
 
 ```
-python -m backend.workspaces.demo --reset
+python -m backend.workspaces.demo            # add what's missing (e.g. Researcher C's history), keep everything else
+python -m backend.workspaces.demo --reset    # delete everything and start again
 ```
 
 ## Evidence rules

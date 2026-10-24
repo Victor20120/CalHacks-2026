@@ -29,6 +29,7 @@ NOT_ANALYZED = json.loads((FIXTURES / "creao_agent2_run_not_analyzed.json").read
 CONTRACT_PROBE = json.loads((FIXTURES / "creao_personal_agent_contract_probe.json").read_text(encoding="utf-8"))
 PERSONAL_DIAGNOSIS = json.loads((FIXTURES / "creao_personal_agent_diagnosis.json").read_text(encoding="utf-8"))
 PERSONAL_INPUTS = {k: PERSONAL_DIAGNOSIS["request"]["body"]["inputs"][k] for k in PERSONAL_REQUIRED_INPUTS}
+NO_SUMMARY = json.loads((FIXTURES / "creao_personal_agent_no_summary.json").read_text(encoding="utf-8"))
 
 GOOD_INPUTS = COMPLETED["request"]["body"]["inputs"]
 FAKE_KEY = "capi_fake_key_for_tests"
@@ -147,10 +148,19 @@ def test_a_zero_score_from_a_connection_test_is_not_an_analysis():
 
 @pytest.mark.parametrize("fixture, ran", [
     (COMPLETED, True), (WITH_ISSUES, True), (MISSING_INPUTS, False), (NOT_ANALYZED, False), (CONTRACT_PROBE, False),
-    (PERSONAL_DIAGNOSIS, True),
+    (PERSONAL_DIAGNOSIS, True), (NO_SUMMARY, True),
 ])
 def test_every_saved_real_run_is_classified_correctly(fixture, ran):
     assert parse_run(fixture["final_response"]).analysis_ran is ran
+
+
+def test_a_full_analysis_without_a_structured_summary_still_counts():
+    # Run 461fed21: only {"response": ...} came back, but with the issue list we asked for.
+    result = parse_run(NO_SUMMARY["final_response"])
+
+    assert result.summary == {}
+    assert len(result.issues) == 9
+    assert result.analysis_ran is True
 
 
 def test_issues_found_count_as_an_analysis_even_without_a_score():

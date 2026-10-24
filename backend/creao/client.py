@@ -210,7 +210,7 @@ def parse_run(raw: dict[str, Any]) -> RunResult:
         status=raw.get("status", ""),
         reply=reply,
         summary=summary,
-        analysis_ran=_analysis_ran(structured, summary),
+        analysis_ran=_analysis_ran(structured, summary, issues),
         issues=issues,
         raw=raw,
     )
@@ -220,15 +220,18 @@ def _is_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
-def _analysis_ran(structured: dict[str, Any], summary: dict[str, Any]) -> bool:
-    """Whether the agent actually analyzed anything. Agents echo the analysis_depth
-    they used: a real depth on real analyses, "none" or "not_run" on runs that only
-    reported their inputs, which can still carry summary counts of zero and a
-    reproducibility_score of 0 (runs 829188d5, 8eb4dc7d). Without an echoed depth,
-    only issues actually found count."""
+def _analysis_ran(structured: dict[str, Any], summary: dict[str, Any], issues: list[dict[str, Any]]) -> bool:
+    """Whether the agent actually analyzed anything. Agents usually echo the
+    analysis_depth they used: a real depth on real analyses, "none" or "not_run" on
+    runs that only reported their inputs, which can still carry summary counts of
+    zero and a reproducibility_score of 0 (runs 829188d5, 8eb4dc7d). Sometimes a full
+    analysis comes back with no structured summary at all, only prose and the issue
+    list we asked for (run 461fed21), so a returned issue list also counts."""
     depth = structured.get("analysis_depth")
     if depth is not None:
         return depth in ANALYSIS_DEPTHS
+    if issues:
+        return True
     return any(_is_number(v) and v > 0 for k, v in summary.items() if k != "reproducibility_score")
 
 

@@ -50,6 +50,11 @@ export default function SuperBrainView({ session, project, query, onQuery }) {
   );
 }
 
+// From an offboarding handoff: shared by group policy, not approved by its author.
+function HandedOffBadge() {
+  return <span className="badge handed-off">handed off at offboarding</span>;
+}
+
 function FindingList({ findings, onOpen, showScore }) {
   return (
     <ul className="finding-list">
@@ -59,8 +64,8 @@ function FindingList({ findings, onOpen, showScore }) {
             {f.title}
           </button>
           <div className="small muted">
-            <VerificationBadge status={f.verification_status} /> {f.project_id} · shared by {f.contributed_by_name} on{" "}
-            {f.approved_at.slice(0, 10)}
+            <VerificationBadge status={f.verification_status} /> {f.handed_off && <HandedOffBadge />} {f.project_id} ·{" "}
+            {f.handed_off ? "from" : "shared by"} {f.contributed_by_name} on {f.approved_at.slice(0, 10)}
             {showScore && ` · match score ${f.score}`}
           </div>
         </li>
@@ -91,6 +96,7 @@ function FindingDetail({ session, id, onOpen, onBack }) {
           <h2>{detail.finding.title}</h2>
           <p>
             <VerificationBadge status={detail.finding.verification_status} />{" "}
+            {detail.finding.handed_off && <HandedOffBadge />}{" "}
             <span className="muted small">
               {detail.finding.category} · {detail.finding.project_id} · shared by {detail.finding.contributed_by_name} on{" "}
               {detail.finding.approved_at}

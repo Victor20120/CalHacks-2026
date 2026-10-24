@@ -4,7 +4,31 @@ One entry per commit, newest first. Each commit adds its own entry with the hash
 
 ---
 
-## 2026-10-24 · `pending` · Add the dashboard, local anomaly checks and alerts
+## 2026-10-24 · `pending` · Add alert history, offboarding and the definition-of-done checks
+
+**Why:** Build plan step 7 and the last items of the prototype definition of done, plus the dashboard click-through check from step 6.
+
+**Changed**
+- Alert history: a per-researcher setting, off by default (`GET`/`PUT /settings`). While on, alerts are also saved to the researcher's private memory (`GET`/`DELETE /alerts/history`), never to the shared database.
+- Added `backend/knowledge_sharing/offboarding.py` and `POST`/`GET /offboarding` (leader only): revoke access, prepare eligible work from private memory (leaving out personal notes, rejected drafts, the agent's conversation text, already-shared work and other groups' content; secrets blanked), transfer and verify in one transaction, then retire the agent. A failed handoff stores nothing, is recorded as failed and can be retried. The membership policy is published at `GET /policy`.
+- New tables, added to existing database files without a reset: `handoff_events` and `handoff_records` (shared), `settings` and `alerts` (private). Shared findings report `handed_off`.
+- Demo: Researcher C with sample private work history for the offboarding demo (`python -m backend.workspaces.demo` adds it without resetting).
+- Dashboard: an Offboarding view for the group leader (who gets Super Brain, Alerts and Offboarding), a "Save alert history" switch, a "handed off at offboarding" badge, and the policy on the sign-in page.
+- CREAO adapter: a returned issue list now also counts as a real analysis, because run `461fed21` came back with no structured summary and no draft was made. That run is saved as a fixture.
+- Findings saved in the same second are listed in the order they were saved.
+- Added `tests/test_offboarding.py`, `tests/test_alert_history.py` and `tests/test_definition_of_done.py`.
+- Updated `README.md`, `backend/README.md`, `Documents/dashboard-design.md` and `Documents/build-plan.md`.
+
+**Checks**
+- `python -m pytest`: 203 passed, 1 skipped (symlink test on Windows). `npm run build` succeeds.
+- Dashboard click-through with Playwright driving Edge, clicking only (runs `66a5d826` and `66bc53ce`): A diagnosed and shared; B got A's finding as context, shared, and B's finding is linked to A's; the leader offboarded C (3 handed off, 2 left out, every step done); C can no longer sign in. B's agent didn't name A's finding in its reply this time.
+- Definition of done: no backend response contains a CREAO key or app ID; the dashboard never handles keys; a full connector session leaves every project file unchanged.
+- The local demo database took the new tables and Researcher C without a reset; A's and B's findings were kept.
+- Secret scan: no API key or app ID in the commit.
+
+---
+
+## 2026-10-24 · `1e557ad` · Add the dashboard, local anomaly checks and alerts
 
 **Why:** Build plan step 6: researchers use SimGuard from a desktop dashboard, and get severity alerts from their running simulations without SimGuard ever touching the run.
 

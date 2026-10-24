@@ -14,12 +14,13 @@ from backend.workspaces.store import is_project_member
 _FINDING_COLUMNS = """
     f.id, f.workspace_id, f.project_id, f.category, f.title, f.summary, f.verification_status,
     f.contributed_by, m.display_name AS contributed_by_name, f.source_creao_run_id, f.created_at,
-    a.edited AS edited_before_approval, a.approved_at
+    a.edited AS edited_before_approval, a.approved_at, hr.finding_id IS NOT NULL AS handed_off
 """
 _FROM = """
     FROM shared_findings f
     JOIN members m ON m.id = f.contributed_by
     JOIN approvals a ON a.id = f.approval_id
+    LEFT JOIN handoff_records hr ON hr.finding_id = f.id
 """
 _TOKEN = re.compile(r"[a-z0-9_.]+")
 _STOPWORDS = frozenset(
@@ -31,7 +32,7 @@ _STOPWORDS = frozenset(
 def list_project_findings(conn: sqlite3.Connection, project_id: str) -> list[dict]:
     """All findings in one project. The caller checks membership first."""
     rows = conn.execute(
-        f"SELECT {_FINDING_COLUMNS} {_FROM} WHERE f.project_id = ? ORDER BY f.created_at DESC, f.id", (project_id,)
+        f"SELECT {_FINDING_COLUMNS} {_FROM} WHERE f.project_id = ? ORDER BY f.created_at DESC, f.rowid DESC", (project_id,)
     )
     return [_row(r) for r in rows]
 
@@ -114,4 +115,5 @@ def _terms(text: str) -> set[str]:
 def _row(row: sqlite3.Row) -> dict:
     finding = dict(row)
     finding["edited_before_approval"] = bool(finding["edited_before_approval"])
+    finding["handed_off"] = bool(finding["handed_off"])  # from an offboarding handoff, not approved by its author
     return finding

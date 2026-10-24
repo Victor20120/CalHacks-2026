@@ -6,8 +6,10 @@ memory. Rejected drafts and draft text never go into the shared database:
 `approvals` only records that an approved finding was approved, by whom.
 """
 
-# Bump when a table changes. An existing database file with another version is
-# refused with instructions to reset it (prototype: there are no migrations).
+# Bump when an existing table changes. An existing database file with another
+# version is refused with instructions to reset it (prototype: there are no
+# migrations). New tables don't need a bump: CREATE TABLE IF NOT EXISTS adds them
+# to existing files.
 SCHEMA_VERSION = 2
 
 FINDING_CATEGORIES = ("research_result", "code_change", "error_diagnosis")
@@ -22,8 +24,10 @@ SHARED_TABLES = (
     "approvals",
     "shared_findings",
     "finding_links",
+    "handoff_events",
+    "handoff_records",
 )
-PRIVATE_TABLES = ("runs", "private_episodes", "share_drafts")
+PRIVATE_TABLES = ("runs", "private_episodes", "share_drafts", "settings", "alerts")
 
 SHARED_SCHEMA = """
 CREATE TABLE IF NOT EXISTS workspaces (
@@ -101,6 +105,28 @@ CREATE TABLE IF NOT EXISTS finding_links (
     created_at       TEXT NOT NULL,
     PRIMARY KEY (from_finding_id, to_finding_id, relation)
 );
+
+-- Offboarding: one row per attempt to hand a leaving member's work to the Super Brain.
+CREATE TABLE IF NOT EXISTS handoff_events (
+    id                   TEXT PRIMARY KEY,
+    workspace_id         TEXT NOT NULL REFERENCES workspaces(id),
+    member_id            TEXT NOT NULL REFERENCES members(id),
+    initiated_by         TEXT NOT NULL REFERENCES members(id),
+    status               TEXT NOT NULL CHECK (status IN ('started', 'completed', 'failed')),
+    records_prepared     INTEGER NOT NULL DEFAULT 0,
+    records_transferred  INTEGER NOT NULL DEFAULT 0,
+    error                TEXT,
+    started_at           TEXT NOT NULL,
+    finished_at          TEXT
+);
+
+-- Which shared findings came from a handoff (and so were not individually approved).
+CREATE TABLE IF NOT EXISTS handoff_records (
+    handoff_id  TEXT NOT NULL REFERENCES handoff_events(id),
+    finding_id  TEXT NOT NULL UNIQUE REFERENCES shared_findings(id),
+    source      TEXT NOT NULL CHECK (source IN ('episode', 'draft')),
+    PRIMARY KEY (handoff_id, finding_id)
+);
 """
 
 PRIVATE_SCHEMA = """
@@ -141,5 +167,25 @@ CREATE TABLE IF NOT EXISTS share_drafts (
     finding_id           TEXT,
     created_at           TEXT NOT NULL,
     decided_at           TEXT
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key    TEXT PRIMARY KEY,
+    value  TEXT NOT NULL
+);
+
+-- Monitoring alerts, saved only while the researcher has alert history turned on
+-- (off by default). Never in the shared database.
+CREATE TABLE IF NOT EXISTS alerts (
+    id           TEXT PRIMARY KEY,
+    project_id   TEXT NOT NULL,
+    run_label    TEXT NOT NULL,
+    severity     TEXT NOT NULL CHECK (severity IN ('informational', 'warning', 'critical')),
+    check_name   TEXT NOT NULL,
+    message      TEXT NOT NULL,
+    metric       TEXT,
+    line_number  INTEGER,
+    line         TEXT NOT NULL DEFAULT '',
+    created_at   TEXT NOT NULL
 );
 """

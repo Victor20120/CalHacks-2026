@@ -4,6 +4,7 @@ import { SeverityBadge } from "./components.jsx";
 import AlertsView from "./views/AlertsView.jsx";
 import DiagnoseView from "./views/DiagnoseView.jsx";
 import DraftsView from "./views/DraftsView.jsx";
+import OffboardingView from "./views/OffboardingView.jsx";
 import SignIn from "./views/SignIn.jsx";
 import SuperBrainView from "./views/SuperBrainView.jsx";
 
@@ -12,7 +13,13 @@ const VIEWS = [
   ["drafts", "Drafts"],
   ["superbrain", "Super Brain"],
   ["alerts", "Alerts"],
+  ["offboarding", "Offboarding"],
 ];
+// The group leader has no personal agent; researchers don't manage membership.
+const VIEWS_FOR_ROLE = {
+  researcher: ["diagnose", "drafts", "superbrain", "alerts"],
+  leader: ["superbrain", "alerts", "offboarding"],
+};
 
 // ?as=researcher_b&view=alerts&project=heat-diffusion opens the dashboard as a demo
 // member (prototype sign-in), e.g. Researcher A and B side by side in two windows.
@@ -79,6 +86,8 @@ export default function App() {
 
   if (!session) return <SignIn onSignIn={signIn} />;
 
+  const allowed = VIEWS_FOR_ROLE[session.member.role] || VIEWS_FOR_ROLE.researcher;
+  const current = allowed.includes(view) ? view : allowed[0];
   const project = projects.find((p) => p.id === projectId);
   const criticalCount = alerts.filter((a) => a.severity === "critical").length;
   const shared = { session, project, projects };
@@ -87,6 +96,9 @@ export default function App() {
     event.preventDefault();
     setView("superbrain");
   }
+
+  // Drafts are only polled for researchers; the leader has none.
+  const showDraftCount = allowed.includes("drafts");
 
   return (
     <div className={`app ${panelOpen ? "" : "panel-closed"}`}>
@@ -122,10 +134,10 @@ export default function App() {
       </header>
 
       <nav className="sidenav">
-        {VIEWS.map(([id, label]) => (
-          <button key={id} className={view === id ? "active" : ""} onClick={() => setView(id)}>
+        {VIEWS.filter(([id]) => allowed.includes(id)).map(([id, label]) => (
+          <button key={id} className={current === id ? "active" : ""} onClick={() => setView(id)}>
             {label}
-            {id === "drafts" && draftCount > 0 && <span className="count">{draftCount}</span>}
+            {id === "drafts" && showDraftCount && draftCount > 0 && <span className="count">{draftCount}</span>}
             {id === "alerts" && criticalCount > 0 && <span className="count critical">{criticalCount}</span>}
           </button>
         ))}
@@ -133,10 +145,11 @@ export default function App() {
 
       <main className="main">
         {!project && <p>You are not a member of any project yet.</p>}
-        {project && view === "diagnose" && <DiagnoseView {...shared} onOpenDrafts={() => setView("drafts")} />}
-        {project && view === "drafts" && <DraftsView {...shared} />}
-        {project && view === "superbrain" && <SuperBrainView {...shared} query={searchQuery} onQuery={setSearchQuery} />}
-        {project && view === "alerts" && <AlertsView {...shared} alerts={alerts} onCleared={() => setAlerts([])} />}
+        {project && current === "diagnose" && <DiagnoseView {...shared} onOpenDrafts={() => setView("drafts")} />}
+        {project && current === "drafts" && <DraftsView {...shared} />}
+        {project && current === "superbrain" && <SuperBrainView {...shared} query={searchQuery} onQuery={setSearchQuery} />}
+        {project && current === "alerts" && <AlertsView {...shared} alerts={alerts} onCleared={() => setAlerts([])} />}
+        {current === "offboarding" && <OffboardingView {...shared} />}
       </main>
 
       <aside className="alerts-panel">

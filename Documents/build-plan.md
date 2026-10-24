@@ -23,8 +23,8 @@
 | 3 | SQLite models and demo data | `backend/db/`, `backend/workspaces/`, `backend/memory/`, `backend/auth/` | Done |
 | 4 | Approval path to publish a finding | `backend/knowledge_sharing/` | Done |
 | 5 | Scoped lookup for Researcher B | `backend/memory/`, `backend/auth/` | Done |
-| 6 | Dashboard and local anomaly checks | `frontend/`, `local_connector/simulation_monitor/`, `backend/monitoring/` | Done except the click-through check |
-| 7 | Optional: alert history and handoff | `backend/monitoring/`, `backend/memory/` | Not started |
+| 6 | Dashboard and local anomaly checks | `frontend/`, `local_connector/simulation_monitor/`, `backend/monitoring/` | Done |
+| 7 | Optional: alert history and handoff | `backend/memory/`, `backend/knowledge_sharing/` | Done |
 
 ---
 
@@ -64,7 +64,7 @@
 
 **Checkpoint 1**
 - [x] The test run completes, and the answer addresses the symptom instead of reporting missing inputs **(uses credits)** — passed 2026-10-23: correctly found the time-step stability violation
-- [ ] Record the credits a run uses. Someone has to read this in the CREAO app, because the `capi_` key can't see usage. Real runs to look up: `790fe5fd` (with issue list) and `dd8668fa`
+- [ ] Record the credits a run uses. Someone has to read this in the CREAO app, because the `capi_` key can't see usage. Full-analysis runs to look up: `dd8668fa`, `790fe5fd`, `e191c825`, `915f1428`, `93ceb050`, `aaa9f564`, `461fed21`, `66a5d826`, `66bc53ce`; short probe runs: `bc7a5d26`, `829188d5`, `8eb4dc7d`, `7bcbb28f`
 - [x] Automated: the adapter returns the reply text from the saved mock response, with no network
 - [x] Automated: the adapter raises a clear error for `failed`, `cancelled` and timeouts
 - [x] The key never appears in logs or printed output (tested for error messages, logs and `repr`)
@@ -157,7 +157,7 @@
 **Checkpoint 6**
 - [x] Automated: each check flags its planted problem at the right severity and leaves clean output alone
 - [x] Manual: a Critical alert shows in the dashboard while the simulation keeps running — passed 2026-10-24 with a real solver run watched through the connector; screenshot taken while it ran, and the solver ended on its own (exit code 1 from its own error). Also an automated test (`test_the_simulation_keeps_running_after_a_critical_alert`)
-- [ ] Manual: the full A → approve → B flow works by clicking in the dashboard only **(uses credits)** — not done yet: needs a person clicking (the same flow is verified through the API and command line in steps 4 and 5)
+- [x] Manual: the full A → approve → B flow works by clicking in the dashboard only **(uses credits)** — passed 2026-10-24, automated with Playwright driving Edge (runs `66a5d826` and `66bc53ce`): A diagnosed and shared by clicking; B's diagnosis showed A's finding under "Retrieved from the Super Brain"; B shared, and B's finding is linked to A's. This time B's agent answered the dx² trap correctly but didn't name A's finding in its reply (it did in step 5's run `93ceb050`). The first attempt (run `461fed21`) found a real bug: a full analysis returned without a summary was taken for "no analysis", so no draft was made. Fixed in the adapter, with that run saved as a test fixture
 - [x] Pages look right at 1280px and 1440px wide — checked with headless-browser screenshots of every view at both widths; below 1280px a "built for laptop and desktop" notice appears
 
 ---
@@ -165,14 +165,17 @@
 ## Step 7 — Optional: alert history and handoff (if time allows)
 
 **Tasks**
-- [ ] Alert history saving toggle, off by default
-- [ ] Offboarding: revoke access → prepare eligible records → exclude private and sensitive data → transfer → verify → deactivate the agent
+- [x] Alert history saving toggle, off by default (`GET`/`PUT /settings`). While on, alerts are also saved to the researcher's private memory (`GET`/`DELETE /alerts/history`); never to the shared database
+- [x] Offboarding (`POST /offboarding`, leader only): revoke access → prepare eligible records → exclude private and sensitive data → transfer → verify → deactivate the agent. Handed-off findings keep their project and are marked "handed off at offboarding"
+- [x] The membership policy is published in advance (`GET /policy`) and shown on the sign-in page and in the leader's Offboarding view
+- [x] Demo: Researcher C with sample private history (`python -m backend.workspaces.demo`), so offboarding can be shown without touching A and B
 
 **Checkpoint 7**
-- [ ] Automated: with saving off, nothing is written to `alerts`
-- [ ] Automated: after offboarding, the member's requests are denied
-- [ ] Automated: the handoff excludes credentials and private conversations
-- [ ] Automated: a failed handoff is reported as failed, never as complete
+- [x] Automated: with saving off, nothing is written to `alerts` (checked down to the raw database files)
+- [x] Automated: after offboarding, the member's requests are denied
+- [x] Automated: the handoff excludes credentials and private conversations (also personal notes, drafts the member rejected, and other groups' content)
+- [x] Automated: a failed handoff is reported as failed, never as complete (nothing is stored, the agent stays active, and the leader can retry)
+- [x] Manual: the leader offboarded Researcher C by clicking in the dashboard — 3 records handed off, 2 left out, every step ✓; C disappeared from sign-in and B saw C's work marked "handed off at offboarding"
 
 ---
 
@@ -185,9 +188,9 @@ Demonstrate on one machine if necessary, with two demo researcher profiles in on
 - [x] Use the configured CREAO keys and known agent IDs to analyze a sample error (steps 1, 2 and 4)
 - [x] Store private project-specific context and a group shared finding separately (steps 3 and 4)
 - [x] Show Informational / Warning / Critical alerts in the dashboard without stopping the simulation (step 6)
-- [ ] Keep persistent alert saving opt-in and off by default (step 7)
+- [x] Keep persistent alert saving opt-in and off by default (step 7)
 - [x] Present a proposed knowledge contribution, require approval, and store only approved findings (step 4; dashboard view in step 6)
 - [x] Researcher B can retrieve Researcher A's approved finding and use it to inform a diagnosis (step 5)
 - [x] Demonstrate project isolation: an unauthorized researcher cannot retrieve restricted knowledge (steps 3–5)
-- [ ] Demonstrate handoff → verification → deactivation for a demo agent (step 7)
-- [ ] Never expose provider credentials or change source files without approval (holds so far; confirm at the end)
+- [x] Demonstrate handoff → verification → deactivation for a demo agent (step 7)
+- [x] Never expose provider credentials or change source files without approval (`tests/test_definition_of_done.py`: no backend response contains a key or app ID, even when CREAO rejects a key; the dashboard source never handles keys; a full connector session leaves every project file byte-for-byte unchanged; the connector writes nothing but its own grants file)

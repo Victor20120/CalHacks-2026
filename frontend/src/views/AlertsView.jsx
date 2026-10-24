@@ -7,7 +7,37 @@ export default function AlertsView({ session, project, alerts, onCleared }) {
   const [files, setFiles] = useState([]);
   const [file, setFile] = useState("");
   const [watches, setWatches] = useState([]);
+  const [saveHistory, setSaveHistory] = useState(false);
+  const [history, setHistory] = useState([]);
   const [error, setError] = useState("");
+
+  async function loadHistory() {
+    try {
+      const settings = await backend("/settings", { token: session.token });
+      setSaveHistory(settings.save_alert_history);
+      setHistory(await backend("/alerts/history", { token: session.token }));
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  useEffect(() => {
+    loadHistory();
+  }, [alerts.length]);
+
+  async function toggleHistory(enabled) {
+    try {
+      await backend("/settings", { method: "PUT", body: { save_alert_history: enabled }, token: session.token });
+      setSaveHistory(enabled);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  async function deleteHistory() {
+    await backend("/alerts/history", { method: "DELETE", token: session.token });
+    setHistory([]);
+  }
 
   useEffect(() => {
     setFiles([]);
@@ -129,7 +159,15 @@ export default function AlertsView({ session, project, alerts, onCleared }) {
           <h3>Alerts in {project.name}</h3>
           {alerts.length > 0 && <button onClick={clear}>Clear</button>}
         </div>
-        <p className="muted small">Kept for this session only and never saved.</p>
+        <label className="check">
+          <input type="checkbox" checked={saveHistory} onChange={(e) => toggleHistory(e.target.checked)} />
+          Save alert history in my private memory (off by default)
+        </label>
+        <p className="muted small">
+          {saveHistory
+            ? "New alerts are also saved to your private memory, visible only to you."
+            : "Kept for this session only and never saved."}
+        </p>
         {!mine.length && <p className="muted">No alerts.</p>}
         <table className="alert-table">
           <tbody>
@@ -152,6 +190,32 @@ export default function AlertsView({ session, project, alerts, onCleared }) {
           </tbody>
         </table>
       </section>
+
+      {history.length > 0 && (
+        <section className="card">
+          <div className="card-header">
+            <h3>Saved alert history</h3>
+            <button onClick={deleteHistory}>Delete history</button>
+          </div>
+          <table className="alert-table">
+            <tbody>
+              {history.map((a) => (
+                <tr key={a.id}>
+                  <td>
+                    <SeverityBadge severity={a.severity} />
+                  </td>
+                  <td>{a.message}</td>
+                  <td className="muted small">
+                    {a.project_id} · {a.run_label}
+                    <br />
+                    {a.created_at.replace("T", " ").slice(0, 19)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
     </div>
   );
 }

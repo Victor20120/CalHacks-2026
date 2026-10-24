@@ -122,6 +122,58 @@ class PrivateMemory:
             )
             conn.commit()
 
+    # --- Settings and alert history (history stays off unless the researcher turns it on) ---
+
+    def alert_history_enabled(self) -> bool:
+        with closing(self.db.private(self.member_id)) as conn:
+            row = conn.execute("SELECT value FROM settings WHERE key = 'save_alert_history'").fetchone()
+        return row is not None and row["value"] == "on"
+
+    def set_alert_history(self, enabled: bool) -> None:
+        with closing(self.db.private(self.member_id)) as conn:
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('save_alert_history', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                ("on" if enabled else "off",),
+            )
+            conn.commit()
+
+    def save_alerts(self, project_id: str, alerts: list[dict]) -> int:
+        """Save alerts to history. Callers only do this while history is turned on."""
+        self._check(project_id)
+        with closing(self.db.private(self.member_id)) as conn:
+            conn.executemany(
+                """INSERT OR IGNORE INTO alerts
+                   (id, project_id, run_label, severity, check_name, message, metric, line_number, line, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                [(a["id"], project_id, a["run_label"], a["severity"], a["check"], a["message"], a["metric"],
+                  a["line_number"], a["line"], a["created_at"]) for a in alerts],
+            )
+            conn.commit()
+        return len(alerts)
+
+    def saved_alerts(self) -> list[dict]:
+        """Saved alerts, newest first, only for projects the researcher is still in."""
+        with closing(self.db.shared()) as conn:
+            project_ids = [p["id"] for p in projects_for_member(conn, self.member_id)]
+        if not project_ids:
+            return []
+        marks = ",".join("?" * len(project_ids))
+        with closing(self.db.private(self.member_id)) as conn:
+            rows = conn.execute(
+                f"""SELECT id, project_id, run_label, severity, check_name AS "check", message, metric,
+                           line_number, line, created_at
+                    FROM alerts WHERE project_id IN ({marks}) ORDER BY created_at DESC, rowid DESC""",
+                project_ids,
+            )
+            return [dict(row) for row in rows]
+
+    def delete_saved_alerts(self) -> int:
+        with closing(self.db.private(self.member_id)) as conn:
+            deleted = conn.execute("DELETE FROM alerts").rowcount
+            conn.commit()
+        return deleted
+
     def _check(self, project_id: str) -> None:
         with closing(self.db.shared()) as conn:
             require_project_member(conn, self.member_id, project_id)

@@ -4,12 +4,16 @@ import { ErrorNote } from "../components.jsx";
 
 export default function SignIn({ onSignIn }) {
   const [members, setMembers] = useState([]);
+  const [policy, setPolicy] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
     backend("/demo/members")
       .then(setMembers)
       .catch(() => setError("Can't reach the backend. Start it with: python -m uvicorn backend.api.app:app --port 8000"));
+    backend("/policy")
+      .then((p) => setPolicy(p.offboarding))
+      .catch(() => {});
   }, []);
 
   async function choose(id) {
@@ -33,6 +37,7 @@ export default function SignIn({ onSignIn }) {
         ))}
       </div>
       <ErrorNote error={error} />
+      {policy && <p className="muted small policy">{policy}</p>}
     </div>
   );
 }

@@ -52,6 +52,8 @@ Dashboard
 └── Offboarding                  (leader only, optional)
 ```
 
+Built so far: researchers get Diagnose, Drafts, Super Brain and Alerts; the group leader (who has no personal agent) gets Super Brain, Alerts and Offboarding. The two settings live where they're used: "Save alert history" in Alerts, and "Give my agent relevant findings from the Super Brain" in Diagnose.
+
 > Template for each view: **Purpose · Shows · Actions · Rules**
 
 ### 4.1 Workspace & project picker

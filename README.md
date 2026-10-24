@@ -40,7 +40,9 @@ cd frontend && npm run dev                             # 3. the dashboard
 
 Open http://127.0.0.1:5173 and choose a demo member. To show two researchers side by side, open http://127.0.0.1:5173/?as=researcher_a and http://127.0.0.1:5173/?as=researcher_b in two windows (add `&view=alerts`, `drafts` or `superbrain` to start on a view).
 
-To see live alerts, grant a project folder in the Alerts view, start watching its log, then run the sample solver slowly so you can watch it fail: `python tests/fixtures/sample_project/heat2d.py tests/fixtures/sample_project/config.json --delay 0.5 > tests/fixtures/sample_project/live.log`. SimGuard only reads the log; the solver keeps running until it stops on its own.
+To see live alerts, grant a project folder in the Alerts view, start watching its log, then run the sample solver slowly so you can watch it fail: `python tests/fixtures/sample_project/heat2d.py tests/fixtures/sample_project/config.json --delay 0.5 > tests/fixtures/sample_project/live.log`. SimGuard only reads the log; the solver keeps running until it stops on its own. Alerts are kept for the session only, unless you tick "Save alert history" (off by default).
+
+To show offboarding, first run `python -m backend.workspaces.demo` once (it adds Researcher C's sample work history), then sign in as the Group Leader and use the Offboarding view on Researcher C. The handed-off work appears in the Super Brain marked "handed off at offboarding". Offboarding can't be undone except with `python -m backend.workspaces.demo --reset`, which starts the demo over.
 
 ## Try it from the command line
 
