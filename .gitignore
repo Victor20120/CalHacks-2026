@@ -1,0 +1,16 @@
+# Secrets (e.g. CREAO API key)
+.env
+.env.*
+
+# Dependencies and build output
+node_modules/
+dist/
+build/
+__pycache__/
+.venv/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
