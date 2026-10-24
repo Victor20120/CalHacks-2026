@@ -18,7 +18,7 @@
 | # | Step | Main folders | Status |
 |---|---|---|---|
 | 0 | Setup | `backend/` | Mostly done |
-| 1 | Verify CREAO with a known-good input | `backend/creao/`, `tests/` | In progress |
+| 1 | Verify CREAO with a known-good input | `backend/creao/`, `tests/` | Done except recording credits |
 | 2 | Diagnosis endpoint with file permissions | `backend/api/`, `backend/orchestration/`, `local_connector/` | Not started |
 | 3 | SQLite models and demo data | `backend/db/`, `backend/workspaces/`, `backend/memory/`, `backend/auth/` | Not started |
 | 4 | Approval path to publish a finding | `backend/knowledge_sharing/` | Not started |
@@ -30,7 +30,7 @@
 
 ## Standing checks (before every push)
 
-- [ ] All tests pass, using mock CREAO only
+- [ ] All tests pass (`python -m pytest` from the repo root), using mock CREAO only
 - [ ] `git status` shows no `.env`, `.db` files or other secrets about to be committed
 - [ ] No code edits source files or stops a simulation without the researcher's approval
 - [ ] Any dashboard page you changed looks right at 1280px and 1440px wide
@@ -43,7 +43,8 @@
 - [x] CREAO API Trigger key (`capi_`) and app ID for the hub agent in `backend/.env`
 - [x] `backend/.env.example` listing every variable name (no values)
 - [ ] Every teammate installs Python and Node.js, clones the repo and creates their own `backend/.env`
-- [ ] Python virtual environment and `backend/requirements.txt` (FastAPI, uvicorn, requests, python-dotenv, pytest)
+- [x] `backend/requirements.txt` (requests, python-dotenv, pytest; FastAPI and uvicorn get added in step 2)
+- [ ] Python virtual environment (optional; packages are currently installed in the global Python)
 
 **Checkpoint 0**
 - [x] `git check-ignore backend/.env` prints `backend/.env`
@@ -58,15 +59,17 @@
 - [x] For each configured agent, write down the exact input fields it expects. Hub agent: `project_path`, `observed_symptom`, `focus_areas`, plus optional `analysis_depth` (recorded in `backend/README.md`)
 - [x] Run one test with every field filled in, using pasted evidence text (e.g. a short log snippet showing a NaN), not a local path
 - [x] Save that real request and response, with keys removed, in `tests/fixtures/` to use as the mock CREAO (`creao_hub_run_completed.json`)
-- [ ] Decide how the dashboard gets the itemized issue list. The structured output has only counts; the details are only in the prose reply (option: change the agent's instructions to return them as a list)
-- [ ] Move the working request from `testcreo.py` into a small adapter in `backend/creao/` (start run, poll, return result), and keep `testcreo.py` working
+- [x] Decide how the dashboard gets the itemized issue list. Decision: every hub run sends an extra `output_format` input asking the agent to end its reply with a JSON issue list, and the adapter moves it into `result.issues`. No change to the agent in CREAO needed
+- [x] Move the working request from `testcreo.py` into a small adapter in `backend/creao/` (start run, poll, return result), and keep `testcreo.py` working (`backend/creao/client.py`; `testcreo.py` unchanged)
 
 **Checkpoint 1**
 - [x] The test run completes, and the answer addresses the symptom instead of reporting missing inputs **(uses credits)** — passed 2026-10-23: correctly found the time-step stability violation
-- [ ] Record the credits that run used (balance before and after)
-- [ ] Automated: the adapter returns the reply text from the saved mock response, with no network
-- [ ] Automated: the adapter raises a clear error for `failed`, `cancelled` and timeouts
-- [ ] The key never appears in logs or printed output
+- [ ] Record the credits a run uses. Someone has to read this in the CREAO app, because the `capi_` key can't see usage. Real runs to look up: `790fe5fd` (with issue list) and `dd8668fa`
+- [x] Automated: the adapter returns the reply text from the saved mock response, with no network
+- [x] Automated: the adapter raises a clear error for `failed`, `cancelled` and timeouts
+- [x] The key never appears in logs or printed output (tested for error messages, logs and `repr`)
+- [x] Manual: the adapter reads back both real runs from CREAO correctly (status checks only, no credits)
+- [x] Manual: the adapter starts a real run and gets back 6 issues that match the agent's summary counts **(uses credits)** — passed 2026-10-23, run `790fe5fd`
 
 ---
 

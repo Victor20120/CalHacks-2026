@@ -8,6 +8,7 @@ A collaborative AI research assistant for research groups that build custom nume
 
 - [Build plan](Documents/build-plan.md): ordered steps for the first milestone, with a checkpoint test after each
 - [Dashboard design](Documents/dashboard-design.md): desktop layout and views
+- [Changelog](CHANGELOG.md): what each commit changed
 
 ## Folder map
 
@@ -22,5 +23,6 @@ A collaborative AI research assistant for research groups that build custom nume
 ## Setup so far
 
 1. Copy `backend/.env.example` to `backend/.env` and fill in the CREAO keys and app IDs. Never commit `.env`.
-2. Install the two packages the CREAO test uses: `pip install requests python-dotenv`
-3. Check that CREAO works (this starts a real run and uses credits): `cd backend` then `python testcreo.py`
+2. Install the Python packages: `python -m pip install -r backend/requirements.txt`
+3. Run the tests from the repo root (no network, no credits): `python -m pytest`
+4. Check that CREAO works (this starts a real run and uses credits): `cd backend` then `python testcreo.py`

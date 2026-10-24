@@ -63,6 +63,7 @@ Dashboard
 ### 4.2 Diagnosis
 - Purpose: _TODO_
 - Shows: observed symptoms, retrieved prior evidence, hypothesis, confidence, proposed validation steps, each labelled separately
+- Data available now from the CREAO adapter: the prose reply, summary counts, and an issue list (title, agent status, confidence, evidence, proposed validation)
 - Actions: _TODO_
 - Rules: a proposed code edit is never applied without approval.
 
@@ -125,6 +126,7 @@ Dashboard
 |---|---|---|
 | Alert severity | Informational, Warning, Critical | _TODO: colours_ |
 | Verification status | Hypothesis, supported, verified, unresolved | A hypothesis must never look like a fact |
+| Agent's issue status | Agent-confirmed vs suspected | Agent-confirmed is still not researcher-verified; style it differently from verified |
 | Private vs shared | Private project memory vs Super Brain finding | _TODO_ |
 
 ---

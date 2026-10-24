@@ -1,0 +1,26 @@
+{
+  "note": "Real CREAO run captured 2026-10-23 (fetched from run history, no credits). Sent without the required inputs. App ID redacted; no API key.",
+  "request": {
+    "method": "POST",
+    "path": "/runs",
+    "body": {
+      "appId": "<APP_ID>",
+      "inputs": {
+        "prompt": "Analyze this test simulation data."
+      }
+    }
+  },
+  "final_response": {
+    "id": "5d8be45e-4cca-405f-a1e5-5d866c783e71",
+    "status": "completed",
+    "threadId": "15a56402-8d3e-435e-82ef-f2b4922f1dd2",
+    "result": {
+      "text": "{\"response\":\"I'll start by validating the inputs and reading the agent's skill.The prompt only says \\\"Analyze this test simulation data\\\" and the workspace is empty \u2014 no project directory and no uploaded artifacts. Three required inputs are missing: **project_path** (free text \u2014 paste an absolute path, or upload files), **observed_symptom** (free text \u2014 what looked wrong), and **focus_areas**.\"}",
+      "chatText": "I'll start by validating the inputs and reading the agent's skill.The prompt only says \"Analyze this test simulation data\" and the workspace is empty \u2014 no project directory and no uploaded artifacts. Three required inputs are missing: **project_path** (free text \u2014 paste an absolute path, or upload files), **observed_symptom** (free text \u2014 what looked wrong), and **focus_areas**."
+    },
+    "errorCode": null,
+    "startedAt": "2026-10-24T03:32:07.852Z",
+    "completedAt": "2026-10-24T03:32:23.778Z",
+    "createdAt": "2026-10-24T03:32:07.834Z"
+  }
+}
