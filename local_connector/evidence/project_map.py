@@ -35,7 +35,7 @@ README = re.compile(r"^readme(\.\w+)?$", re.IGNORECASE)
 DEPENDENCY_FILES = {
     "requirements.txt", "environment.yml", "environment.yaml", "pyproject.toml", "setup.py", "setup.cfg",
     "pipfile", "cmakelists.txt", "makefile", "package.json", "cargo.toml", "project.toml", "description",
-    "meson.build", "configure.ac",
+    "meson.build", "configure.ac", "cmakepresets.json", "cmakeuserpresets.json", "fpm.toml",
 }
 NOT_CONFIG = {"package-lock.json", "yarn.lock", "poetry.lock", "pipfile.lock", "manifest.toml"}
 CODE_SUFFIXES = {".py", ".m", ".jl", ".f", ".f90", ".f95", ".f03", ".f08", ".c", ".cc", ".cpp", ".cxx", ".h",

@@ -2,12 +2,15 @@ import { randomBytes } from "node:crypto";
 import * as vscode from "vscode";
 import { PersonalAgentClient, AgentSettings, AgentSession, AgentData, ProjectMap } from "./personalAgentClient";
 import { personalAgentHtml } from "./personalAgentHtml";
+import { SIMULATION_SETUP_REQUEST } from "./simulationSetup";
 
 interface Deps {
   settings(): AgentSettings;
   ensureProject(): Promise<boolean>;
   pickFolder(): Promise<vscode.WorkspaceFolder | undefined>;
   ensureGranted(folder: string): Promise<string | undefined>;
+  // The granted folder (by name) the agent may read; ask=true may offer to allow the open folder.
+  chatFolder(ask: boolean): Promise<string | undefined>;
 }
 const emptyData = (): AgentData => ({ exchanges: [], instructions: "", defaults: "", overview: null, pendingJobId: null });
 
@@ -16,10 +19,12 @@ export class PersonalAgentPanel implements vscode.Disposable {
   private session?: AgentSession;
   private data = emptyData();
   private preview?: ProjectMap;
+  private folder?: string;
   private pending?: { id: string; kind: "personal_chat" | "overview"; question?: string };
   private busy = false;
   private error = "";
   private notice = "";
+  private composeRequest?: { id: string; text: string };
   private generation = 0;
   private timer?: ReturnType<typeof setTimeout>;
   private readonly configListener: vscode.Disposable;
@@ -43,6 +48,16 @@ export class PersonalAgentPanel implements vscode.Disposable {
     await this.load();
   }
 
+  async showSimulationSetup(): Promise<void> {
+    await this.show();
+    if (this.panel) this.prepareSimulationSetup();
+  }
+
+  private prepareSimulationSetup(): void {
+    this.composeRequest = { id: randomBytes(8).toString("hex"), text: SIMULATION_SETUP_REQUEST };
+    this.render();
+  }
+
   dispose(): void {
     this.configListener.dispose();
     this.reset();
@@ -59,6 +74,7 @@ export class PersonalAgentPanel implements vscode.Disposable {
     this.pending = undefined;
     this.busy = false;
     this.error = this.notice = "";
+    this.composeRequest = undefined;
     return this.generation;
   }
 
@@ -72,10 +88,12 @@ export class PersonalAgentPanel implements vscode.Disposable {
       files: map.files, excerpts: map.excerpts, stats: map.stats }, null, 2) : "";
     void this.panel.webview.postMessage({ type: "state", ready: !!session, busy: this.busy,
       agentName,
-      identity: session ? `${session.memberName} · ${session.projectName}` : "Connecting to ExpandRG AI…",
+      identity: session ? `${session.memberName} · ${session.projectName}${this.folder ? ` · can read ${this.folder}` : ""}`
+        : "Connecting to ExpandRG AI…",
       exchanges: this.data.exchanges, rules: this.data.instructions, defaults: this.data.defaults,
       overview: this.data.overview, pending: !!this.pending, pendingQuestion: this.pending?.question,
       error: this.error, notice: this.notice, preview,
+      composeRequest: this.composeRequest,
       previewStats: map ? `${map.files.length} files mapped · ${map.total_chars} characters of project context · ${map.redactions} secrets blanked. Review before sending to CREAO.` : "",
       ...extra });
   }
@@ -87,10 +105,11 @@ export class PersonalAgentPanel implements vscode.Disposable {
     try {
       const session = await this.client.signIn({ ...this.deps.settings() });
       if (!this.current(generation)) return;
-      const data = await this.client.load(session);
+      const [data, folder] = await Promise.all([this.client.load(session), this.deps.chatFolder(false)]);
       if (!this.current(generation)) return;
       this.session = session;
       this.data = data;
+      this.folder = folder;
       if (this.panel) this.panel.title = `ExpandRG AI · ${data.agent?.name || session.agent?.name || "Personal agent"}`;
       if (data.pendingJobId) {
         this.pending = { id: data.pendingJobId, kind: "personal_chat" };
@@ -108,9 +127,18 @@ export class PersonalAgentPanel implements vscode.Disposable {
   private async handle(message: unknown): Promise<void> {
     if (!message || typeof message !== "object") return;
     const value = message as Record<string, unknown>;
+    if (value.action === "setupDraftHandled" && this.composeRequest && value.id === this.composeRequest.id) {
+      this.composeRequest = undefined;
+      this.notice = value.applied === true
+        ? "Review the setup request, then Send. Your agent will inspect permitted project files and propose commands for you to run."
+        : "Your current draft is kept. Send or clear it, then choose Set up simulation again.";
+      this.render();
+      return;
+    }
     if (value.action === "ready") { this.render(); return; }
     if (value.action === "refresh" && !this.busy) { await this.load(); return; }
     if (!this.session || this.busy) return;
+    if (value.action === "setup") { this.prepareSimulationSetup(); return; }
     if (value.action === "discardMap") { this.preview = undefined; this.render(); return; }
     if (!["send", "saveRules", "clear", "map", "sendMap"].includes(String(value.action))) return;
     const session = this.session, generation = this.generation;
@@ -120,7 +148,10 @@ export class PersonalAgentPanel implements vscode.Disposable {
     try {
       if (value.action === "send") {
         if (typeof value.message !== "string" || !value.message.trim() || value.message.length > 4000) throw new Error("Enter a message of up to 4,000 characters.");
-        const job = await this.client.send(session, value.message.trim());
+        const folder = await this.deps.chatFolder(true);
+        if (!this.current(generation)) return;
+        this.folder = folder;
+        const job = await this.client.send(session, value.message.trim(), folder);
         if (!this.current(generation)) return;
         if (job.instructions != null) this.data.instructions = job.instructions;
         this.pending = { id: job.job_id, kind: "personal_chat", question: value.message.trim() };
@@ -144,6 +175,8 @@ export class PersonalAgentPanel implements vscode.Disposable {
         const grant = await this.deps.ensureGranted(folder.uri.fsPath);
         if (!grant || !this.current(generation)) return;
         const map = await this.client.map(session, folder.uri.fsPath);
+        if (!this.current(generation)) return;
+        this.folder = await this.deps.chatFolder(false);
         if (!this.current(generation)) return;
         this.preview = map;
         this.notice = "The project map is ready to review. Nothing has been sent to CREAO yet.";

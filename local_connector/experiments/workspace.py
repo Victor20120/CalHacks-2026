@@ -22,16 +22,21 @@ class ExperimentRefused(ValueError):
 def copy_project(root: Path, dest: Path) -> int:
     """Copy the project into dest, leaving out tool folders and sensitive files
     (.git, .env, keys, ...). Returns the bytes copied."""
-    root, total = Path(root), 0
+    root, dest, total = Path(root).resolve(), Path(dest).resolve(), 0
+    if dest == root or root in dest.parents:
+        raise ExperimentRefused("Save project versions outside the source project folder.")
     for dirpath, dirnames, filenames in os.walk(root):
         rel_dir = Path(dirpath).relative_to(root)
         dirnames[:] = [d for d in sorted(dirnames)
-                       if d not in SKIP_DIRS and not d.endswith(".egg-info") and not path_problem((rel_dir / d / "x").as_posix())]
+                       if d not in SKIP_DIRS and not (Path(dirpath) / d).is_symlink()
+                       and not d.endswith(".egg-info") and not path_problem((rel_dir / d / "x").as_posix())]
         for name in sorted(filenames):
             relative = rel_dir / name
             if path_problem(relative.as_posix()):
                 continue
             source = Path(dirpath) / name
+            if source.is_symlink():
+                continue
             total += source.stat().st_size
             if total > MAX_COPY_BYTES:
                 shutil.rmtree(dest, ignore_errors=True)

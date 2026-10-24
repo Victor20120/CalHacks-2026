@@ -47,17 +47,34 @@ export default function DraftsView({ session, projects }) {
       <ErrorNote error={error} />
       {drafts && !drafts.length && <p className="muted">No drafts waiting.</p>}
       {drafts?.map((d) => (
-        <DraftCard key={d.id} draft={d} projectName={projectName(d.project_id)} onDecide={decide} />
+        <DraftCard key={d.id} session={session} draft={d} projectName={projectName(d.project_id)} onDecide={decide} />
       ))}
     </div>
   );
 }
 
-function DraftCard({ draft, projectName, onDecide }) {
+// A run watched up to a day before the draft is offered first: it's probably the one it's about.
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function DraftCard({ session, draft, projectName, onDecide }) {
   const [title, setTitle] = useState(draft.title);
   const [summary, setSummary] = useState(draft.summary);
   const [category, setCategory] = useState(draft.category);
   const [status, setStatus] = useState(draft.verification_status);
+  const [runs, setRuns] = useState([]);
+  const [runId, setRunId] = useState("");
+
+  useEffect(() => {
+    backend(`/simulation-runs?project_id=${encodeURIComponent(draft.project_id)}`, { token: session.token })
+      .then((list) => {
+        const own = list.filter((r) => r.member_id === session.member.id);
+        setRuns(own);
+        const made = Date.parse(draft.created_at);
+        const recent = own.find((r) => Date.parse(r.started_at) <= made && made - Date.parse(r.started_at) < DAY_MS);
+        if (recent) setRunId(recent.id);
+      })
+      .catch(() => setRuns([]));
+  }, [draft.id]);
 
   return (
     <section className="card draft">
@@ -90,13 +107,26 @@ function DraftCard({ draft, projectName, onDecide }) {
           </select>
         </label>
       </div>
+      {runs.length > 0 && (
+        <label>
+          Attach a run (its graph shows with this update, for you and your leader)
+          <select value={runId} onChange={(e) => setRunId(e.target.value)}>
+            <option value="">No run</option>
+            {runs.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.run_label} · {r.started_at.slice(0, 16).replace("T", " ")} · {r.critical} critical, {r.warning} warning{r.warning === 1 ? "" : "s"}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       {status === "verified" && (
         <p className="small warning-note">Choose "verified" only if you have checked it yourself, for example by rerunning.</p>
       )}
       <div className="actions">
         <button
           className="primary"
-          onClick={() => onDecide(draft, "approve", { title, summary, category, verification_status: status })}
+          onClick={() => onDecide(draft, "approve", { title, summary, category, verification_status: status, run_id: runId || null })}
         >
           Share with everyone in {projectName}
         </button>

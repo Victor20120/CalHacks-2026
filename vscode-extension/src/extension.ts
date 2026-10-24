@@ -4,7 +4,6 @@
 // a simulation.
 
 import { ChildProcess, spawn } from "child_process";
-import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 import { call, HttpError, isUp } from "./http";
@@ -15,7 +14,6 @@ import { PersonalAgentPanel } from "./personalAgent";
 const POLL_MS = 3000;
 let connectorProcess: ChildProcess | undefined;
 let output: vscode.OutputChannel;
-let terminalRuns: ReturnType<typeof watchTerminalRuns>;
 
 function settings() {
   const c = vscode.workspace.getConfiguration("expandrg");
@@ -26,6 +24,7 @@ function settings() {
     connectorUrl: c.get<string>("connectorUrl", "http://127.0.0.1:8001"),
     dashboardUrl: c.get<string>("dashboardUrl", "http://127.0.0.1:5173"),
     connectorFolder: c.get<string>("connectorFolder", ""),
+    group: c.get<string>("group", ""),
     pythonPath: c.get<string>("pythonPath", "python"),
     watchTerminalRuns: c.get<boolean>("watchTerminalRuns", true),
   };
@@ -38,12 +37,12 @@ export async function activate(context: vscode.ExtensionContext) {
   status.tooltip = "ExpandRG: open the dashboard";
   status.text = "ExpandRG";
   status.show();
-  const runButton = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 49);
-  runButton.text = "$(play) Run a simulation";
-  runButton.tooltip = "ExpandRG: start one of this project's simulations (from expandrg.json). ExpandRG watches it; it never stops it.";
-  runButton.command = "expandrg.runSimulation";
-  runButton.show();
-  const personalAgent = new PersonalAgentPanel({ settings, ensureProject, pickFolder, ensureGranted });
+  const setupButton = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 49);
+  setupButton.text = "$(tools) Set up simulation";
+  setupButton.tooltip = "Ask your personal agent to inspect this project and help prepare its build and run commands.";
+  setupButton.command = "expandrg.setupSimulation";
+  setupButton.show();
+  const personalAgent = new PersonalAgentPanel({ settings, ensureProject, pickFolder, ensureGranted, chatFolder });
   const chatButton = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 48);
   chatButton.text = "$(comment-discussion) ExpandRG AI";
   chatButton.tooltip = "Talk to ExpandRG AI, powered by CREAO. Understand this project and refine your simulation setup.";
@@ -53,7 +52,7 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     output,
     status,
-    runButton,
+    setupButton,
     personalAgent,
     chatButton,
     vscode.commands.registerCommand("expandrg.openPersonalAgent", () => personalAgent.show()),
@@ -62,13 +61,13 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("expandrg.watchLogFile", watchLogFile),
     vscode.commands.registerCommand("expandrg.stopWatching", stopWatching),
     vscode.commands.registerCommand("expandrg.startConnector", () => startConnector(true)),
-    vscode.commands.registerCommand("expandrg.runSimulation", runSimulation),
+    vscode.commands.registerCommand("expandrg.setupSimulation", () => personalAgent.showSimulationSetup()),
   );
   const s = settings();
   output.appendLine(`ExpandRG ${context.extension.packageJSON.version} started as ${s.member}` +
     `${s.project ? ` in project ${s.project}` : " (no project chosen yet)"}; watching terminal runs: ${s.watchTerminalRuns ? "on" : "off"}.`);
 
-  terminalRuns = watchTerminalRuns(context, {
+  watchTerminalRuns(context, {
     settings,
     ensureProject,
     ensureGranted,
@@ -99,7 +98,7 @@ async function refreshStatus(status: vscode.StatusBarItem) {
     output.appendLine(up ? `Connected to the local connector at ${s.connectorUrl}.` : `The local connector at ${s.connectorUrl} is not running.`);
     if (up) {
       vscode.window.showInformationMessage(
-        "ExpandRG is connected. Runs you start in the VS Code terminal are watched; or use \"ExpandRG: Run a simulation\".");
+        "ExpandRG is connected. Start your simulation in the terminal; use Set up simulation for help preparing its commands.");
     } else {
       vscode.window.showWarningMessage("ExpandRG isn't running, so runs can't be watched.", "Start ExpandRG")
         .then((choice) => choice && startConnector(true));
@@ -197,71 +196,6 @@ async function stopWatching() {
   }
 }
 
-// Pick one of the project's entry points (expandrg.json) and start it in a new terminal.
-// The researcher starts it with this command; ExpandRG then watches it like any terminal run.
-async function runSimulation() {
-  const manifests = await vscode.workspace.findFiles("**/expandrg.json", "{**/node_modules/**,**/.git/**}", 50);
-  const choices: (vscode.QuickPickItem & { folder: string; command: string[] })[] = [];
-  for (const uri of manifests) {
-    try {
-      const data = JSON.parse(await fs.promises.readFile(uri.fsPath, "utf8"));
-      for (const entry of data.entry_points ?? []) {
-        if (!Array.isArray(entry.command) || !entry.command.length) continue;
-        const folder = path.dirname(uri.fsPath);
-        choices.push({ label: entry.name ?? entry.command.join(" "), description: vscode.workspace.asRelativePath(folder),
-                       detail: entry.command.join(" "), folder, command: entry.command });
-      }
-    } catch {
-      output.appendLine(`Skipped ${uri.fsPath}: not valid JSON.`);
-    }
-  }
-  if (!choices.length) {
-    vscode.window.showInformationMessage("ExpandRG: no expandrg.json in this workspace says what can be run. See the Experiments page for an example.");
-    return;
-  }
-  const picked = choices.length === 1 ? choices[0] : await vscode.window.showQuickPick(choices, {
-    placeHolder: "Which simulation do you want to run? ExpandRG watches it; it never stops it." });
-  if (!picked) return;
-  // The extension starts the process itself and shows its output in a VS Code terminal, so
-  // the run is watched whatever the terminal settings. Closing that terminal stops the run,
-  // like any terminal; ExpandRG itself never stops it.
-  const s = settings();
-  const words = picked.command.map((w) => (w === "{python}" ? s.pythonPath : w));
-  const local = path.join(picked.folder, words[0]);
-  if (!path.isAbsolute(words[0]) && fs.existsSync(local)) words[0] = local; // ./solver inside the project
-  const shown = picked.command.join(" ").replace("{python}", "python");
-  const tracker = terminalRuns.trackProcess(shown, picked.folder);
-  const writer = new vscode.EventEmitter<string>();
-  let child: ChildProcess | undefined;
-  const pty: vscode.Pseudoterminal = {
-    onDidWrite: writer.event,
-    open: () => {
-      writer.fire(`ExpandRG: running  ${shown}\r\n          in  ${picked.folder}\r\n` +
-        "ExpandRG watches this run; it never stops it. Closing this terminal stops it.\r\n\r\n");
-      child = spawn(words[0], words.slice(1), { cwd: picked.folder, env: { ...process.env, PYTHONUNBUFFERED: "1" } });
-      const show = (data: Buffer) => {
-        const text = data.toString();
-        writer.fire(text.replace(/\r?\n/g, "\r\n"));
-        tracker.write(text);
-      };
-      child.stdout?.on("data", show);
-      child.stderr?.on("data", show);
-      child.on("error", (e) => {
-        writer.fire(`\r\nCould not start the run: ${e.message}\r\n`);
-        tracker.end(undefined);
-      });
-      child.on("close", (code) => {
-        writer.fire(`\r\nThe run ended (exit code ${code}). You can close this terminal.\r\n`);
-        tracker.end(code ?? undefined);
-      });
-    },
-    close: () => {
-      if (child && child.exitCode === null) child.kill(); // the researcher closed the terminal
-    },
-  };
-  vscode.window.createTerminal({ name: `ExpandRG: ${picked.label}`, pty }).show();
-}
-
 // --- The local connector -------------------------------------------------------
 
 // Start ExpandRG (backend, local connector and dashboard: run_demo.py --no-browser) from
@@ -281,8 +215,9 @@ async function startConnector(askedByUser: boolean) {
     }
     return;
   }
-  output.appendLine(`Starting ExpandRG: ${s.pythonPath} run_demo.py --no-browser (in ${s.connectorFolder}).`);
-  connectorProcess = spawn(s.pythonPath, ["run_demo.py", "--no-browser"], {
+  const args = ["run_demo.py", "--no-browser", ...(s.group ? ["--group", s.group] : [])];
+  output.appendLine(`Starting ExpandRG: ${s.pythonPath} ${args.join(" ")} (in ${s.connectorFolder}).`);
+  connectorProcess = spawn(s.pythonPath, args, {
     cwd: s.connectorFolder, detached: true, stdio: "ignore", windowsHide: true,
   });
   connectorProcess.on("error", (e) => output.appendLine(`Could not start ExpandRG: ${e.message}`));
@@ -336,6 +271,28 @@ async function ensureGranted(folder: string): Promise<string | undefined> {
     vscode.window.showErrorMessage(`ExpandRG: ${hint}`);
     return undefined;
   }
+}
+
+// The granted folder the personal agent may read, by name: the one holding an open workspace
+// folder. With ask, a single open folder that isn't allowed yet is offered once per session.
+let chatFolderDeclined = false;
+async function chatFolder(ask: boolean): Promise<string | undefined> {
+  const folders = vscode.workspace.workspaceFolders ?? [];
+  if (!folders.length || !vscode.workspace.isTrusted) return undefined;
+  let grants: { root: string; name: string }[];
+  try {
+    grants = await call(settings().connectorUrl, "/grants", { timeoutMs: 3000 });
+  } catch {
+    return undefined; // the connector isn't running: the agent is told it can't read files
+  }
+  for (const folder of folders) {
+    const granted = grants.find((g) => insideFolder(folder.uri.fsPath, g.root));
+    if (granted) return granted.name;
+  }
+  if (!ask || chatFolderDeclined || folders.length !== 1) return undefined;
+  const root = await ensureGranted(folders[0].uri.fsPath);
+  if (!root) chatFolderDeclined = true;
+  return root ? path.basename(root) : undefined;
 }
 
 function message(e: unknown): string {

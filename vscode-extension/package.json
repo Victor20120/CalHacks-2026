@@ -2,7 +2,7 @@
   "name": "expandrg",
   "displayName": "ExpandRG",
   "description": "Talk to ExpandRG AI, powered by CREAO, understand your project, and monitor simulations in VS Code.",
-  "version": "0.7.4",
+  "version": "0.10.0",
   "publisher": "expandrg",
   "private": true,
   "license": "UNLICENSED",
@@ -23,8 +23,8 @@
         "title": "ExpandRG: Talk to ExpandRG AI"
       },
       {
-        "command": "expandrg.runSimulation",
-        "title": "ExpandRG: Run a simulation"
+        "command": "expandrg.setupSimulation",
+        "title": "ExpandRG: Set up simulation"
       },
       {
         "command": "expandrg.openDashboard",
@@ -79,6 +79,11 @@
           "type": "string",
           "default": "",
           "description": "The ExpandRG folder (the one with run_demo.py). When set, the extension starts ExpandRG in the background if it isn't running; reloading VS Code doesn't stop it."
+        },
+        "expandrg.group": {
+          "type": "string",
+          "default": "",
+          "description": "A research group made with setup_expandrg.py (its ID). When set, ExpandRG starts that group instead of the demo."
         },
         "expandrg.watchTerminalRuns": {
           "type": "boolean",

@@ -74,9 +74,12 @@ C_DRAFTS = [
 
 
 def seed_demo(conn: sqlite3.Connection) -> None:
-    """Insert the demo workspace. Safe to run again: existing rows are left alone."""
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    """Insert the demo workspace. Safe to run again: existing rows are left alone. A database
+    that belongs to a group made with setup_expandrg.py is never given the demo people."""
     workspace_id = WORKSPACE[0]
+    if conn.execute("SELECT 1 FROM workspaces WHERE id != ?", (workspace_id,)).fetchone():
+        return
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     conn.execute("INSERT OR IGNORE INTO workspaces (id, name, created_at) VALUES (?, ?, ?)", (*WORKSPACE, now))
     conn.executemany(
         "INSERT OR IGNORE INTO members (id, workspace_id, display_name, role, created_at) VALUES (?, ?, ?, ?, ?)",

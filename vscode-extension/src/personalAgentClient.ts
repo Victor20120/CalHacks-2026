@@ -79,9 +79,10 @@ export class PersonalAgentClient {
       defaults: rules.default_instructions, overview: overview?.reply ?? null };
   }
 
-  send(session: AgentSession, message: string): Promise<StartJob> {
+  // folder: the granted project folder's name (never its path), so the agent can read its files.
+  send(session: AgentSession, message: string, folder?: string): Promise<StartJob> {
     return this.request<StartJob>(session.backendUrl, "/personal-agent/chat", { method: "POST", token: session.token,
-      body: { project_id: session.project, message } }).catch(personalChatError);
+      body: { project_id: session.project, message, ...(folder ? { folder } : {}) } }).catch(personalChatError);
   }
   saveRules(session: AgentSession, instructions: string): Promise<{ instructions: string }> {
     return this.request(session.backendUrl, `/projects/${encodeURIComponent(session.project)}/agent-rules`,

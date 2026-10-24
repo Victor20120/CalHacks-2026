@@ -2,12 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { backend } from "./api.js";
 import { ErrorNote, Markdown } from "./components.jsx";
 
-export default function AgentChat({ session, project, onOpenFinding }) {
+export default function AgentChat({ session, project }) {
   const [scope, setScope] = useState("project"); // the project chosen in the top bar
-  return <ChatPanel key={scope} session={session} project={project} onOpenFinding={onOpenFinding} scope={scope} onScope={setScope} />;
+  return <ChatPanel key={scope} session={session} project={project} scope={scope} onScope={setScope} />;
 }
 
-function ChatPanel({ session, project, onOpenFinding, scope, onScope }) {
+function ChatPanel({ session, project, scope, onScope }) {
   const [exchanges, setExchanges] = useState([]);
   const [question, setQuestion] = useState("");
   const [rules, setRules] = useState("");
@@ -69,7 +69,6 @@ function ChatPanel({ session, project, onOpenFinding, scope, onScope }) {
           if (stopped) return;
           setExchanges(job.warning ? [...chat.exchanges, {
             id: job.job_id, question: pending.question || "Your message", ...job.diagnosis,
-            sources: job.prior_findings,
           }] : chat.exchanges);
           setNotice(job.warning || "");
         }
@@ -102,8 +101,7 @@ function ChatPanel({ session, project, onOpenFinding, scope, onScope }) {
         setSavedRules(job.instructions);
         setNotice("Instructions saved. Super Brain is replying with your updated preferences.");
       }
-      setPending({ jobId: job.job_id, question: message, sources: job.prior_findings,
-        stats: job.knowledge_stats, startedAt: Date.now() });
+      setPending({ jobId: job.job_id, question: message, startedAt: Date.now() });
       setQuestion("");
     } catch (e) {
       setError(e.message);
@@ -180,22 +178,11 @@ function ChatPanel({ session, project, onOpenFinding, scope, onScope }) {
             <article className="exchange" key={x.id}>
               <p className="question"><span className="label">You</span> {x.question}</p>
               <div className="agent-reply"><span className="label">{x.reply_kind === "creao" || !x.reply_kind ? "Super Brain · CREAO" : "Super Brain"}</span><Markdown text={x.reply} /></div>
-              {x.elapsed_ms !== undefined && <p className="muted small agent-answer-meta">
-                {x.reply_kind === "creao" ? `Answered in ${(x.elapsed_ms / 1000).toFixed(1)}s` : "Answered without a CREAO run"}
-                {x.knowledge_stats?.findings !== undefined && ` · ${x.knowledge_stats.findings} shared findings available from ${x.knowledge_stats.researchers} researchers`}
-              </p>}
-              {x.sources?.length > 0 && <div className="agent-sources"><span className="muted small">Shared knowledge: </span>
-                {x.sources.map((f) => <button className="link" key={f.id} onClick={() => onOpenFinding(f.id)}>{f.contributed_by_name} · {f.title} ({f.verification_status})</button>)}
-              </div>}
             </article>
           ))}
           {pending && <div className="exchange">
             {pending.question && <p className="question"><span className="label">You</span> {pending.question}</p>}
             <p className="muted" role="status">Super Brain is thinking… {elapsed}s elapsed.</p>
-            {pending.stats && <p className="muted small">{pending.sources?.length || 0} shared findings retrieved from {pending.stats.findings} available records. CREAO uses these alongside its own reasoning.</p>}
-            {pending.sources?.length > 0 && <div className="agent-sources">
-              {pending.sources.map((f) => <button className="link" key={f.id} onClick={() => onOpenFinding(f.id)}>{f.title} · {f.contributed_by_name}</button>)}
-            </div>}
           </div>}
         </div>
       )}

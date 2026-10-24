@@ -24,7 +24,8 @@ from dotenv import load_dotenv
 log = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "https://agent.creao.ai/api/v1"
-DEFAULT_ENV_FILE = Path(__file__).resolve().parents[1] / ".env"  # backend/.env
+# backend/.env, or a research group's own keys (run_demo.py --group sets EXPANDRG_ENV_FILE)
+DEFAULT_ENV_FILE = Path(os.environ.get("EXPANDRG_ENV_FILE") or Path(__file__).resolve().parents[1] / ".env")
 TERMINAL_STATUSES = ("completed", "failed", "cancelled")
 
 # Required inputs of the configured hub agent. A run without them still

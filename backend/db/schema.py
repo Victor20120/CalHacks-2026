@@ -31,6 +31,10 @@ SHARED_TABLES = (
     "run_alerts",
     "auto_shares",
     "finding_notes",
+    "worksheets",
+    "worksheet_items",
+    "finding_runs",
+    "finding_comments",
 )
 PRIVATE_TABLES = ("runs", "private_episodes", "share_drafts", "settings", "alerts", "project_context")
 
@@ -151,6 +155,55 @@ CREATE TABLE IF NOT EXISTS finding_notes (
     kind        TEXT NOT NULL CHECK (kind IN ('detail', 'guess', 'correction')),
     text        TEXT NOT NULL,
     created_at  TEXT NOT NULL
+);
+
+-- Feedback on a shared finding, between the leader and the researchers in its project.
+-- Unlike notes, comments are a conversation between people; agents don't read them.
+CREATE TABLE IF NOT EXISTS finding_comments (
+    id          TEXT PRIMARY KEY,
+    finding_id  TEXT NOT NULL REFERENCES shared_findings(id),
+    member_id   TEXT NOT NULL REFERENCES members(id),
+    text        TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
+
+-- The run a finding came from, attached by the researcher when sharing it (or by their
+-- agent, for the run it looked at). Its graph shows with the finding to whoever may see the run.
+CREATE TABLE IF NOT EXISTS finding_runs (
+    finding_id   TEXT PRIMARY KEY REFERENCES shared_findings(id),
+    run_id       TEXT NOT NULL REFERENCES simulation_runs(id),
+    attached_at  TEXT NOT NULL
+);
+
+-- The Super Brain's teacher: a worksheet per researcher, made from what the other
+-- researchers in the project shared. The researcher answers; the leader comments.
+CREATE TABLE IF NOT EXISTS worksheets (
+    id              TEXT PRIMARY KEY,
+    workspace_id    TEXT NOT NULL REFERENCES workspaces(id),
+    project_id      TEXT NOT NULL REFERENCES projects(id),
+    member_id       TEXT NOT NULL REFERENCES members(id),
+    created_by      TEXT NOT NULL REFERENCES members(id),
+    title           TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'assigned' CHECK (status IN ('assigned', 'submitted', 'reviewed')),
+    leader_comment  TEXT NOT NULL DEFAULT '',
+    creao_run_id    TEXT,
+    created_at      TEXT NOT NULL,
+    submitted_at    TEXT,
+    reviewed_at     TEXT
+);
+
+-- A question or a hands-on "try it" step, the findings it teaches, and its answers.
+CREATE TABLE IF NOT EXISTS worksheet_items (
+    id              TEXT PRIMARY KEY,
+    worksheet_id    TEXT NOT NULL REFERENCES worksheets(id),
+    position        INTEGER NOT NULL,
+    kind            TEXT NOT NULL CHECK (kind IN ('question', 'try')),
+    topic           TEXT NOT NULL,
+    prompt          TEXT NOT NULL,
+    model_answer    TEXT NOT NULL DEFAULT '',
+    finding_ids     TEXT NOT NULL DEFAULT '[]',
+    answer          TEXT NOT NULL DEFAULT '',
+    leader_comment  TEXT NOT NULL DEFAULT ''
 );
 
 -- Runs watched on a researcher's computer, seen by them and the group leader.

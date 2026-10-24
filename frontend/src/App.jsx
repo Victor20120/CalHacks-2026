@@ -6,6 +6,7 @@ import ExperimentsView from "./views/ExperimentsView.jsx";
 import ProjectView from "./views/ProjectView.jsx";
 import OffboardingView from "./views/OffboardingView.jsx";
 import RunsView from "./views/RunsView.jsx";
+import SimulationsView from "./views/SimulationsView.jsx";
 import SignIn from "./views/SignIn.jsx";
 import SuperBrainView from "./views/SuperBrainView.jsx";
 
@@ -115,7 +116,7 @@ export default function App() {
       <nav className="sidenav">
         {VIEWS.filter(([id]) => allowed.includes(id)).map(([id, label]) => (
           <button key={id} className={current === id ? "active" : ""} onClick={() => setView(id)}>
-            {label}
+            {id === "alerts" ? session.member.role === "leader" ? "Monitor" : "Simulations" : label}
             {id === "drafts" && draftCount > 0 && <span className="count">{draftCount}</span>}
             {id === "alerts" && liveCritical > 0 && <span className="count critical">{liveCritical}</span>}
           </button>
@@ -128,7 +129,9 @@ export default function App() {
         {project && current === "diagnose" && <DiagnoseView {...shared} onOpenDrafts={() => setView("drafts")} />}
         {project && current === "drafts" && <DraftsView {...shared} />}
         {project && current === "superbrain" && <SuperBrainView {...shared} />}
-        {project && current === "alerts" && <RunsView {...shared} />}
+        {project && current === "alerts" && (session.member.role === "leader"
+          ? <RunsView key={project.id} {...shared} />
+          : <SimulationsView key={`${session.member.id}:${project.id}`} {...shared} />)}
         {project && current === "experiments" && <ExperimentsView {...shared} />}
         {current === "offboarding" && <OffboardingView {...shared} />}
       </main>

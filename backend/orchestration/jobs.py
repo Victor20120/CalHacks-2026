@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from backend.creao import CreaoConfigError, CreaoInputError, CreaoRequestError, CreaoRunFailed, CreaoTimeout
+from backend.orchestration.simulation_setup import InvalidSetup
 
 log = logging.getLogger(__name__)
 
@@ -84,6 +85,8 @@ def run_job(
         store.fail(job_id, {"type": "run_failed", "message": str(exc), "run_id": exc.run_id})
     except CreaoInputError as exc:
         store.fail(job_id, {"type": "input", "message": str(exc)})
+    except InvalidSetup as exc:
+        store.fail(job_id, {"type": "setup", "message": str(exc)})
     except CreaoConfigError as exc:
         store.fail(job_id, {"type": "config", "message": str(exc)})
     except CreaoRequestError as exc:

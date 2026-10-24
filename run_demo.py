@@ -5,6 +5,7 @@
     python run_demo.py --fresh   first reset the demo data to a clean starting point
     python run_demo.py --check   start everything, check it works, then stop (no browser)
     python run_demo.py --no-browser   start everything without opening windows (the VS Code extension uses this)
+    python run_demo.py --group ID     start a research group made with setup_expandrg.py instead of the demo
 
 Ctrl+C stops everything. Needs backend/.env filled in and `npm install` run in frontend/.
 Service output goes to .demo-logs/ in case something doesn't start.
@@ -53,37 +54,65 @@ def main() -> int:
     parser.add_argument("--fresh", action="store_true", help="reset the demo data first (deletes local demo databases)")
     parser.add_argument("--check", action="store_true", help="start everything, check it, then stop")
     parser.add_argument("--no-browser", action="store_true", help="don't open dashboard windows")
+    parser.add_argument("--group", metavar="ID", help="start a research group made with setup_expandrg.py instead of the demo")
     args = parser.parse_args()
 
-    if not (ROOT / "backend" / ".env").exists():
-        print("backend/.env is missing. Copy backend/.env.example to backend/.env and fill in the CREAO keys.")
+    group_env = None
+    if args.group:
+        from backend.workspaces.groups import GroupError, describe, group_environment
+        try:
+            group_env = {**os.environ, **group_environment(args.group)}
+        except GroupError as exc:
+            print(exc)
+            return 1
+    elif not (ROOT / "backend" / ".env").exists():
+        print("backend/.env is missing. Copy backend/.env.example to backend/.env and fill in the CREAO keys,")
+        print("or set up your own research group: python setup_expandrg.py")
         return 1
     if not (ROOT / "frontend" / "node_modules").exists():
         print("The dashboard isn't installed yet. Run:  cd frontend  then  npm install")
         return 1
 
-    demo = [sys.executable, "-m", "backend.workspaces.demo"] + (["--reset"] if args.fresh else [])
-    print("Resetting the demo data..." if args.fresh else "Making sure the demo data is in place...")
-    subprocess.run(demo, cwd=ROOT, check=True, stdout=subprocess.DEVNULL)
+    if not args.group:
+        demo = [sys.executable, "-m", "backend.workspaces.demo"] + (["--reset"] if args.fresh else [])
+        print("Resetting the demo data..." if args.fresh else "Making sure the demo data is in place...")
+        subprocess.run(demo, cwd=ROOT, check=True, stdout=subprocess.DEVNULL)
 
     LOGS.mkdir(exist_ok=True)
     running: list[subprocess.Popen] = []
     try:
         for name, command, cwd, health in services():
             log = open(LOGS / f"{name.replace(' ', '_')}.log", "w", encoding="utf-8")
-            running.append(subprocess.Popen(command, cwd=cwd, stdout=log, stderr=subprocess.STDOUT))
+            running.append(subprocess.Popen(command, cwd=cwd, env=group_env, stdout=log, stderr=subprocess.STDOUT))
             if not _wait_for(health):
                 print(f"The {name} didn't start. See .demo-logs/{name.replace(' ', '_')}.log")
                 return 1
             print(f"  {name} is running")
 
-        for folder in SAMPLE_FOLDERS:
-            requests.post(f"{DASHBOARD}/connector/grants", json={"root": str(folder)}, timeout=10).raise_for_status()
-        print("  sample project folders granted to the local connector")
+        if not args.group:
+            for folder in SAMPLE_FOLDERS:
+                requests.post(f"{DASHBOARD}/connector/grants", json={"root": str(folder)}, timeout=10).raise_for_status()
+            print("  sample project folders granted to the local connector")
 
         if args.check:
             print("Everything works.")
             return 0
+
+        if args.group:
+            group = describe(args.group)
+            project = group["projects"][0]["id"]
+            print(f"\n{group['name']}: sign in as")
+            people = [group["leader"]] + group["researchers"]
+            for person in people:
+                view = "superbrain" if person is group["leader"] else "project"
+                print(f"  {person['name']}: {DASHBOARD}/?as={person['id']}&view={view}&project={project}")
+            if not args.no_browser:
+                webbrowser.open_new(f"{DASHBOARD}/?as={group['leader']['id']}&view=superbrain&project={project}")
+            print("Press Ctrl+C here to stop everything.")
+            while all(p.poll() is None for p in running):
+                time.sleep(1)
+            print("A service stopped unexpectedly. See .demo-logs/.")
+            return 1
 
         windows = {
             "Researcher A": f"{DASHBOARD}/?as=researcher_a&view=diagnose&project=heat-diffusion",

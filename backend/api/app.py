@@ -32,10 +32,24 @@ from backend.knowledge_sharing.publishing import (
     DraftAlreadyDecided,
     DraftNotFound,
     InvalidDraft,
+    add_finding_comment,
     add_finding_note,
     approve_draft,
     reject_draft,
     share_from_chat,
+)
+from backend.knowledge_sharing.teacher import (
+    MAX_ITEMS as MAX_WORKSHEET_ITEMS,
+    WorksheetLocked,
+    WorksheetNotFound,
+    delete_worksheet,
+    get_worksheet,
+    list_worksheets,
+    review,
+    save_answers,
+    save_worksheets,
+    worksheet_plan,
+    write_worksheets,
 )
 from backend.memory.private_memory import PrivateMemory
 from backend.monitoring.alerts import AlertStore, InvalidAlert
@@ -50,6 +64,7 @@ from backend.monitoring.runs import (
     visible_runs,
 )
 from backend.memory.shared_findings import (
+    finding_comments,
     finding_notes,
     get_readable_finding,
     list_project_findings,
@@ -69,10 +84,12 @@ from backend.orchestration.diagnosis import (
 from backend.orchestration.evidence_policy import MAX_ITEMS, redact_secrets
 from backend.orchestration.jobs import JobStore, run_job
 from backend.orchestration.personal_chat import run_personal_chat
+from backend.orchestration.toolkit import ConnectorClient, Toolkit
 from backend.orchestration.chat import (
     DEFAULT_AGENT_RULES, MAX_RULE_CHARS, knowledge_context, rule_command, run_chat,
 )
 from backend.orchestration.overview import context_text, prepare_overview, run_overview
+from backend.orchestration.simulation_setup import run_simulation_setup
 from backend.workspaces.demo import seed_demo
 from backend.workspaces.store import (
     InvalidProject, create_project, get_member, list_members, personal_agent_for_member, projects_for_member,
@@ -110,10 +127,21 @@ class AgentRulesIn(BaseModel):
     instructions: str = Field(max_length=MAX_RULE_CHARS)
 
 
+FOLDER_NAME = r"^[^\\/:*?\"<>|]+$"  # a granted folder's name, never a path
+
+
 class PersonalChatIn(BaseModel):
     model_config = {"extra": "forbid"}
     project_id: str = Field(min_length=1, max_length=64)
     message: str = Field(min_length=1, max_length=4000)
+    folder: str | None = Field(default=None, min_length=1, max_length=255, pattern=FOLDER_NAME)  # lets the agent read it
+
+
+class AgentToolIn(BaseModel):
+    project_id: str = Field(min_length=1, max_length=64)
+    folder: str | None = Field(default=None, min_length=1, max_length=255, pattern=FOLDER_NAME)
+    tool: str = Field(min_length=1, max_length=40)
+    args: dict[str, Any] = Field(default_factory=dict)
 
 
 class OverviewExcerptIn(BaseModel):
@@ -131,6 +159,11 @@ class OverviewIn(BaseModel):
     stats: dict[str, Any] = Field(default_factory=dict)
 
 
+class SimulationSetupIn(OverviewIn):
+    machine: dict[str, Any] = Field(default_factory=dict)
+    request: str = Field(default="", max_length=2000)
+
+
 class ProjectIn(BaseModel):
     id: str = Field(min_length=2, max_length=50)
     name: str = Field(min_length=1, max_length=100)
@@ -138,9 +171,27 @@ class ProjectIn(BaseModel):
     member_ids: list[str] = Field(default_factory=list, max_length=50)
 
 
+class CommentIn(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)
+
+
 class NoteIn(BaseModel):
     kind: Literal["detail", "guess", "correction"]
     text: str = Field(min_length=1, max_length=2000)
+
+
+class WorksheetsIn(BaseModel):
+    project_id: str = Field(min_length=1, max_length=64)
+
+
+class AnswersIn(BaseModel):
+    answers: dict[str, str] = Field(default_factory=dict, max_length=MAX_WORKSHEET_ITEMS)
+    submit: bool = False
+
+
+class ReviewIn(BaseModel):
+    comments: dict[str, str] = Field(default_factory=dict, max_length=MAX_WORKSHEET_ITEMS)
+    comment: str = Field(default="", max_length=2000)
 
 
 class ApproveIn(BaseModel):
@@ -149,6 +200,7 @@ class ApproveIn(BaseModel):
     summary: str | None = None
     category: str | None = None
     verification_status: str | None = None
+    run_id: str | None = Field(default=None, max_length=64)  # the run it came from, shown as a graph
 
 
 class AlertIn(BaseModel):
@@ -197,12 +249,14 @@ def create_app(
     data_dir: str | Path | None = None,
     alerts: AlertStore | None = None,
     chat_setup: Callable[[], ChatSettings] | None = None,
+    connector: ConnectorClient | None = None,
 ) -> FastAPI:
     """client_factory(agent_env_prefix) builds the CREAO client for a member's
     personal agent; tests pass a fake one. The databases are created (with the
     demo workspace) on first use. Alerts are kept in memory only.
     chat_setup() says which agent and model answer Super Brain chat: from
-    backend/.env with real CREAO, the hub with its saved model with a fake one."""
+    backend/.env with real CREAO, the hub with its saved model with a fake one.
+    connector reaches the researcher's local connector for the agents' file tools."""
     app = FastAPI(title="ExpandRG backend", version="0.1.0")
     factory = client_factory or (lambda prefix: CreaoClient(hub_agent() if prefix == "HUB" else personal_agent(prefix)))
     chat_choice = chat_setup or (chat_settings if client_factory is None else (lambda: ChatSettings("HUB", None)))
@@ -211,6 +265,7 @@ def create_app(
     alert_store = alerts or AlertStore()
     db = Database(data_dir, seed=seed_demo)
     sessions = Sessions()
+    files = connector or ConnectorClient()
 
     def current_member(authorization: str | None = Header(default=None)) -> dict[str, Any]:
         """The signed-in member, re-read on every request so offboarding takes effect at once."""
@@ -379,6 +434,14 @@ def create_app(
             PrivateMemory(db, member["id"]).clear_chat(project_id, scope)
         return {"exchanges": []}
 
+    def super_brain_client(settings: ChatSettings) -> Any:
+        # A and B keep their personal agents for analysis. The Super Brain runs on the
+        # dedicated chat agent once it is set up, otherwise on the central hub.
+        if client_factory:
+            return client_factory(settings.slot)
+        config = chat_agent() if settings.slot == "CHAT" else hub_agent()
+        return CreaoClient(config, poll_interval=1.0, chat_model_id=settings.model_id)
+
     @app.post("/superbrain/chat", status_code=202)
     @app.post("/agent/chat", status_code=202)
     def start_chat(body: ChatIn, background: BackgroundTasks, member: dict[str, Any] = Depends(current_member)) -> dict:
@@ -420,14 +483,7 @@ def create_app(
         settings = chat_choice()
 
         def task() -> dict:
-            # A and B keep their personal agents for analysis. Super Brain chat runs on the
-            # dedicated chat agent once it is set up, otherwise on the central hub.
-            if client_factory:
-                client = client_factory(settings.slot)
-            else:
-                config = chat_agent() if settings.slot == "CHAT" else hub_agent()
-                client = CreaoClient(config, poll_interval=1.0, chat_model_id=settings.model_id)
-            result = run_chat(client, scope_name, message, rules, history, findings, instruction_action,
+            result = run_chat(super_brain_client(settings), scope_name, message, rules, history, findings, instruction_action,
                               dedicated=settings.slot == "CHAT")
             return {**result, "agent_slot": settings.slot, "model": settings.model_id or "saved",
                     "knowledge_stats": stats, "context_project_ids": project_ids,
@@ -456,6 +512,28 @@ def create_app(
                 raise HTTPException(status_code=409, detail="Wait for your personal agent's current reply.")
             PrivateMemory(db, member["id"]).clear_chat(project_id, "personal")
         return {"exchanges": []}
+
+    @app.post("/simulation-setup", status_code=202)
+    def simulation_setup(body: SimulationSetupIn, background: BackgroundTasks,
+                         member: dict[str, Any] = Depends(current_member)) -> dict:
+        project_name, prefix, agent = project_and_agent(member, body.project_id)
+        try:
+            prepared = prepare_overview(project_name, body.tree, [e.model_dump() for e in body.excerpts],
+                                        body.files, body.stats)
+        except EvidenceRejected as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from None
+        import json
+        if len(json.dumps(body.machine)) > 8000:
+            raise HTTPException(status_code=413, detail="The machine description is too large.")
+        prepared.agent_rules = PrivateMemory(db, member["id"]).agent_rules(body.project_id)
+        request, _ = redact_secrets(body.request)
+        with chat_lock:
+            if store.running_chat(member["id"], body.project_id, kind="simulation_setup"):
+                raise HTTPException(status_code=409, detail="Your agent is still preparing a setup for this project.")
+            job = store.create(member["id"], body.project_id, kind="simulation_setup")
+        background.add_task(run_job, store, job.job_id,
+                            lambda: run_simulation_setup(factory(prefix), prepared, body.machine, request, agent["name"]))
+        return {"job_id": job.job_id, "status": job.status, "agent": agent}
 
     @app.post("/personal-agent/chat", status_code=202)
     def start_personal_chat(body: PersonalChatIn, background: BackgroundTasks,
@@ -491,11 +569,15 @@ def create_app(
 
         def task() -> dict:
             client = factory(prefix) if client_factory else CreaoClient(personal_agent(prefix), poll_interval=1.0)
+            tools = Toolkit(db, member, body.project_id, body.folder, files)
             result = run_personal_chat(client, project_name, message, rules, history, overview, knowledge, action,
-                                       agent_name=agent["name"])
+                                       agent_name=agent["name"], tools=tools)
             # What the agent established is shared with the group by the agent itself (the group's choice).
             try:
-                shared = share_from_chat(db, member["id"], body.project_id, result.pop("share", None), result.get("run_id"))
+                looked_at = [c["request"].get("run_id") for c in result.get("tool_calls", [])
+                             if c["tool"] == "get_simulation_runs" and c["ok"] and c["request"].get("run_id")]
+                shared = share_from_chat(db, member["id"], body.project_id, result.pop("share", None), result.get("run_id"),
+                                         str(looked_at[-1]) if looked_at else None)
             except PermissionDenied:  # removed from the project during the run: keep the reply, share nothing
                 shared = None
             if shared:
@@ -539,7 +621,7 @@ def create_app(
         job = store.get(job_id)
         if job is None or job["member_id"] != member["id"]:  # other members' jobs look like they don't exist
             raise HTTPException(status_code=404, detail="No diagnosis job with that ID.")
-        if job["kind"] in ("chat", "personal_chat"):
+        if job["kind"] in ("chat", "personal_chat", "simulation_setup"):
             with closing(db.shared()) as conn:
                 allowed = {p["id"] for p in projects_for_member(conn, member["id"])}
             used = {source["project_id"] for source in job["prior_findings"]}
@@ -556,7 +638,7 @@ def create_app(
     @app.post("/drafts/{draft_id}/approve")
     def approve(draft_id: str, edits: ApproveIn, member: dict[str, Any] = Depends(current_member)) -> dict[str, Any]:
         try:
-            return approve_draft(db, member["id"], draft_id, edits.model_dump())
+            return approve_draft(db, member["id"], draft_id, edits.model_dump(exclude={"run_id"}), edits.run_id)
         except DraftNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from None
         except DraftAlreadyDecided as exc:
@@ -607,6 +689,92 @@ def create_app(
                 require_member_of(conn, member["id"], project_id)
             return search_findings(conn, member["id"], q, [project_id] if project_id else None)
 
+    @app.post("/worksheets", status_code=202)
+    def make_worksheets(body: WorksheetsIn, background: BackgroundTasks,
+                        member: dict[str, Any] = Depends(current_member)) -> dict[str, Any]:
+        """The Super Brain's teacher (leader only): one run turns every finding shared in the
+        project into a worksheet per researcher, from what the others found. Poll /jobs/{job_id}."""
+        require_leader(member)
+        with closing(db.shared()) as conn:
+            require_member_of(conn, member["id"], body.project_id)
+            project_name = conn.execute("SELECT name FROM projects WHERE id = ?", (body.project_id,)).fetchone()[0]
+            plan = worksheet_plan(conn, body.project_id)
+        if not plan["researchers"]:
+            raise HTTPException(status_code=422, detail="Nothing to teach yet: no researcher here has findings from others to learn from.")
+        with chat_lock:
+            if store.running_chat(member["id"], body.project_id, kind="worksheets"):
+                raise HTTPException(status_code=409, detail="The Super Brain is still writing worksheets for this project.")
+            job = store.create(member["id"], body.project_id, kind="worksheets")
+        settings = chat_choice()
+
+        def task() -> dict:
+            written = write_worksheets(super_brain_client(settings), plan, project_name, settings.slot == "CHAT")
+            with closing(db.shared()) as conn:
+                ids = save_worksheets(conn, member, body.project_id, written["worksheets"], written["run_id"])
+            return {"worksheet_ids": ids, "run_id": written["run_id"], "provider_ms": written["provider_ms"],
+                    "prompt_chars": written["prompt_chars"], "agent_slot": settings.slot,
+                    "for": [w["member_id"] for w in written["worksheets"]]}
+
+        background.add_task(run_job, store, job.job_id, task)
+        return {"job_id": job.job_id, "status": job.status, "findings": len(plan["findings"]),
+                "researchers": [{"member_id": r["member_id"], "name": r["name"], "findings": len(r["learn_from"])}
+                                for r in plan["researchers"]]}
+
+    @app.get("/worksheets")
+    def worksheets(project_id: str, member: dict[str, Any] = Depends(current_member)) -> list[dict[str, Any]]:
+        """Every worksheet in the project for the leader; your own for a researcher."""
+        with closing(db.shared()) as conn:
+            require_member_of(conn, member["id"], project_id)
+            return list_worksheets(conn, member, project_id)
+
+    @app.get("/worksheets/{worksheet_id}")
+    def worksheet(worksheet_id: str, member: dict[str, Any] = Depends(current_member)) -> dict[str, Any]:
+        """One worksheet. A researcher sees the model answers once the leader has reviewed it."""
+        with closing(db.shared()) as conn:
+            try:
+                return get_worksheet(conn, member, worksheet_id)
+            except WorksheetNotFound as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from None
+
+    @app.put("/worksheets/{worksheet_id}/answers")
+    def answer_worksheet(worksheet_id: str, body: AnswersIn, member: dict[str, Any] = Depends(current_member)) -> dict[str, Any]:
+        """Save your answers; submit=true tells the leader they're ready to read."""
+        with closing(db.shared()) as conn:
+            try:
+                return save_answers(conn, member, worksheet_id, body.answers, body.submit)
+            except WorksheetNotFound as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from None
+            except WorksheetLocked as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from None
+
+    @app.post("/worksheets/{worksheet_id}/review")
+    def review_worksheet(worksheet_id: str, body: ReviewIn, member: dict[str, Any] = Depends(current_member)) -> dict[str, Any]:
+        """The leader's comments on each answer and on the worksheet (leader only)."""
+        require_leader(member)
+        with closing(db.shared()) as conn:
+            try:
+                return review(conn, member, worksheet_id, body.comments, body.comment)
+            except WorksheetNotFound as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from None
+
+    @app.delete("/worksheets/{worksheet_id}")
+    def remove_worksheet(worksheet_id: str, member: dict[str, Any] = Depends(current_member)) -> dict[str, str]:
+        require_leader(member)
+        with closing(db.shared()) as conn:
+            try:
+                delete_worksheet(conn, member, worksheet_id)
+            except WorksheetNotFound as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from None
+        return {"status": "deleted"}
+
+    @app.post("/agent-tools")
+    def agent_tool(body: AgentToolIn, member: dict[str, Any] = Depends(current_member)) -> dict[str, Any]:
+        """Run one of a personal agent's read-only tools as the signed-in member, with their
+        permissions: what chat runs for the agent, and what an MCP server would call."""
+        with closing(db.shared()) as conn:
+            require_member_of(conn, member["id"], body.project_id)
+        return Toolkit(db, member, body.project_id, body.folder, files).run([{**body.args, "tool": body.tool}])[0]
+
     @app.get("/findings/{finding_id}")
     def finding_detail(finding_id: str, member: dict[str, Any] = Depends(current_member)) -> dict[str, Any]:
         """One finding and the findings linked to it that you may read."""
@@ -615,7 +783,25 @@ def create_app(
             if finding is None:  # findings in projects you can't read look like they don't exist
                 raise HTTPException(status_code=404, detail="No finding with that ID.")
             return {"finding": finding, "related": related_findings(conn, member["id"], finding_id),
-                    "notes": finding_notes(conn, finding_id)}
+                    "notes": finding_notes(conn, finding_id), "comments": finding_comments(conn, finding_id)}
+
+    @app.get("/findings/{finding_id}/comments")
+    def comments(finding_id: str, member: dict[str, Any] = Depends(current_member)) -> list[dict[str, Any]]:
+        """Feedback on a finding you can read, from the leader and the project's researchers."""
+        with closing(db.shared()) as conn:
+            if get_readable_finding(conn, member["id"], finding_id) is None:
+                raise HTTPException(status_code=404, detail="No finding with that ID.")
+            return finding_comments(conn, finding_id)
+
+    @app.post("/findings/{finding_id}/comments", status_code=201)
+    def add_comment(finding_id: str, body: CommentIn, member: dict[str, Any] = Depends(current_member)) -> dict[str, Any]:
+        """Write feedback on a finding you can read. Everyone in its project sees it."""
+        try:
+            return add_finding_comment(db, member["id"], finding_id, body.text)
+        except DraftNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+        except InvalidDraft as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
 
     @app.post("/findings/{finding_id}/notes", status_code=201)
     def add_note(finding_id: str, body: NoteIn, member: dict[str, Any] = Depends(current_member)) -> dict[str, Any]:

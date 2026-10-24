@@ -23,7 +23,7 @@ from backend.auth.permissions import require_project_member
 from backend.db.database import Database
 from backend.db.schema import FINDING_CATEGORIES, VERIFICATION_STATUSES
 from backend.memory.private_memory import DRAFT_FIELDS, PrivateMemory
-from backend.memory.shared_findings import finding_notes, get_finding, get_readable_finding
+from backend.memory.shared_findings import finding_comments, finding_notes, get_finding, get_readable_finding
 from backend.orchestration.evidence_policy import redact_secrets
 from backend.workspaces.store import is_project_member
 
@@ -66,8 +66,10 @@ def draft_from_diagnosis(symptom: str, diagnosis: dict[str, Any]) -> dict[str, s
     }
 
 
-def approve_draft(db: Database, member_id: str, draft_id: str, edits: dict[str, Any] | None = None) -> dict:
-    """Publish one of the researcher's drafts, with their optional edits. Returns the finding."""
+def approve_draft(db: Database, member_id: str, draft_id: str, edits: dict[str, Any] | None = None,
+                  run_id: str | None = None) -> dict:
+    """Publish one of the researcher's drafts, with their optional edits and the run it came
+    from (one of their own runs in the draft's project). Returns the finding."""
     memory = PrivateMemory(db, member_id)
     draft = _pending_draft(memory, draft_id)
 
@@ -84,6 +86,7 @@ def approve_draft(db: Database, member_id: str, draft_id: str, edits: dict[str, 
     approval_id, finding_id = str(uuid.uuid4()), str(uuid.uuid4())
     with closing(db.shared()) as conn:
         require_project_member(conn, member_id, draft["project_id"])
+        _check_own_run(conn, member_id, draft["project_id"], run_id)
         workspace_id = conn.execute("SELECT workspace_id FROM projects WHERE id = ?", (draft["project_id"],)).fetchone()[0]
         try:
             with conn:
@@ -100,6 +103,9 @@ def approve_draft(db: Database, member_id: str, draft_id: str, edits: dict[str, 
                     (finding_id, workspace_id, draft["project_id"], final["category"], final["title"], final["summary"],
                      final["verification_status"], member_id, approval_id, draft["source_creao_run_id"], now),
                 )
+                if run_id:
+                    conn.execute("INSERT INTO finding_runs (finding_id, run_id, attached_at) VALUES (?, ?, ?)",
+                                 (finding_id, run_id, now))
                 # Link to the earlier findings this diagnosis used. "associated_with", not
                 # "similar_to": using a finding as context doesn't show the problems are the same.
                 for prior_id in used:
@@ -129,10 +135,12 @@ MAX_NOTE_CHARS = 2_000
 NOTE_KINDS = ("detail", "guess", "correction")
 
 
-def share_from_chat(db: Database, member_id: str, project_id: str, share: Any, run_id: str | None) -> dict | None:
+def share_from_chat(db: Database, member_id: str, project_id: str, share: Any, run_id: str | None,
+                    simulation_run_id: str | None = None) -> dict | None:
     """Share what the member's personal agent established in a chat, or None if the
     agent's share block is empty or unusable. Always a hypothesis: an agent can't
-    verify anything. The same title from the same member in the project isn't shared twice."""
+    verify anything. The same title from the same member in the project isn't shared twice.
+    simulation_run_id: the member's run the agent looked at, attached if it's in this project."""
     if not isinstance(share, dict):
         return None
     title = str(share.get("title") or "").strip()
@@ -175,6 +183,9 @@ def share_from_chat(db: Database, member_id: str, project_id: str, share: Any, r
             )
             conn.execute("INSERT INTO auto_shares (finding_id, source, agent_guess, created_at) VALUES (?, 'chat', ?, ?)",
                          (finding_id, guess, now))
+            if simulation_run_id and _is_own_run(conn, member_id, project_id, simulation_run_id):
+                conn.execute("INSERT INTO finding_runs (finding_id, run_id, attached_at) VALUES (?, ?, ?)",
+                             (finding_id, simulation_run_id, now))
         return get_finding(conn, finding_id)
 
 
@@ -195,6 +206,32 @@ def add_finding_note(db: Database, member_id: str, finding_id: str, kind: str, t
                 (str(uuid.uuid4()), finding_id, member_id, kind, text, now),
             )
         return finding_notes(conn, finding_id)[-1]
+
+
+def _is_own_run(conn: sqlite3.Connection, member_id: str, project_id: str, run_id: str) -> bool:
+    row = conn.execute("SELECT member_id, project_id FROM simulation_runs WHERE id = ?", (run_id,)).fetchone()
+    return row is not None and row["member_id"] == member_id and row["project_id"] == project_id
+
+
+def _check_own_run(conn: sqlite3.Connection, member_id: str, project_id: str, run_id: str | None) -> None:
+    if run_id and not _is_own_run(conn, member_id, project_id, run_id):
+        raise InvalidDraft("Attach one of your own runs in this project.")
+
+
+def add_finding_comment(db: Database, member_id: str, finding_id: str, text: str) -> dict:
+    """Feedback on a finding the member can read: the leader and the project's researchers
+    write and see the same thread."""
+    text, _ = redact_secrets(text.strip()[:MAX_NOTE_CHARS])
+    if not text:
+        raise InvalidDraft("Write something first.")
+    with closing(db.shared()) as conn:
+        if get_readable_finding(conn, member_id, finding_id) is None:
+            raise DraftNotFound("No finding with that ID.")
+        with conn:
+            conn.execute("INSERT INTO finding_comments (id, finding_id, member_id, text, created_at) VALUES (?, ?, ?, ?, ?)",
+                         (str(uuid.uuid4()), finding_id, member_id, text,
+                          datetime.now(timezone.utc).isoformat(timespec="seconds")))
+        return finding_comments(conn, finding_id)[-1]
 
 
 def reject_draft(db: Database, member_id: str, draft_id: str) -> None:

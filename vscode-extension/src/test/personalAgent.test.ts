@@ -29,6 +29,8 @@ test("personal requests carry the selected user's token and never use the shared
   assert.equal(sends[0].options.token, "private-a");
   assert.equal(sends[1].options.token, "private-b");
   assert.deepEqual(sends[0].options.body, { project_id: "heat", message: "A private question" });
+  await client.send(a, "With files", "sample_project");
+  assert.deepEqual(calls.at(-1)!.options.body, { project_id: "heat", message: "With files", folder: "sample_project" });
   assert.ok(!calls.some((c) => c.path === "/superbrain/chat" || c.path === "/agent/chat"));
   assert.equal((await client.load(a)).overview, null);
   assert.equal((await client.load(a)).instructions, "Be clear");

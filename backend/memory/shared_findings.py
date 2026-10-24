@@ -15,7 +15,8 @@ _FINDING_COLUMNS = """
     f.id, f.workspace_id, f.project_id, f.category, f.title, f.summary, f.verification_status,
     f.contributed_by, m.display_name AS contributed_by_name, f.source_creao_run_id, f.created_at,
     a.edited AS edited_before_approval, a.approved_at, hr.finding_id IS NOT NULL AS handed_off,
-    aus.finding_id IS NOT NULL AS auto_shared, COALESCE(aus.agent_guess, '') AS agent_guess
+    aus.finding_id IS NOT NULL AS auto_shared, COALESCE(aus.agent_guess, '') AS agent_guess, fr.run_id,
+    (SELECT COUNT(*) FROM finding_comments fc WHERE fc.finding_id = f.id) AS comments
 """
 _FROM = """
     FROM shared_findings f
@@ -23,6 +24,7 @@ _FROM = """
     JOIN approvals a ON a.id = f.approval_id
     LEFT JOIN handoff_records hr ON hr.finding_id = f.id
     LEFT JOIN auto_shares aus ON aus.finding_id = f.id
+    LEFT JOIN finding_runs fr ON fr.finding_id = f.id
 """
 _TOKEN = re.compile(r"[a-z0-9_.]+")
 _STOPWORDS = frozenset(
@@ -178,6 +180,17 @@ def finding_notes(conn: sqlite3.Connection, finding_id: str) -> list[dict]:
         """SELECT n.id, n.kind, n.text, n.created_at, n.member_id, m.display_name AS member_name
            FROM finding_notes n JOIN members m ON m.id = n.member_id
            WHERE n.finding_id = ? ORDER BY n.created_at, n.rowid""",
+        (finding_id,),
+    )
+    return [dict(r) for r in rows]
+
+
+def finding_comments(conn: sqlite3.Connection, finding_id: str) -> list[dict]:
+    """The leader's and researchers' feedback on a finding, oldest first."""
+    rows = conn.execute(
+        """SELECT c.id, c.text, c.created_at, c.member_id, m.display_name AS member_name, m.role
+           FROM finding_comments c JOIN members m ON m.id = c.member_id
+           WHERE c.finding_id = ? ORDER BY c.created_at, c.rowid""",
         (finding_id,),
     )
     return [dict(r) for r in rows]

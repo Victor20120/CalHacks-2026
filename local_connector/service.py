@@ -19,10 +19,11 @@ import uuid
 from typing import Any, Callable
 
 import requests
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from backend.orchestration.evidence_policy import MAX_ITEMS, redact_secrets
+from local_connector.agent_tools import list_project_files, read_project_file
 from local_connector.evidence.extract import extract_evidence, file_kind
 from local_connector.evidence.project_map import build_project_map
 from local_connector.experiments.manager import ExperimentManager, ExperimentNotFound, summarize
@@ -33,6 +34,8 @@ from local_connector.file_access.walk import iter_project_files
 from local_connector.simulation_monitor.checks import Alert, Sample
 from local_connector.simulation_monitor.stream import StreamWatch
 from local_connector.simulation_monitor.watcher import LogWatcher
+from local_connector.simulations import SimulationManager, SimulationNotFound
+from backend.orchestration.simulation_setup import InvalidSetup
 
 log = logging.getLogger(__name__)
 
@@ -51,6 +54,15 @@ class RootIn(BaseModel):
 class EvidenceIn(BaseModel):
     root: str = Field(min_length=1, max_length=1000)
     selections: list[str] = Field(min_length=1, max_length=MAX_ITEMS)
+
+
+class FolderIn(BaseModel):
+    folder: str = Field(min_length=1, max_length=255)  # a granted folder's name, never a local path
+
+
+class ReadIn(FolderIn):
+    path: str = Field(min_length=1, max_length=500)
+    lines: str | None = Field(default=None, max_length=20)
 
 
 class WatchIn(BaseModel):
@@ -88,6 +100,26 @@ class ExperimentIn(BaseModel):
 
 class RunExperimentsIn(BaseModel):
     ids: list[str] = Field(min_length=1, max_length=20)
+
+
+class SimulationIn(RootIn):
+    project_id: str = Field(min_length=1, max_length=64)
+    environment: str | None = Field(default=None, max_length=1000)
+    compiler: str | None = Field(default=None, max_length=1000)
+
+
+class SimulationEnvironmentIn(BaseModel):
+    environment: str | None = Field(default=None, max_length=1000)
+    compiler: str | None = Field(default=None, max_length=1000)
+
+
+class SimulationPlanIn(BaseModel):
+    plan: dict[str, Any]
+
+
+class SimulationPlanningIn(BaseModel):
+    job_id: str | None = Field(default=None, min_length=1, max_length=64)
+    error: str = Field(default="", max_length=1000)
 
 
 class BackendPoster:
@@ -181,11 +213,13 @@ def create_service(
     http: Any = None,
     watcher_factory: Callable[..., LogWatcher] = LogWatcher,
     experiments: ExperimentManager | None = None,
+    simulations: SimulationManager | None = None,
 ) -> FastAPI:
     app = FastAPI(title="ExpandRG local connector", version="0.1.0")
     registry = registry or GrantRegistry()
     backend = (backend_url or os.environ.get("EXPANDRG_BACKEND") or DEFAULT_BACKEND).rstrip("/")
     http = http or requests.Session()
+    simulation_store = simulations or SimulationManager()
     watches: dict[str, dict] = {}
     lock = threading.Lock()
 
@@ -224,6 +258,25 @@ def create_service(
             raise HTTPException(status_code=403 if isinstance(exc, AccessDenied) else 422, detail=str(exc)) from None
         return {"project": ev.project, "evidence": ev.to_payload(), "total_chars": ev.total_chars,
                 "redactions": ev.redactions, "skipped": ev.skipped}
+
+    def named(folder: str) -> Grant:
+        try:
+            return registry.grant_named(folder)
+        except AccessDenied as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from None
+
+    @app.post("/tools/list_project_files")
+    def tool_list_files(body: FolderIn) -> dict:
+        """The research files a personal agent may ask for, in a granted folder (read-only)."""
+        return list_project_files(named(body.folder))
+
+    @app.post("/tools/read_project_file")
+    def tool_read_file(body: ReadIn) -> dict:
+        """One research file, or a range of its lines, for a personal agent (read-only)."""
+        try:
+            return read_project_file(registry, named(body.folder), body.path, body.lines)
+        except (AccessDenied, ValueError) as exc:
+            raise HTTPException(status_code=403 if isinstance(exc, AccessDenied) else 422, detail=str(exc)) from None
 
     @app.post("/project-map")
     def project_map(body: RootIn) -> dict:
@@ -317,6 +370,116 @@ def create_service(
         with lock:
             items = list(streams.items())
         return [stream_status(k, v) for k, v in items if member_id is None or v["member_id"] == member_id]
+
+    # --- Simulations: detect setup, save a version, explicitly run, auto-monitor ---
+
+    def simulation_member(authorization: str | None, project_id: str) -> tuple[dict, str]:
+        if not authorization or not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Sign in to ExpandRG first.")
+        try:
+            response = http.get(backend + "/me", headers={"Authorization": authorization}, timeout=10)
+        except requests.RequestException:
+            raise HTTPException(status_code=503, detail="The ExpandRG backend is not available.") from None
+        if response.status_code != 200:
+            raise HTTPException(status_code=response.status_code, detail="Sign in again; access could not be checked.")
+        me = response.json()
+        if me["member"]["role"] != "researcher" or project_id not in {p["id"] for p in me["projects"]}:
+            raise HTTPException(status_code=403, detail="Choose one of your research projects.")
+        return me["member"], authorization.removeprefix("Bearer ")
+
+    def owned_simulation(identifier: str, authorization: str | None) -> tuple[dict, dict, str]:
+        if not authorization:
+            raise HTTPException(status_code=401, detail="Sign in first.")
+        try:
+            record = simulation_store.get(identifier)
+        except SimulationNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+        member, token = simulation_member(authorization, record["project_id"])
+        if member["id"] != record["member_id"]:
+            raise HTTPException(status_code=404, detail="No saved simulation with that ID.")
+        return record, member, token
+
+    @app.post("/simulations/inspect", status_code=201)
+    def inspect_simulation(body: SimulationIn, authorization: str | None = Header(default=None)) -> dict:
+        member, _ = simulation_member(authorization, body.project_id)
+        grant = grant_for(body.root)
+        try:
+            record = simulation_store.prepare(grant, member["id"], body.project_id, body.environment, body.compiler)
+            return {"simulation": record, "context": simulation_store.context(record["id"], registry)}
+        except (AccessDenied, ExperimentRefused, InvalidSetup) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+
+    @app.get("/simulations")
+    def simulations_list(project_id: str, authorization: str | None = Header(default=None)) -> list[dict]:
+        member, _ = simulation_member(authorization, project_id)
+        return simulation_store.list(member["id"], project_id)
+
+    @app.get("/simulations/{identifier}")
+    def simulation_detail(identifier: str, authorization: str | None = Header(default=None)) -> dict:
+        owned_simulation(identifier, authorization)
+        return simulation_store.detail(identifier)
+
+    @app.get("/simulations/{identifier}/context")
+    def simulation_context(identifier: str, authorization: str | None = Header(default=None)) -> dict:
+        owned_simulation(identifier, authorization)
+        return simulation_store.context(identifier, registry)
+
+    @app.post("/simulations/{identifier}/planning")
+    def simulation_planning(identifier: str, body: SimulationPlanningIn,
+                            authorization: str | None = Header(default=None)) -> dict:
+        owned_simulation(identifier, authorization)
+        try:
+            if body.error:
+                return simulation_store.setup_failed(identifier, body.error)
+            if not body.job_id:
+                raise InvalidSetup("A setup job ID is required.")
+            return simulation_store.planning(identifier, body.job_id)
+        except InvalidSetup as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+
+    @app.post("/simulations/{identifier}/plan")
+    def simulation_plan(identifier: str, body: SimulationPlanIn,
+                        authorization: str | None = Header(default=None)) -> dict:
+        owned_simulation(identifier, authorization)
+        try:
+            return simulation_store.set_plan(identifier, body.plan)
+        except InvalidSetup as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+
+    @app.post("/simulations/{identifier}/environment")
+    def simulation_environment(identifier: str, body: SimulationEnvironmentIn,
+                               authorization: str | None = Header(default=None)) -> dict:
+        owned_simulation(identifier, authorization)
+        try:
+            return simulation_store.connect_environment(identifier, body.environment, body.compiler)
+        except InvalidSetup as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+
+    @app.post("/simulations/{identifier}/run")
+    def run_simulation(identifier: str, authorization: str | None = Header(default=None)) -> dict:
+        _, member, token = owned_simulation(identifier, authorization)
+        def monitor(record):
+            title = record["plan"]["title"]
+            poster = BackendPoster(backend, member["id"], record["project_id"], f"Version {record['version']} · {title}", http)
+            poster._token = token
+            poster.start()
+            if not poster.run_id:
+                raise InvalidSetup("Monitoring could not connect. Try again when the backend is available.")
+            return StreamWatch(poster), poster.run_id
+        try:
+            return simulation_store.run(identifier, monitor)
+        except InvalidSetup as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+
+    @app.post("/simulations/{identifier}/stop")
+    def stop_simulation(identifier: str, authorization: str | None = Header(default=None)) -> dict:
+        owned_simulation(identifier, authorization)
+        return simulation_store.stop(identifier)
+
+    @app.post("/simulations/{identifier}/repeat", status_code=201)
+    def repeat_simulation(identifier: str, authorization: str | None = Header(default=None)) -> dict:
+        owned_simulation(identifier, authorization)
+        return simulation_store.repeat(identifier)
 
     # --- Experiments: prepared in a copy, run only on the researcher's click ---
 

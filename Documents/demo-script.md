@@ -113,7 +113,11 @@ I refined the grid to dx = 0.005 for better resolution. Now the run blows up: ma
 > "As the leader I see what everyone shared, in one place. For more detail I just ask the Super Brain at the bottom of the page."
 
 7. Type `blows up after refining the grid` in **Ask Super Brain** and press **Ask**.
-8. Click **Runs**: A's run is in the list with its alerts. Click it, then **Replay**.
+8. Optional (uses about a minute and credits): click the **Worksheets** tab, then **Make worksheets**. When it's done, open Researcher B's worksheet: questions and things to try, taught from A's finding.
+
+> "The Super Brain also teaches. Each researcher gets a worksheet from what the others found; I read their answers and comment."
+
+9. Click **Runs**: A's run is in the list with its alerts. Click it, then **Replay**.
 
 > "I see every run my researchers watch, live or afterwards. Here's A's run again, step by step: the Warning at step 200 and the Critical at step 800, long before the crash. The log file never left A's computer."
 

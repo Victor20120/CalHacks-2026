@@ -53,12 +53,13 @@ def resolve_command(command: tuple[str, ...], cwd: Path) -> list[str]:
     return words
 
 
-def run_limited(command: list[str], cwd: Path, log_path: Path, limits: Limits, cancel: threading.Event) -> Outcome:
+def run_limited(command: list[str], cwd: Path, log_path: Path, limits: Limits, cancel: threading.Event,
+                *, environment: dict[str, str] | None = None) -> Outcome:
     started = time.monotonic()
     job = None
     with open(log_path, "wb") as out:
         options = {"cwd": str(cwd), "stdout": out, "stderr": subprocess.STDOUT, "stdin": subprocess.DEVNULL,
-                   "env": clean_environment()}
+                   "env": clean_environment(environment)}
         try:
             if os.name == "nt":
                 job = _WindowsJob(limits.memory_mb)

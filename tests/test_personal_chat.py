@@ -209,6 +209,7 @@ def test_chat_redacts_secrets_validates_inputs_and_never_executes_or_publishes(a
      "I'm Agent 1. Let's discuss your solver."),
     ("I'll start by reading the agent's skill and manifest.Your bracket is good evidence.",
      "Your bracket is good evidence."),
+    ("I'll start by reading the app manifest and skill.I'm Agent 1.", "I'm Agent 1."),
     ("Numerical instability means small errors grow over time.", "Numerical instability means small errors grow over time."),
     ("I can't read your local SKILL.md file. Please share the relevant text.",
      "I can't read your local SKILL.md file. Please share the relevant text."),

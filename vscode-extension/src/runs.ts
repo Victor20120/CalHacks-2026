@@ -50,12 +50,7 @@ interface Run {
   warnings: number;
 }
 
-export interface TrackedProcess {
-  write(chunk: string): void;
-  end(exitCode: number | undefined): Promise<void>;
-}
-
-export function watchTerminalRuns(context: vscode.ExtensionContext, deps: Deps): { trackProcess(command: string, cwd: string): TrackedProcess } {
+export function watchTerminalRuns(context: vscode.ExtensionContext, deps: Deps): void {
   const runs = new Map<object, Run>();
   const report = (what: string) => (e: unknown) => deps.log(`${what}: ${e instanceof Error ? e.message : e}`);
 
@@ -229,37 +224,7 @@ export function watchTerminalRuns(context: vscode.ExtensionContext, deps: Deps):
     }
   }
 
-  // A run the researcher started with "Run a simulation": its output comes straight from
-  // the process, so this works whether or not the terminal reports its commands.
-  function trackProcess(command: string, cwd: string): TrackedProcess {
-    const key = {};
-    const manifest = findManifest(cwd);
-    const run: Run = {
-      key, command, cwd, projectRoot: manifest?.root ?? cwd, decision: "watch", lines: [], sending: false,
-      ended: false, finished: false, shown: new Set(), critical: 0, warnings: 0,
-    };
-    runs.set(key, run);
-    deps.log(`Run a simulation: "${command}" in ${cwd}.`);
-    const splitter = new LineSplitter();
-    const started = begin(run).catch(report("Run start"));
-    return {
-      write(chunk: string) {
-        run.lines.push(...splitter.push(chunk));
-        if (run.lines.length > MAX_WAITING_LINES) run.lines.splice(0, run.lines.length - MAX_WAITING_LINES);
-      },
-      async end(exitCode: number | undefined) {
-        if (run.ended) return;
-        run.lines.push(...splitter.flush());
-        run.ended = true;
-        run.exitCode = exitCode;
-        await started;
-        if (run.decision === "watch" && run.streamId) await finish(run).catch(report("Run end"));
-        else runs.delete(key);
-      },
-    };
-  }
 
-  return { trackProcess };
 }
 
 // The nearest expandrg.json at or above the run's folder, and its entry point commands.

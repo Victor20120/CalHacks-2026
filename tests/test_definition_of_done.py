@@ -107,17 +107,17 @@ def test_a_full_connector_session_leaves_every_project_file_unchanged(tmp_path):
     assert (project / "live.log").read_text() == "step 1 max|T| = nan\n"  # the log itself is only read
 
 
-def test_the_connector_writes_only_its_grants_file_and_experiment_copies():
-    writers = re.compile(r"open\([^)]*['\"][wax]b?\+?['\"]|\.write_(text|bytes)\(|\.unlink\(|os\.remove|shutil\.|\.rename\(")
+def test_the_connector_writes_only_its_grants_file_and_saved_execution_copies():
+    writers = re.compile(r"open\([^)]*['\"][wax]b?\+?['\"]|\.write_(text|bytes)\(|\.unlink\(|os\.remove|shutil\.(?:copy\w*|move|rmtree)|\.rename\(")
     offenders = {}
     for path in (REPO / "local_connector").rglob("*.py"):
         hits = writers.findall(path.read_text(encoding="utf-8"))
         if hits:
             offenders[path.relative_to(REPO).as_posix()] = len(hits)
 
-    # Experiments write only their own copies and logs under ~/.expandrg/experiments;
-    # tests/test_experiments.py checks the project folder is left byte-for-byte unchanged.
-    experiments = {p for p in offenders if p.startswith("local_connector/experiments/")}
+    # Experiments and saved simulations write their own copies/logs below ~/.expandrg.
+    # Their execution tests check the source project remains byte-for-byte unchanged.
+    experiments = {p for p in offenders if p.startswith("local_connector/experiments/") or p == "local_connector/simulations.py"}
     assert {p: n for p, n in offenders.items() if p not in experiments} == {
         "local_connector/file_access/grants.py": 1}  # GrantRegistry._save, in ~/.expandrg
     grants_source = (REPO / "local_connector" / "file_access" / "grants.py").read_text(encoding="utf-8")

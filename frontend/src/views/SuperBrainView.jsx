@@ -1,7 +1,11 @@
 import { useEffect, useState } from "react";
 import { backend } from "../api.js";
 import AgentChat from "../AgentChat.jsx";
+import { RunCharts } from "../charts.jsx";
 import { ErrorNote, Markdown, VerificationBadge } from "../components.jsx";
+import WorksheetsView from "./WorksheetsView.jsx";
+
+const LINK = new URLSearchParams(window.location.search);
 
 const CATEGORY_LABELS = {
   error_diagnosis: "Error diagnosis",
@@ -20,6 +24,8 @@ export default function SuperBrainView({ session, project, projects }) {
   const [findings, setFindings] = useState(null);
   const [loading, setLoading] = useState(true);
   const [openId, setOpenId] = useState(null);
+  // "updates", or "worksheets" (the Super Brain as a teacher); ?tab=worksheets opens it
+  const [tab, setTab] = useState(LINK.get("tab") === "worksheets" ? "worksheets" : "updates");
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -38,10 +44,21 @@ export default function SuperBrainView({ session, project, projects }) {
     <div className="super-brain">
       <div className="sb-content">
         <div className="sb-inner">
+          <div className="sb-tabs" role="tablist" aria-label="Super Brain">
+            {[["updates", "Updates"], ["worksheets", "Worksheets"]].map(([id, label]) => (
+              <button key={id} role="tab" aria-selected={tab === id && !openId} className={tab === id && !openId ? "active" : ""}
+                onClick={() => { setTab(id); setOpenId(null); }}>
+                {label}
+              </button>
+            ))}
+          </div>
           {openId ? (
             <FindingDetail session={session} id={openId} projectName={projectName} onOpen={setOpenId} onBack={() => setOpenId(null)} />
+          ) : tab === "worksheets" ? (
+            <WorksheetsView session={session} project={project} onOpenFinding={setOpenId} />
           ) : (
             <Overview
+              session={session}
               findings={findings}
               loading={loading}
               project={project}
@@ -52,12 +69,12 @@ export default function SuperBrainView({ session, project, projects }) {
           )}
         </div>
       </div>
-      <AgentChat key={`${session.member.id}:${project.id}`} session={session} project={project} onOpenFinding={setOpenId} />
+      <AgentChat key={`${session.member.id}:${project.id}`} session={session} project={project} />
     </div>
   );
 }
 
-function Overview({ findings, loading, project, projectName, onOpen, error }) {
+function Overview({ session, findings, loading, project, projectName, onOpen, error }) {
   const list = findings || [];
   const researchers = byResearcher(list);
   const verified = list.filter((f) => f.verification_status === "verified").length;
@@ -85,7 +102,7 @@ function Overview({ findings, loading, project, projectName, onOpen, error }) {
       {researchers.length >= 2 && <UpdatesChart researchers={researchers} projectName={projectName} />}
 
       {researchers.map((r) => (
-        <ResearcherUpdates key={r.id} researcher={r} projectName={projectName} onOpen={onOpen} />
+        <ResearcherUpdates key={r.id} session={session} researcher={r} projectName={projectName} onOpen={onOpen} />
       ))}
     </div>
   );
@@ -148,7 +165,7 @@ function UpdatesChart({ researchers, projectName }) {
   );
 }
 
-function ResearcherUpdates({ researcher, projectName, onOpen }) {
+function ResearcherUpdates({ session, researcher, projectName, onOpen }) {
   const count = researcher.findings.length;
   return (
     <section className="card researcher" id={`researcher-${researcher.id}`}>
@@ -160,36 +177,144 @@ function ResearcherUpdates({ researcher, projectName, onOpen }) {
       </div>
       <ul className="update-list">
         {researcher.findings.map((f) => (
-          <UpdateItem key={f.id} finding={f} projectName={projectName} onOpen={onOpen} />
+          <UpdateItem key={f.id} session={session} finding={f} projectName={projectName} onOpen={onOpen} />
         ))}
       </ul>
     </section>
   );
 }
 
-function UpdateItem({ finding, projectName, onOpen, showAuthor }) {
-  const issue = issueOf(finding.summary);
+// One update: a plain name, the issue, what we think is causing it, the graph of the run it
+// came from (when one is attached and the viewer may see that run), and the comments.
+function UpdateItem({ session, finding, projectName, onOpen }) {
+  const parts = summaryParts(finding.summary);
+  const issue = short(parts.issue || parts.lead);
+  const cause = short(parts.cause || finding.agent_guess);
   return (
-    <li>
+    <li className="update">
       <div className="update-head">
-        <button className="link update-title" onClick={() => onOpen(finding.id)}>
-          {finding.title}
+        <button className="link update-title" onClick={() => onOpen(finding.id)} title={finding.title}>
+          {plainName(finding.title)}
         </button>
-        <VerificationBadge status={finding.verification_status} />
+        <span className="update-tags">
+          <VerificationBadge status={finding.verification_status} />
+          {finding.handed_off && <HandedOffBadge />}
+          {finding.auto_shared && <AgentSharedBadge />}
+        </span>
       </div>
+      <p className="small muted">
+        {CATEGORY_LABELS[finding.category] || finding.category} · {projectName(finding.project_id)} ·{" "}
+        {finding.approved_at.slice(0, 10)}
+      </p>
       {issue && (
-        <p className="update-issue">
+        <p className="update-field">
           <span className="label">Issue</span>
-          {issue}
+          <span>{issue}</span>
         </p>
       )}
-      <div className="small muted">
-        {showAuthor && `${finding.contributed_by_name} · `}
-        {CATEGORY_LABELS[finding.category] || finding.category} · {projectName(finding.project_id)} ·{" "}
-        {finding.approved_at.slice(0, 10)} {finding.handed_off && <HandedOffBadge />}
-        {finding.auto_shared && <AgentSharedBadge />}
-      </div>
+      {cause && (
+        <p className="update-field">
+          <span className="label">Likely cause</span>
+          <span>{cause}</span>
+        </p>
+      )}
+      {finding.run_id && <UpdateGraph session={session} runId={finding.run_id} />}
+      <Comments session={session} findingId={finding.id} count={finding.comments} />
     </li>
+  );
+}
+
+// The attached run's first measure, with its Warning and Critical marks. Runs stay private:
+// someone who may not see the run (another researcher) gets no graph.
+function UpdateGraph({ session, runId }) {
+  const [run, setRun] = useState(null);
+  useEffect(() => {
+    let stopped = false;
+    backend(`/simulation-runs/${runId}`, { token: session.token })
+      .then((r) => { if (!stopped) setRun(r); })
+      .catch(() => {});
+    return () => { stopped = true; };
+  }, [runId]);
+  if (!run || !run.metrics.length) return null;
+  return (
+    <div className="update-field">
+      <span className="label">Run</span>
+      <div>
+        <span className="small muted">{run.run_label}</span>
+        <RunCharts run={run} limit={1} />
+      </div>
+    </div>
+  );
+}
+
+// Feedback between the leader and the project's researchers: everyone in the project
+// writes and sees the same thread. Agents don't read it.
+function Comments({ session, findingId, count = 0, initial = null }) {
+  const [open, setOpen] = useState(Boolean(initial));
+  const [thread, setThread] = useState(initial);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!open || thread) return;
+    backend(`/findings/${findingId}/comments`, { token: session.token }).then(setThread).catch((e) => setError(e.message));
+  }, [open]);
+
+  async function post(event) {
+    event.preventDefault();
+    if (!text.trim() || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const comment = await backend(`/findings/${findingId}/comments`, {
+        method: "POST",
+        token: session.token,
+        body: { text: text.trim() },
+      });
+      setThread([...(thread || []), comment]);
+      setText("");
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const shown = thread ? thread.length : count;
+  return (
+    <div className="comments">
+      <button className="link comments-toggle" onClick={() => setOpen(!open)} aria-expanded={open}>
+        {open ? "Hide comments" : shown ? `Comments (${shown})` : "Add a comment"}
+      </button>
+      {open && (
+        <>
+          {thread && !thread.length && (
+            <p className="small muted">No comments yet. The leader and the researchers in this project all see what you write.</p>
+          )}
+          <ul className="comment-list">
+            {thread?.map((c) => (
+              <li key={c.id} className="comment">
+                <span className="comment-who">{c.member_name}</span>
+                <span className="small muted">
+                  {c.role === "leader" && !/leader/i.test(c.member_name) ? " Leader · " : " "}
+                  {c.created_at.slice(0, 16).replace("T", " ")}
+                </span>
+                <p>{c.text}</p>
+              </li>
+            ))}
+          </ul>
+          <form className="comment-form" onSubmit={post}>
+            <input value={text} maxLength={2000} disabled={busy} onChange={(e) => setText(e.target.value)}
+              placeholder="Write feedback…" aria-label="Write a comment" />
+            <button className="primary" type="submit" disabled={busy || !text.trim()}>
+              Post
+            </button>
+          </form>
+          <ErrorNote error={error} />
+        </>
+      )}
+    </div>
   );
 }
 
@@ -252,6 +377,8 @@ function FindingDetail({ session, id, projectName, onOpen, onBack }) {
             autoShared={finding.auto_shared}
             onAdded={(note) => setDetail({ ...detail, notes: [...(detail.notes || []), note] })}
           />
+          <h3>Comments</h3>
+          <Comments session={session} findingId={id} initial={detail.comments || []} />
           <h3>Linked findings</h3>
           {!detail.related.length && <p className="muted">None that you can see.</p>}
           <ul className="finding-list">
@@ -374,12 +501,37 @@ function countBy(items, key) {
   return counts;
 }
 
-// The "Symptom:" line of a shared summary, else its first line, as plain text.
-function issueOf(summary) {
-  const lines = (summary || "").split("\n").map((l) => l.replace(/[*`#]/g, "").replace(/^\s*-\s+/, "").trim());
-  const symptom = lines.find((l) => /^symptom:/i.test(l));
-  const text = (symptom ? symptom.replace(/^symptom:\s*/i, "") : lines.find(Boolean)) || "";
-  return text.length > 220 ? `${text.slice(0, 217)}…` : text;
+// The labelled parts of a summary ("Symptom: …", "Likely cause …: …", "Fix: …"), wherever they
+// start a line or a sentence, so the board can show the issue and the cause on their own.
+// lead is the text before the first label: the issue, when there's no "Symptom:".
+const PART = /(^|\n|\.\s+)(symptom|issue|(?:likely |probable |root )?cause(?: \([^)]*\))?|fix|evidence|how to validate|validated)\s*:\s*/gi;
+
+function summaryParts(summary) {
+  const text = (summary || "").replace(/[*`#]/g, "").replace(/^\s*-\s+/gm, "");
+  const marks = [...text.matchAll(PART)];
+  const parts = { lead: (marks.length ? text.slice(0, marks[0].index) : text).split("\n")[0].trim() };
+  marks.forEach((m, i) => {
+    const name = /cause/i.test(m[2]) ? "cause" : /symptom|issue/i.test(m[2]) ? "issue" : m[2].toLowerCase();
+    const end = i + 1 < marks.length ? marks[i + 1].index : text.length;
+    if (!parts[name]) parts[name] = text.slice(m.index + m[0].length, end).split("\n")[0].trim();
+  });
+  return parts;
+}
+
+// A plain name for the board: the title without the numbers and formulas in it
+// ("CFL stability limit violated (r = 0.30 > 0.25)" becomes "CFL stability limit violated").
+// The full title is on the update's own page, and in the name's tooltip.
+function plainName(title) {
+  const name = title
+    .replace(/\s*\([^)]*[\d=<>][^)]*\)/g, "")
+    .replace(/\s*(?::|;|\s[-–—]\s)[^:;]*[\d=<>][^:;]*$/, "")
+    .trim();
+  return name.length >= 8 ? name : title;
+}
+
+function short(text) {
+  const t = (text || "").trim();
+  return t.length > 220 ? `${t.slice(0, 217)}…` : t;
 }
 
 function plural(n, word) {

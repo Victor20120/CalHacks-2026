@@ -4,7 +4,127 @@ One entry per commit, newest first. Each commit adds its own entry with the hash
 
 ---
 
-## 2026-10-24 · `pending` · Agent runtime Phase 1, the VS Code extension with personal agent chat, and chat sharing to the Super Brain
+## 2026-10-24 · `pending` · Agent toolkit, Super Brain worksheets and comments, your own research group, and simulations from the dashboard
+
+**Why:** Personal agents should look at the researcher's files, runs and the group's findings before answering. The Super Brain should teach and be easy to read, and group members should be able to comment on what's shared. A real group needs its own Super Brain and agents rather than the demo. Researchers should be able to set up and run an existing simulation from the dashboard, with their agent preparing the steps and the project's own environment and compilers reused.
+
+### A read-only toolkit for personal agents, worksheets, the update board and group setup
+
+**Why:** When a researcher asks about a blow-up, their agent should look at the code, the config, the log and the group's findings instead of guessing. The plan was MCP tools, so CREAO's support for them was checked first. And the group wanted the Super Brain to teach: take everything shared at once, organize it, and give each researcher a worksheet the leader can check.
+
+#### Worksheets (the Super Brain as a teacher)
+- Decisions: questions and things to try; one worksheet per researcher, from what the *others* found; the leader makes them; researchers answer and the leader comments (no automatic grading).
+- `backend/knowledge_sharing/teacher.py` and `POST /worksheets` (leader), `GET /worksheets`, `GET /worksheets/{id}`, `PUT /worksheets/{id}/answers`, `POST /worksheets/{id}/review`, `DELETE /worksheets/{id}`.
+  - One run on the Super Brain agent reads every finding shared in the project and writes all the worksheets.
+  - The app keeps only the planned researchers, at most 8 question or "try it" items each, and finding IDs from what that researcher may learn from.
+  - Model answers stay hidden from the researcher until the leader has reviewed the worksheet; answers lock after review.
+  - New shared tables `worksheets` and `worksheet_items`, created on start.
+- The code that picks the Super Brain agent (dedicated chat agent or hub) is now one helper, shared by chat and worksheets.
+- **Update board, easier to read.** Each update on the Super Brain page shows:
+  - a plain name (the title without numbers and formulas);
+  - the **Issue** and the **Likely cause**, taken from the summary's labelled parts, or else the agent's guess. They sit in one plain label column: a first version with coloured boxes was too loud;
+  - the graph of the run it came from, with its Warning and Critical marks;
+  - **Comments**.
+
+  Personal agents are asked for share titles without numbers or formulas.
+- **The run a finding came from.** New shared table `finding_runs`. Drafts offer **Attach a run** (a run started up to a day before is already selected). `run_id` on approval must be your own run in that project. A personal agent's chat share carries the run it looked at, if it's the researcher's own and in that project. Runs stay private: the graph shows only to those who may see the run (the researcher and the leader).
+- **Comments** (`finding_comments`, `GET`/`POST /findings/{id}/comments`): one thread per finding that the leader and the project's researchers all write in and see, also on the finding's own page. Agents don't read comments; notes remain the way to add detail they use.
+- Comments that wouldn't post: the running backend dated from 10:36, before comments existed, while the dashboard had already reloaded with them. ExpandRG was restarted with current code (data kept). A real browser on a scratch copy then opened an update's comments, typed, clicked **Post** and saw the comment appear, with the box cleared and no error.
+- Checks: 5 new tests in `tests/test_update_board.py` (an attached run shows for those who may see it; only your own run in the project can be attached; a chat share carries the run the agent looked at, never another researcher's; a shared comment thread; comments follow project access, are checked and have secrets blanked). The text helpers were checked on real summary shapes in Node. Screenshots: the leader's board with two runs, Researcher B seeing only their own run's graph, and Drafts with the run already selected.
+- **Set up your own research group** (`python setup_expandrg.py`, `backend/workspaces/groups.py`).
+  - Decisions: the setup runs in the terminal; a new group gets its own empty Super Brain and the demo stays; the leader enters every researcher's agent.
+  - It asks whether you're the leader (researchers are sent to their leader), then the group, the Super Brain's app ID and key with where to find them in agent.creao.ai, each researcher's name, app ID and key, and the first project.
+  - Keys are typed hidden, never printed in full, and checked with CREAO at no cost. Checked on 2026-10-24: a wrong key gets 401, but CREAO answers any app ID, even a made-up one. So app IDs are checked for shape, with an optional one-run test that asks first because it uses credit (an unknown app gets 404 `APP_NOT_FOUND`).
+  - It saves `~/.expandrg/groups/<id>/group.env` (keys), `group.json` (no keys) and `data/` (a new Super Brain with the people, their agent slots and the project).
+  - `run_demo.py --group <id>` starts it and prints each person's sign-in link. The CREAO client reads `EXPANDRG_ENV_FILE` when set. The demo is never added to another group's database.
+  - VS Code extension 0.9.0 has an `expandrg.group` setting, so it starts that group instead of the demo. Its README links the toolkit doc on GitHub, because vsce refuses links outside the extension.
+- Checks for groups: 9 new tests in `tests/test_groups.py` (a full leader setup; a researcher sent to their leader; bad IDs and keys asked again; project members and unique IDs; an existing name refused; not saving saves nothing; a started group uses its own data and keys, never the demo's; the demo is never added; key and app checks). A real run used the real keys (accepted for free) in a scratch folder: the group's own backend listed only its people, and Ana's agent answered through the group's keys (22 s). The scratch copy of the keys was deleted.
+- Super Brain chat shows only the question and the answer: the "Answered in … · N shared findings available" line and the "Shared knowledge" list are gone, and so are the retrieved-findings lines while it's thinking. They're still saved with each exchange.
+- Dashboard: **Updates** and **Worksheets** tabs on the Super Brain page.
+  - Leader: **Make worksheets** with a live timer, a table with each status, and per-item comment boxes (**Send comments**, **Delete**).
+  - Researchers: items grouped by topic with links to their findings, answer boxes, **Save** and **Send to the leader**, then the leader's comments and the model answers.
+  - `?tab=worksheets&worksheet=<id>` links straight to one.
+- Checks:
+  - 6 new tests in `tests/test_worksheets.py`: what each researcher may learn from; unknown, duplicate and malformed worksheets and items dropped, and the cap; leader only; nothing to teach; only the project's findings; who sees what and when model answers appear; answer, submit, review and lock; delete; a reply without worksheets.
+  - A real run on the hub with the user's Super Brain Chat skill (`04bce97c`, about 60 s) wrote 3 worksheets (7, 7 and 8 items) for Researchers A, B and C from two findings. Each item linked the right finding, A's own finding was never taught to A, and the verification labels were kept honest.
+  - Screenshots at 1280 and 1440 wide checked the leader's list and checking view, a researcher answering, and a reviewed worksheet; a wrapping table was fixed.
+
+#### CREAO check
+- API-triggered agents can't call custom tools. Agent 1, asked directly (run `a8d5e5ca`), listed only CREAO's own tools and `connectors: []`. CREAO's custom MCP servers are for the build agent; Device Connect has no documented Windows or API-run support and would give shell and write access; webhooks to private networks are rejected.
+- The same run showed the agents can run code in CREAO's cloud (Python, outbound HTTP). Agents are now told never to run project code there; the design doc's risk 1 is updated.
+
+#### Changed
+- `local_connector/agent_tools.py` and connector endpoints `POST /tools/list_project_files` and `POST /tools/read_project_file`:
+  - a granted folder named by its name only (`GrantRegistry.grant_named`; two folders with the same name are refused);
+  - research file types only; relative paths only;
+  - line ranges with line numbers, and logs excerpted around problems;
+  - 400 lines and 12,000 characters per read; secrets blanked. Nothing is executed.
+- `backend/orchestration/toolkit.py`: `list_project_files`, `read_project_file`, `search_super_brain` (findings in the researcher's projects, with evidence, status and notes) and `get_simulation_runs` (their runs, alerts and numbers per step). All read-only, run with the researcher's permissions.
+  - Requests that are unknown, refused or over the limits come back to the agent as errors.
+  - `POST /agent-tools` runs one tool directly (for an MCP server later).
+- Personal chat: the agent ends a reply with `{"tool_requests": [...]}`. ExpandRG runs up to 5 requests per round, 2 rounds per message, and calls the agent again with `tool_results`. The reply ends with a `Checked:` line; history keeps the summaries, not the file contents. `POST /personal-agent/chat` takes an optional `folder` (a name, never a path).
+- After the first real run answered without looking, the prompt now says the connected folder is readable, and `output_format` asks for either only the tool requests or the final answer.
+- The skill-preamble filter also removes "I'll start by reading the app manifest and skill."
+- **Fixed:** listing a granted folder followed Windows directory junctions, so names of files outside the folder could appear in the dashboard's file list and in a project map sent to CREAO. Reading them was already refused. Linked folders and links that lead outside are now skipped (`local_connector/file_access/walk.py`).
+- VS Code extension 0.8.0: the panel sends the granted folder's name with each message and shows `· can read <folder>` in its header. On the first message, a single open folder that isn't allowed yet is offered once.
+- Docs: new `Documents/agent-toolkit.md` (tools, rules, the CREAO check, Windows and VS Code setup, the real demo); backend README, top-level README, the extension README and the runtime design updated.
+
+#### Checks
+- New `tests/test_agent_toolkit.py` (29 tests, 1 skipped where symlinks need admin rights). It covers:
+  - only research files listed;
+  - ranges and log excerpts; caps;
+  - refusals for `..`, local paths, `.env`, keys, `.git`, binary and unknown types; Windows junctions, for both listing and reading; folders that weren't granted or share a name;
+  - secrets blanked; reading never runs or changes anything;
+  - the chat loop end to end, the 2-round and 5-request caps, the size limit; refused and unknown requests;
+  - chat without a folder; a stopped connector;
+  - search with project, evidence, status and notes; a restricted project and another group never searched; search read-only;
+  - runs only the researcher's own; the endpoint's sign-in, membership and folder-name checks.
+- `python -m pytest` (with the worksheet tests): 391 passed, 2 skipped. `npm run build` succeeds. `npm test` in `vscode-extension/`: 20 passed. Extension 0.8.0 packaged and installed.
+- Real Agent 1 on scratch data (test ports 8100/8101):
+  - it listed the folder, searched the Super Brain, checked runs and read `config.json`, `heat2d.py`, `run.log` and `expandrg.json` in 2 rounds (3 CREAO runs, 72 s in CREAO);
+  - it answered with r = 0.30 from the config and `heat2d.py` line 32, the growth factor from the log, and Researcher A's verified fix.
+
+### Keep group setup short and guided
+
+- The terminal introduction now says setup connects agents already created in CREAO. It asks whether the user is the leader before collecting names or credentials, and retries an unclear role answer.
+- Researchers are told to wait for their leader's group ID and sign-in name/member ID; that branch exits without credential prompts, key checks, or group creation.
+- Leaders see app ID/key directions at entry: open the existing agent, open API Trigger, and copy its app ID and `capi_` key. Keys remain hidden when typed. Wording distinguishes the new group's empty local research memory from the existing CREAO agents.
+- Checks: all 10 group-setup tests passed with fake credentials and no live CREAO calls.
+
+### Replace the run shortcut with simulation setup guidance
+
+- Extension 0.10.0 replaces **Run a simulation** with **Set up simulation** in the status bar and command palette. The action opens the personal agent with a setup request ready to review and send; the old manifest-based process launcher was removed.
+- The request asks the existing CREAO personal agent to inspect permitted project files and identify the real language, environment, build system, dependencies, inputs, working directory, and run commands. Python guidance covers its environment and entry point; compiled languages such as Fortran get separate build/link and execution steps. The researcher starts commands in their normal terminal.
+- The chat shortcut uses the same request. Existing unsent messages are preserved, a request survives the webview's initial load, and switching profiles discards a queued setup request. Terminal monitoring and explicit log watching remain available.
+- Checks: TypeScript compiles; all 22 extension tests pass. Browser checks confirm draft preservation, explicit Send, and the existing personal-chat interactions at narrow/light/dark sizes. No live CREAO run was submitted for this UI change.
+
+### Prepare and run simulations from the researcher dashboard
+
+- Replaced the researcher's manual log picker and **Start watching** flow with **Simulations → Set up & run** and a separate **Monitor** tab. The leader sees Monitor without execution controls.
+- **Detect & prepare** saves a code/input version and asks the researcher's existing CREAO agent for a structured setup based on a checked project map and local tool availability. It identifies environments, build dependencies, inputs, and execution commands; unresolved choices or missing tools block Run. No hand-written run manifest is required.
+- **Run simulation** registers monitoring, makes a fresh work copy, executes build steps sequentially, and runs the simulation only after successful builds. Output streams into the existing metrics/alert pipeline automatically. Run and Stop are explicit researcher actions. Windows compiler names and project executable paths are handled separately from global tools.
+- Local saved versions retain code, inputs, setup, output, and results. **Prepare from this version** reuses a prior snapshot and setup without another CREAO request. Original project files remain unchanged; sensitive files and symlinks are omitted. Versions remain separate between owners and groups.
+- Added authenticated connector simulation routes and `POST /simulation-setup` on the backend. Setup jobs reconnect without automatic resubmission. Execution uses the existing time/memory/output limits; it is not filesystem or network isolation.
+- Checks: full backend/connector suite passed (421 tests, 2 skipped); final simulation/source-boundary checks passed (20 tests). Frontend production build passes. An isolated browser completed real Python build/run, automatic metrics, version reuse, reload persistence, missing-Fortran-compiler handling, and leader monitoring. A real Agent 1 CREAO request also produced a validated runnable Python setup in 31.5 seconds; the request asked for planning only.
+
+### Reuse the project's own environment and compilers
+
+- `local_connector/runtime_environment.py`: **Detect & prepare** looks for the project's `.venv`, `venv` or `env`, then an activated virtual or Conda environment, then ExpandRG's own Python. That interpreter is used both to check the project's packages and to run it. Saved versions keep it; the environment isn't copied or recreated.
+- Compiler settings are reused from `FC`, `CC`, `CXX`, Makefiles and CMake presets or caches, including compilers outside ExpandRG's PATH. Plans name them only through the `{python}`, `{fortran}`, `{cc}` and `{cxx}` aliases.
+- Local interpreter and compiler paths never go to CREAO: it sees labels, availability and aliases. A plan can't add its own absolute path.
+- **Existing environment** (before preparing) and **Environment details & connection** (on a saved version) let the researcher point to an environment folder, a Python executable or a Fortran compiler. **Recheck existing tools** refreshes detection without another CREAO request. Credentials in the launcher's environment are never saved with a version.
+- SDKs that need activation scripts must be activated in the terminal that starts ExpandRG. Windows and WSL are separate environments.
+- New `tests/test_runtime_environment.py` (about 25 tests) covers the order of choice, explicit selections, Conda, compiler aliases with their flags and quoting, Makefile compilers, missing tools, and keeping local paths and credentials private.
+- Docs: README, backend README and the runtime design now describe Set up & run, Monitor and environment reuse. This part was written before its own changelog entry; it is recorded here.
+
+### Checks for this commit
+
+- `python -m pytest`: 452 passed, 2 skipped (symlink tests need admin rights on Windows). `npm run build` succeeds. `npm test` in `vscode-extension/`: 22 passed.
+- ExpandRG was restarted with this code: the backend has `/simulation-setup`, the comment, worksheet and agent-tool routes. Extension 0.10.0 was rebuilt from this source and installed.
+- Secret scan of the staged changes: no CREAO key or app ID from `backend/.env`; no `.env`, database, log or package files are committed.
+
+---
+## 2026-10-24 · `79bf13c` · Agent runtime Phase 1, the VS Code extension with personal agent chat, and chat sharing to the Super Brain
 
 **Why:** Personal agents should be able to investigate problems on their own, but they must never start a run. The design for that is in `Documents/agent-runtime-design.md`. Phase 1 builds its base without any AI: a researcher tries a change in a copy of the project, runs it with a click, and compares it with the original run. Researchers' code lives in VS Code, so their agent should be there too: watching runs and talking with them, and passing what matters to the web dashboard and the Super Brain. The Runs page also had to become clear ("I don't know what I'm looking at").
 

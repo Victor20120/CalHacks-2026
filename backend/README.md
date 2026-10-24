@@ -69,12 +69,14 @@ It listens on this computer only (`127.0.0.1`), because sign-in is only a protot
 | `POST /diagnose` | Signed in. Body: `project_id` (one of your projects), `symptom`, `focus_areas` (list; default `["numerical"]`), `analysis_depth` (default `standard`), `evidence` (list of `path`, `kind`, `excerpt`, `truncated`), `use_super_brain` (default `true`). Checks the evidence, looks up earlier findings, starts a run on **your own** personal agent and returns `202` with `job_id`, `evidence_sent`, `redactions` and `prior_findings` |
 | `GET /diagnose/{job_id}` | Signed in, your own jobs only. `status` is `running`, `completed` (with `diagnosis`: `reply`, `issues`, `summary`, `run_id`; `prior_findings`; and `draft_id`) or `failed` (with `error`: `type`, `message`, sometimes `run_id`). A completed diagnosis is saved to your private memory |
 | `GET /drafts` | Your pending drafts for the Super Brain. Only you can see them |
-| `POST /drafts/{draft_id}/approve` | Publish a draft as a shared finding. Optional edits: `title`, `summary`, `category`, `verification_status` |
+| `POST /drafts/{draft_id}/approve` | Publish a draft as a shared finding. Optional edits: `title`, `summary`, `category`, `verification_status`, and `run_id`: one of your own runs in the draft's project, attached so its graph shows with the update to whoever may see that run (`422` for anyone else's run). A personal agent's chat share carries the run the agent looked at, when it's yours and in that project |
 | `POST /drafts/{draft_id}/reject` | Keep a draft private for good. Nothing is written to the shared database |
 | `GET /projects/{project_id}/findings` | Approved findings in a project you belong to |
 | `GET /superbrain/findings` | Approved findings across every project you belong to, newest first, with who shared each one. Optional `project_id` narrows it |
 | `GET /superbrain/search?q=...` | "Ask Super Brain": approved findings in your projects, ranked by shared words. Optional `project_id` narrows it |
-| `GET /findings/{finding_id}` | One finding, its links (leaving out links to findings you can't read) and its `notes`. Findings in projects you can't read return `404` |
+| `GET /findings/{finding_id}` | One finding, its links (leaving out links to findings you can't read), its `notes` and its `comments`. Every finding carries `run_id` (the run it came from, or `null`) and its number of `comments`. Findings in projects you can't read return `404` |
+| `GET /findings/{finding_id}/comments` | The comments on a finding you can read, oldest first, with who wrote each one and their role |
+| `POST /findings/{finding_id}/comments` | Body: `text` (up to 2,000 characters). Feedback that the leader and the project's researchers all see (`201`). Secrets are blanked. Agents don't read comments; notes are for that |
 | `POST /findings/{finding_id}/notes` | Body: `kind` (`detail`, `guess` or `correction`), `text` (up to 2,000 characters). Adds your note to a finding you can read and returns it (`201`). Secrets are blanked. Findings you can't read return `404` |
 | `POST /alerts` | From your local watcher. Body: `project_id` (one of your projects), `run_label`, `alerts` (list of `severity`, `check`, `message`, `metric`, `line_number`, `line`). Kept in memory for this session only |
 | `GET /alerts` | Your own alerts, newest first (optional `project_id`). Other researchers never see them |
@@ -117,7 +119,7 @@ All chat replies use `hub_agent()`, regardless of who asks. Personal diagnoses a
 
 Greetings, empty retrieval, and preference changes also go to CREAO; there is no local-answer or lookup branch. Natural standalone style directives are saved before starting the request. `/rules <text>` replaces preferences, `/rules show` asks the hub to explain them, and `/rules reset` restores defaults. The hub is told which preference action the application completed, so acknowledgments reflect saved state.
 
-Chat polls CREAO every second; the browser polls the local job every 750 ms. `elapsed_ms`, `provider_ms`, and `prompt_chars` expose latency. Selected sources are shown while the provider works. This reduces delivery overhead without replacing CREAO's reasoning.
+Chat polls CREAO every second; the browser polls the local job every 750 ms. `elapsed_ms`, `provider_ms`, and `prompt_chars` expose latency; the dashboard keeps them, and the findings used, out of sight, so only the answer shows. This reduces delivery overhead without replacing CREAO's reasoning.
 
 Retrieval and local history/job reads check current project membership. All-project scope uses only the viewer's projects; older combined answers are hidden if relevant access is removed. These checks govern application-supplied records. The configured shared CREAO hub may retain provider-side memory across runs; strict isolation of that memory requires provider configuration or separate hubs and is not guaranteed by prompt instructions. Rules and conversation history are persisted in the user's private settings table; no schema reset is needed. Super Brain chat never creates a draft or a finding. One hub chat run per user/project at a time; duplicates return `409`.
 
@@ -135,9 +137,12 @@ Diagnoses and project overviews still use each researcher's own agent with its s
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /personal-agent/chat` | Body: `project_id`, `message` (up to 4,000 characters). Starts a reply on the signed-in researcher's own active CREAO agent. Returns `202` with `job_id`, any updated `instructions`, `agent` identity, and `used_project_overview`. Poll `/jobs/{job_id}`; `diagnosis.shared_finding` is the finding the agent shared from this reply, or `null` |
+| `POST /personal-agent/chat` | Body: `project_id`, `message` (up to 4,000 characters), optional `folder` (a granted folder's name, never a path: lets the agent read its files). Starts a reply on the signed-in researcher's own active CREAO agent. Returns `202` with `job_id`, any updated `instructions`, `agent` identity, and `used_project_overview`. Poll `/jobs/{job_id}`; `diagnosis.shared_finding` is the finding the agent shared from this reply, or `null` |
 | `GET /projects/{project_id}/personal-chat` | That user's personal conversation, public `agent` identity, and any `pending_job_id` |
 | `DELETE /projects/{project_id}/personal-chat` | Clear personal history while keeping instructions and overview. Refuses while a personal reply is running |
+| `POST /agent-tools` | Body: `project_id`, optional `folder`, `tool`, `args`. Runs one of the agent's read-only tools as you, with your permissions, and returns `ok`, `summary` and `result` or `error` |
+
+**Toolkit.** The personal agent can list and read research files in the granted folder, search the Super Brain and look at the researcher's runs ([toolkit](../Documents/agent-toolkit.md), `backend/orchestration/toolkit.py`). CREAO can't call ExpandRG's tools, so the agent ends a reply with a `{"tool_requests": [...]}` block. ExpandRG runs up to 5 requests per round, 2 rounds per message (at most 3 CREAO runs), and calls the agent again with the results. File reads go through the local connector (`EXPANDRG_CONNECTOR`, default `http://127.0.0.1:8001`). The reply ends with a `Checked:` line listing every request. Job results carry `tool_calls` (summaries only) and `creao_runs`. The agent is also told never to run project code in CREAO's sandbox.
 
 This uses the existing personal agent contract (`AGENT_1` for A, `AGENT_2` for B), with configured CREAO skills, no hub/dedicated-chat routing, and no chat model override. The required personal-agent `analysis_depth` input is `standard`. Context consists of the user's saved project overview, recent personal conversation, their response instructions, and approved shared findings in this project. User text and replies are redacted; history uses a separate project-scoped private settings key, so it cannot appear in Super Brain chat or offboarding findings. Only what the agent shares (below) leaves it.
 
@@ -146,6 +151,24 @@ Personal chat defaults to direct, conversational answers: short paragraphs for s
 Natural style directives and `/rules` commands reuse the existing per-user/project agent instructions. Chat only returns proposals and executes no commands. Leaders have no personal agent and are refused. Job/history endpoints re-check membership, and one personal chat job per user/project runs at a time independently of hub chat. The VS Code panel uses the existing `/project-map` → preview → `/overview` flow for project understanding.
 
 Personal agents are numbered within their workspace by registration/activation order (`agents.created_at`, with insertion order breaking timestamp ties). Retired agents remain in the ordering, so the remaining agents are not renumbered. The CREAO credential prefix does not determine the public number. Identity is returned by `/me` and personal-chat endpoints, included in each personal CREAO prompt, and saved with replies. New conversations request an introduction using the assigned name. No extra provider request or database reset is needed to show an identity. Restart a backend already running older code to load this change.
+
+### Worksheets: the Super Brain as a teacher
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /worksheets` | Leader only. Body: `project_id`. Starts one Super Brain run (`202`, poll `/jobs/{job_id}`; the result has `worksheet_ids`). Returns `researchers` (who gets one, and how many findings they learn from) and `findings`. `422` when no researcher has findings from others to learn from; `409` while one is running |
+| `GET /worksheets?project_id=` | Every worksheet in the project for the leader; your own for a researcher. Each has `status` (`assigned`, `submitted`, `reviewed`), `items` and `answered` |
+| `GET /worksheets/{id}` | One worksheet with its items. A researcher sees `model_answer` only once the leader has reviewed it |
+| `PUT /worksheets/{id}/answers` | The researcher it's for. Body: `answers` (`{item_id: text}`), `submit`. `409` once reviewed |
+| `POST /worksheets/{id}/review` | Leader only. Body: `comments` (`{item_id: text}`), `comment`. Marks it reviewed |
+| `DELETE /worksheets/{id}` | Leader only |
+
+`backend/knowledge_sharing/teacher.py` gathers every shared finding in the project (the newest 30, with notes), and lists for each active researcher the findings the *others* shared. One run on the Super Brain agent (the same agent and model as chat) gets them in a single prompt and returns a `{"worksheets": [...]}` block. The app keeps only:
+- the planned researchers, one worksheet each;
+- items that are a question or a "try it" step, with a prompt, at most 8 per worksheet;
+- finding IDs from what that researcher may learn from.
+
+Text is bounded and secrets are blanked everywhere. A worksheet is seen only by its researcher and the leader, while both are active members of its project. "Try it" steps tell the researcher to use a copy; nothing runs by itself. Tables: `worksheets` and `worksheet_items`, created on start.
 
 ### Sharing from chat
 
@@ -181,9 +204,15 @@ The one exception to per-finding approval, published in advance as a membership 
 
 SQLite files in `backend/data/` (git ignores it; set `EXPANDRG_DATA_DIR` to move it). They are created with the demo workspace on first use.
 
+A research group made with `python setup_expandrg.py` (`backend/workspaces/groups.py`) has its own folder. `run_demo.py --group <id>` points the backend at that folder:
+- `EXPANDRG_DATA_DIR` is set to the group's `data/`;
+- `EXPANDRG_ENV_FILE` is set to its `group.env`, which is read instead of `backend/.env`.
+
+The demo is never added to a database that already holds another group.
+
 | File | Holds |
 |---|---|
-| `superbrain.db` | The group's shared Super Brain: workspace, members, projects, agents, approvals, shared findings, their links, offboarding handoffs, chat shares (`auto_shares`) and members' notes (`finding_notes`) |
+| `superbrain.db` | The group's shared Super Brain: workspace, members, projects, agents, approvals, shared findings, their links, offboarding handoffs, chat shares (`auto_shares`), members' notes (`finding_notes`), and worksheets with their items, answers and the leader's comments |
 | `private/<member>.db` | One researcher's private memory (runs, episodes, drafts for the Super Brain, settings, and saved alerts if they turned history on), split by project. In the product this lives on the researcher's own computer |
 
 Private and shared data are in different files with different tables, so no shared query can return private memory. `approvals` stores no draft text: rejected drafts never reach the shared database. Approving writes the approval and the finding in one transaction.
@@ -230,4 +259,17 @@ Base URL `https://agent.creao.ai/api/v1`, header `Authorization: Bearer <capi_ k
 - A full diagnosis took about 60 seconds. The response includes no credit usage and no artifacts.
 - Known-good example run: `tests/fixtures/creao_hub_run_completed.json` (app ID redacted).
 - CREAO runs in the cloud and cannot read local folders. Send evidence text, not a local path.
+- **No custom tools or MCP for API runs** (checked 2026-10-24, run `a8d5e5ca`): the agent lists only CREAO's own tools and `connectors: []`, and webhooks to private networks are rejected. So the agents' toolkit works through request blocks ([toolkit](../Documents/agent-toolkit.md)).
+- **The agents can run code in CREAO's cloud:** in that run, Agent 1 ran Python (`print(6*7)` → 42) and fetched a public URL (HTTP 200).
 - Replies can contain symbols like `α`, which crash `print()` in a Windows terminal. Set `PYTHONIOENCODING=utf-8` before running scripts that print replies.
+
+
+### Simulation setup and saved local versions
+
+`POST /simulation-setup` accepts `project_id`, a checked project map (`tree`, `files`, `excerpts`, `stats`), `machine` tool availability, and an optional `request`. It runs the signed-in researcher's existing CREAO personal agent and returns a job ID. The completed job contains a validated `plan` with `build_commands`, `run_command`, `working_directory`, cited `source_files`, `environment_notes`, and unresolved `questions`. The setup workflow never executes project code in CREAO or locally. One setup job per member/project runs at a time, and jobs follow current project access.
+
+The local connector adds authenticated `/simulations` routes: `POST /inspect` snapshots a granted existing project and returns its context, accepting optional `environment` (existing environment folder/Python executable) and `compiler` (Fortran executable) paths; `GET /?project_id=...` lists the researcher's versions; `GET /{id}` returns status/output; `GET /{id}/context` rereads the saved snapshot; `POST /{id}/planning` saves/reconnects a setup job; `POST /{id}/plan` checks the plan and local tools; `POST /{id}/environment` connects existing tools or rechecks the current selection with an empty body. Only `POST /{id}/run` executes build/simulation commands. `POST /{id}/stop` is the researcher's explicit stop; `POST /{id}/repeat` prepares another version from retained code/inputs without another CREAO request.
+
+Runtime discovery prefers a project virtual environment, then an activated virtual/Conda environment, then the connector’s current Python. It preserves external interpreter/compiler paths locally and sends CREAO only environment labels, tool/package availability, and compiler aliases. A bounded isolated metadata probe checks the selected interpreter; probe failure means unknown availability. Plans use `{python}`, `{fortran}`, `{cc}`, and `{cxx}` aliases, including Make/CMake compiler arguments. Repeated versions keep the selection, without copying or recreating the environment. A selected folder does not run SDK activation scripts; launch ExpandRG from an activated terminal when those scripts are required.
+
+The connector checks the backend identity and membership before accessing versions, with no client-supplied member identity. Each run registers monitoring before execution. Build steps run sequentially and a failed build never launches the simulation. Output is captured and parsed automatically, and the existing run visibility policy gives the owner and project leader access to its metrics. Source snapshots, code, complete logs, and setup metadata remain on the local computer. The source project is not modified, sensitive files and symlinks are excluded from copies, and each run uses a fresh work copy. Resource limits and command validation do not provide host filesystem/network isolation; the user reviews commands and explicitly clicks Run.

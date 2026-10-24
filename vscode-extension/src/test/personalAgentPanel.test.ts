@@ -34,7 +34,8 @@ function harness(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
   const panel = new PersonalAgentPanel({ settings: () => ({ ...settings }), ensureProject: async () => true,
-    pickFolder: async () => ({ uri: { fsPath: "/project" } } as any), ensureGranted: async () => "/project" },
+    pickFolder: async () => ({ uri: { fsPath: "/project" } } as any), ensureGranted: async () => "/project",
+    chatFolder: async () => overrides.folder as string | undefined },
     client as PersonalAgentClient);
   return { settings, client, panel };
 }
@@ -94,5 +95,68 @@ test("reopening reconnects to a pending personal reply without sending another m
   assert.equal(sends, 0);
   assert.equal(states.at(-1).error, "Provider timeout");
   assert.equal(states.at(-1).busy, false);
+  h.panel.dispose();
+});
+
+test("the agent is told which granted folder it may read, by name only", async () => {
+  let sent: unknown[] = [];
+  const h = harness({
+    folder: "sample_project",
+    send: async (_session: AgentSession, message: string, folder?: string) => { sent = [message, folder]; return { job_id: "j" }; },
+    job: async () => ({ job_id: "j", kind: "personal_chat", status: "completed", diagnosis: { reply: "ok" } }),
+  });
+  await h.panel.show();
+  await flush();
+  assert.equal(states.at(-1).identity, "a · heat · can read sample_project");
+  onMessage({ action: "send", message: "Why does it blow up?" });
+  await flush();
+  assert.deepEqual(sent, ["Why does it blow up?", "sample_project"]);
+  h.panel.dispose();
+});
+
+test("simulation setup prepares a project inspection request and waits for Send", async () => {
+  const sent: { message: string; folder?: string }[] = [];
+  const h = harness({
+    folder: "fortran-study",
+    send: async (_session: AgentSession, message: string, folder?: string) => {
+      sent.push({ message, folder }); return { job_id: "setup-chat" };
+    },
+    job: async () => ({ job_id: "setup-chat", kind: "personal_chat", status: "completed", diagnosis: { reply: "Build, then run." } }),
+  });
+  await h.panel.showSimulationSetup();
+  const draft = states.at(-1).composeRequest;
+  assert.ok(draft.text.includes("First inspect the actual project"));
+  assert.ok(draft.text.includes("For Python"));
+  assert.ok(draft.text.includes("Fortran"));
+  assert.ok(draft.text.includes("separate compilation/build commands"));
+  assert.equal(sent.length, 0);
+  // The webview may become ready after the initial state was posted.
+  onMessage({ action: "ready" });
+  await flush();
+  assert.equal(states.at(-1).composeRequest.id, draft.id);
+  onMessage({ action: "setupDraftHandled", id: draft.id, applied: true });
+  await flush();
+  assert.equal(states.at(-1).composeRequest, undefined);
+  assert.ok(states.at(-1).notice.includes("then Send"));
+  onMessage({ action: "send", message: draft.text });
+  await flush();
+  assert.deepEqual(sent, [{ message: draft.text, folder: "fortran-study" }]);
+  h.panel.dispose();
+});
+
+test("setup does not replace an existing draft and is discarded on a profile switch", async () => {
+  const h = harness();
+  await h.panel.showSimulationSetup();
+  const draft = states.at(-1).composeRequest;
+  onMessage({ action: "setupDraftHandled", id: draft.id, applied: false });
+  await flush();
+  assert.ok(states.at(-1).notice.includes("current draft is kept"));
+  await h.panel.showSimulationSetup();
+  assert.ok(states.at(-1).composeRequest);
+  h.settings.member = "b";
+  onConfig({ affectsConfiguration: (key) => key === "expandrg.member" });
+  await flush();
+  assert.equal(states.at(-1).composeRequest, undefined);
+  assert.equal(states.at(-1).agentName, "Agent 2");
   h.panel.dispose();
 });

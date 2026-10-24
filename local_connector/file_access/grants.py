@@ -74,6 +74,16 @@ class GrantRegistry:
                 return g
         raise AccessDenied(f"{root} has not been granted. Run: python -m local_connector grant \"{root}\"")
 
+    def grant_named(self, name: str) -> Grant:
+        """The granted folder with this name, which is all an agent's file request
+        names, so local paths never leave the computer."""
+        found = [g for g in self._grants if g.name.lower() == name.strip().lower()]
+        if not found:
+            raise AccessDenied(f'No folder named "{name}" has been granted to ExpandRG.')
+        if len(found) > 1:
+            raise AccessDenied(f'Two granted folders are named "{name}". Revoke one, or rename it, so ExpandRG knows which to read.')
+        return found[0]
+
     def check_path(self, path: str | Path, grant: Grant) -> tuple[Path, str]:
         """Check that a path is allowed (inside the granted folder, not sensitive),
         whether or not the file exists yet. Returns (resolved path, relative path)."""

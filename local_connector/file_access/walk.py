@@ -34,6 +34,8 @@ def iter_project_files(grant: Grant, stats: WalkStats | None = None) -> Iterator
                 stats.skipped["tool folders"] += 1
             elif path_problem((rel_dir / d / "x").as_posix()):
                 stats.skipped["sensitive folders"] += 1
+            elif is_link(Path(dirpath) / d):  # os.walk follows Windows junctions, which can lead anywhere
+                stats.skipped["linked folders"] += 1
             else:
                 kept.append(d)
         dirnames[:] = kept
@@ -42,10 +44,24 @@ def iter_project_files(grant: Grant, stats: WalkStats | None = None) -> Iterator
             full = Path(dirpath) / name
             if path_problem(relative):
                 stats.skipped["sensitive files"] += 1
+            elif not inside(grant.root, full):
+                stats.skipped["links outside the folder"] += 1
             elif looks_binary(full):
                 stats.skipped["binary files"] += 1
             else:
                 yield relative, full
+
+
+def is_link(path: Path) -> bool:
+    return path.is_symlink() or os.path.isjunction(path)
+
+
+def inside(root: Path, path: Path) -> bool:
+    """True if the path, with links followed, is still inside the granted folder."""
+    try:
+        return root in path.resolve().parents
+    except OSError:
+        return False
 
 
 def looks_binary(path: Path) -> bool:
