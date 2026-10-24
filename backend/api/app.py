@@ -12,10 +12,10 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any, Callable
 
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from backend.auth.permissions import PermissionDenied, require_project_member
+from backend.auth.permissions import PermissionDenied, context_project_ids, require_project_member
 from backend.auth.sessions import Sessions
 from backend.creao import CreaoClient, personal_agent
 from backend.db.database import Database
@@ -27,8 +27,19 @@ from backend.knowledge_sharing.publishing import (
     reject_draft,
 )
 from backend.memory.private_memory import PrivateMemory
-from backend.memory.shared_findings import list_project_findings
-from backend.orchestration.diagnosis import EvidenceRejected, prepare_diagnosis, record_diagnosis
+from backend.memory.shared_findings import (
+    get_readable_finding,
+    list_project_findings,
+    related_findings,
+    search_findings,
+)
+from backend.orchestration.diagnosis import (
+    MAX_CONTEXT_FINDINGS,
+    EvidenceRejected,
+    known_context_from,
+    prepare_diagnosis,
+    record_diagnosis,
+)
 from backend.orchestration.evidence_policy import MAX_ITEMS
 from backend.orchestration.jobs import JobStore, run_job
 from backend.workspaces.demo import seed_demo
@@ -48,6 +59,7 @@ class DiagnoseIn(BaseModel):
     focus_areas: list[str] = Field(default_factory=lambda: ["numerical"], max_length=6)
     analysis_depth: str = "standard"
     evidence: list[EvidenceIn] = Field(default_factory=list, max_length=MAX_ITEMS)
+    use_super_brain: bool = True  # look up earlier approved findings and give them to the agent
 
 
 class SignInIn(BaseModel):
@@ -140,17 +152,32 @@ def create_app(
         except EvidenceRejected as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from None
 
-        job = store.create(member["id"], request.project_id)
+        prior: list[dict[str, Any]] = []
+        if request.use_super_brain:
+            # The query is only the researcher's own symptom text, never the evidence.
+            with closing(db.shared()) as conn:
+                allowed = context_project_ids(conn, request.project_id)
+                matches = search_findings(conn, member["id"], prepared.symptom, allowed, limit=MAX_CONTEXT_FINDINGS)
+            prepared.known_context, prepared.context_finding_ids = known_context_from(matches)
+            prior = [
+                {k: f[k] for k in ("id", "project_id", "title", "verification_status", "contributed_by_name")}
+                for f in matches if f["id"] in prepared.context_finding_ids
+            ]
+
+        job = store.create(member["id"], request.project_id, prior)
         prefix = agent["creao_env_prefix"]
         background.add_task(
             run_job, store, job.job_id, lambda: factory(prefix), prepared,
-            lambda diagnosis: record_diagnosis(db, member["id"], request.project_id, prepared.symptom, diagnosis),
+            lambda diagnosis: record_diagnosis(
+                db, member["id"], request.project_id, prepared.symptom, diagnosis, prepared.context_finding_ids
+            ),
         )
         return {
             "job_id": job.job_id,
             "status": job.status,
             "evidence_sent": [{"path": e["path"], "chars": len(e["excerpt"])} for e in prepared.evidence],
             "redactions": prepared.redactions,
+            "prior_findings": prior,
         }
 
     @app.get("/diagnose/{job_id}")
@@ -196,6 +223,27 @@ def create_app(
         with closing(db.shared()) as conn:
             require_member_of(conn, member["id"], project_id)
             return list_project_findings(conn, project_id)
+
+    @app.get("/superbrain/search")
+    def ask_super_brain(
+        q: str = Query(min_length=2, max_length=500),
+        project_id: str | None = None,
+        member: dict[str, Any] = Depends(current_member),
+    ) -> list[dict[str, Any]]:
+        """Search approved findings in the projects you belong to."""
+        with closing(db.shared()) as conn:
+            if project_id:
+                require_member_of(conn, member["id"], project_id)
+            return search_findings(conn, member["id"], q, [project_id] if project_id else None)
+
+    @app.get("/findings/{finding_id}")
+    def finding_detail(finding_id: str, member: dict[str, Any] = Depends(current_member)) -> dict[str, Any]:
+        """One finding and the findings linked to it that you may read."""
+        with closing(db.shared()) as conn:
+            finding = get_readable_finding(conn, member["id"], finding_id)
+            if finding is None:  # findings in projects you can't read look like they don't exist
+                raise HTTPException(status_code=404, detail="No finding with that ID.")
+            return {"finding": finding, "related": related_findings(conn, member["id"], finding_id)}
 
     return app
 

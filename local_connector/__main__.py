@@ -8,9 +8,13 @@
     python -m local_connector approve <draft id> --as researcher_a [--title ...] [--summary ...] [--status ...]
     python -m local_connector reject <draft id> --as researcher_a
     python -m local_connector findings --as researcher_a --project heat-diffusion
+    python -m local_connector ask "blows up after refining the grid" --as researcher_b
+    python -m local_connector finding <finding id> --as researcher_b
 
-`diagnose` shows exactly what will be sent and asks before sending it. Drafts
-stay private until you approve them. --as defaults to $SIMGUARD_MEMBER.
+`diagnose` shows exactly what will be sent and asks before sending it, and
+gives your agent earlier approved findings from the Super Brain unless you
+pass --no-super-brain. Drafts stay private until you approve them. --as
+defaults to $SIMGUARD_MEMBER.
 """
 from __future__ import annotations
 
@@ -60,6 +64,10 @@ def main(argv: list[str] | None = None) -> int:
             print(_call(args, "POST", f"/drafts/{args.draft_id}/reject")["detail"])
         elif args.command == "findings":
             _findings(args)
+        elif args.command == "ask":
+            _ask(args)
+        elif args.command == "finding":
+            _finding(args)
     except (AccessDenied, ValueError) as exc:
         print(f"Refused: {exc}")
         return 2
@@ -78,10 +86,15 @@ def _diagnose(registry: GrantRegistry, args: argparse.Namespace) -> int:
         return 1
 
     payload = {"project_id": args.project, "symptom": args.symptom, "focus_areas": args.focus or ["numerical"],
-               "analysis_depth": args.depth, "evidence": evidence.to_payload()}
+               "analysis_depth": args.depth, "evidence": evidence.to_payload(),
+               "use_super_brain": not args.no_super_brain}
     headers = _sign_in(args)
     started = _call(args, "POST", "/diagnose", json=payload, headers=headers)
     job_id = started["job_id"]
+    if started["prior_findings"]:
+        print(f"\nYour agent also gets {len(started['prior_findings'])} earlier finding(s) from the Super Brain:")
+        for f in started["prior_findings"]:
+            print(f"  - [{f['verification_status']}] {f['title']} (shared by {f['contributed_by_name']})")
     print(f"\nSent. Diagnosis job {job_id}; waiting for your agent", end="", flush=True)
 
     deadline = time.monotonic() + POLL_TIMEOUT_SECONDS
@@ -156,6 +169,30 @@ def _findings(args: argparse.Namespace) -> None:
         print(f["summary"])
 
 
+def _ask(args: argparse.Namespace) -> None:
+    params = {"q": args.query, **({"project_id": args.project} if args.project else {})}
+    results = _call(args, "GET", "/superbrain/search", params=params)
+    if not results:
+        print("No matching findings in the projects you belong to.")
+    for f in results:
+        print(f"\n{f['title']}  [{f['project_id']}, {f['verification_status']}, match score {f['score']}]")
+        print(f"Finding {f['id']}, shared by {f['contributed_by_name']} on {f['approved_at']}")
+
+
+def _finding(args: argparse.Namespace) -> None:
+    detail = _call(args, "GET", f"/findings/{args.finding_id}")
+    f = detail["finding"]
+    print(f"{f['title']}  [{f['project_id']}, {f['category']}, {f['verification_status']}]")
+    print(f"Shared by {f['contributed_by_name']} on {f['approved_at']}; CREAO run {f['source_creao_run_id']}\n")
+    print(f["summary"])
+    if detail["related"]:
+        print("\nLinked findings:")
+        for link in detail["related"]:
+            other = link["finding"]
+            arrow = "->" if link["direction"] == "outgoing" else "<-"
+            print(f"  {arrow} {link['relation']}: {other['title']} (finding {other['id']}, {other['project_id']})")
+
+
 def _sign_in(args: argparse.Namespace) -> dict[str, str]:
     if not args.member:
         raise BackendError("Say who you are: --as <member id> (or set SIMGUARD_MEMBER).")
@@ -200,6 +237,7 @@ def _parser() -> argparse.ArgumentParser:
                    help="file to include, optionally with a line range: solver.py:10-40 (repeatable)")
     d.add_argument("--focus", action="append", choices=FOCUS_AREAS, help="focus area (repeatable; default numerical)")
     d.add_argument("--depth", choices=ANALYSIS_DEPTHS, default="standard")
+    d.add_argument("--no-super-brain", action="store_true", help="don't give your agent earlier findings")
     d.add_argument("--yes", action="store_true", help="send without asking (after the preview)")
 
     sub.add_parser("drafts", parents=[backend], help="your private drafts waiting for a decision")
@@ -212,6 +250,11 @@ def _parser() -> argparse.ArgumentParser:
     r.add_argument("draft_id")
     f = sub.add_parser("findings", parents=[backend], help="approved findings in a project")
     f.add_argument("--project", required=True)
+    q = sub.add_parser("ask", parents=[backend], help="search the Super Brain (your projects only)")
+    q.add_argument("query")
+    q.add_argument("--project", help="only this project")
+    o = sub.add_parser("finding", parents=[backend], help="one finding and its links")
+    o.add_argument("finding_id")
     return parser
 
 

@@ -66,12 +66,22 @@ It listens on this computer only (`127.0.0.1`), because sign-in is only a protot
 | `GET /demo/members` | Demo members you can sign in as |
 | `POST /sign-in` | Body: `member_id`. Returns a `token`; send it as `Authorization: Bearer <token>` |
 | `GET /me` | The signed-in member and the projects they belong to |
-| `POST /diagnose` | Signed in. Body: `project_id` (one of your projects), `symptom`, `focus_areas` (list; default `["numerical"]`), `analysis_depth` (default `standard`), `evidence` (list of `path`, `kind`, `excerpt`, `truncated`). Checks the evidence, starts a run on **your own** personal agent and returns `202` with `job_id`, `evidence_sent` and `redactions` |
-| `GET /diagnose/{job_id}` | Signed in, your own jobs only. `status` is `running`, `completed` (with `diagnosis`: `reply`, `issues`, `summary`, `run_id`; and `draft_id`) or `failed` (with `error`: `type`, `message`, sometimes `run_id`). A completed diagnosis is saved to your private memory |
+| `POST /diagnose` | Signed in. Body: `project_id` (one of your projects), `symptom`, `focus_areas` (list; default `["numerical"]`), `analysis_depth` (default `standard`), `evidence` (list of `path`, `kind`, `excerpt`, `truncated`), `use_super_brain` (default `true`). Checks the evidence, looks up earlier findings, starts a run on **your own** personal agent and returns `202` with `job_id`, `evidence_sent`, `redactions` and `prior_findings` |
+| `GET /diagnose/{job_id}` | Signed in, your own jobs only. `status` is `running`, `completed` (with `diagnosis`: `reply`, `issues`, `summary`, `run_id`; `prior_findings`; and `draft_id`) or `failed` (with `error`: `type`, `message`, sometimes `run_id`). A completed diagnosis is saved to your private memory |
 | `GET /drafts` | Your pending drafts for the Super Brain. Only you can see them |
 | `POST /drafts/{draft_id}/approve` | Publish a draft as a shared finding. Optional edits: `title`, `summary`, `category`, `verification_status` |
 | `POST /drafts/{draft_id}/reject` | Keep a draft private for good. Nothing is written to the shared database |
 | `GET /projects/{project_id}/findings` | Approved findings in a project you belong to |
+| `GET /superbrain/search?q=...` | "Ask Super Brain": approved findings in your projects, ranked by shared words. Optional `project_id` narrows it |
+| `GET /findings/{finding_id}` | One finding and its links, leaving out links to findings you can't read. Findings in projects you can't read return `404` |
+
+### How the Super Brain is used in a diagnosis
+
+- The search query is only the researcher's own symptom text, never the evidence.
+- Results are limited to projects the researcher belongs to, decided in SQL before ranking.
+- A diagnosis in project P only uses findings from projects that everyone in P can already read (`context_project_ids` in `backend/auth/permissions.py`). Otherwise a summary written from them, once shared in P, could repeat restricted details. In the demo, a heat diagnosis never uses wave findings, but a wave diagnosis may use heat findings.
+- Up to 3 findings (4,000 characters) go to the agent's `known_context` input, each labelled with its verification status, with an instruction to treat them as evidence to check, not facts.
+- When a draft from such a diagnosis is approved, the new finding is linked `associated_with` the findings it used (not `similar_to`: using a finding as context doesn't show the problems are the same).
 
 ## Databases
 

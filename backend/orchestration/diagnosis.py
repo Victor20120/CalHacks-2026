@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from backend.creao.client import ANALYSIS_DEPTHS, FOCUS_AREAS
@@ -21,6 +21,15 @@ from backend.orchestration.evidence_policy import (
     MAX_TOTAL_CHARS,
     path_problem,
     redact_secrets,
+)
+
+MAX_CONTEXT_FINDINGS = 3
+MAX_CONTEXT_CHARS = 4_000
+MAX_CONTEXT_SUMMARY_CHARS = 1_200
+KNOWN_CONTEXT_HEADER = (
+    "Approved findings from this research group's Super Brain, shared by teammates. Each is labelled with "
+    "its verification status; a hypothesis has not been verified by a researcher. Use them as prior "
+    "evidence to check against, not as established facts, and say which ones you relied on:"
 )
 
 
@@ -38,6 +47,8 @@ class PreparedDiagnosis:
     analysis_depth: str
     evidence: list[dict[str, Any]]
     redactions: int
+    known_context: str = ""  # earlier Super Brain findings, as sent to the agent
+    context_finding_ids: list[str] = field(default_factory=list)
 
     def creao_inputs(self) -> dict[str, str]:
         """Inputs for a personal agent. Only the project name is sent, never a local path."""
@@ -50,12 +61,36 @@ class PreparedDiagnosis:
             for item in self.evidence:
                 note = ", partial" if item["truncated"] else ""
                 parts.append(f"--- {item['path']} ({item['kind']}{note}) ---\n{item['excerpt']}")
-        return {
+        inputs = {
             "project_path": f"{self.project} (local files are not attached; the relevant evidence is in observed_symptom)",
             "observed_symptom": "\n\n".join(parts),
             "focus_areas": ", ".join(self.focus_areas),
             "analysis_depth": self.analysis_depth,
         }
+        if self.known_context:
+            inputs["known_context"] = self.known_context
+        return inputs
+
+
+def known_context_from(findings: list[dict[str, Any]]) -> tuple[str, list[str]]:
+    """Format Super Brain findings for the agent's known_context input, within the
+    size limits. Returns the text and the IDs of the findings actually included."""
+    if not findings:
+        return "", []
+    text, used = KNOWN_CONTEXT_HEADER, []
+    for f in findings[:MAX_CONTEXT_FINDINGS]:
+        summary = f["summary"]
+        if len(summary) > MAX_CONTEXT_SUMMARY_CHARS:
+            summary = summary[:MAX_CONTEXT_SUMMARY_CHARS].rstrip() + " [...]"
+        entry = (
+            f"\n\n- [{f['verification_status']}] {f['title']} (shared by {f['contributed_by_name']} on "
+            f"{f['approved_at'][:10]}, project {f['project_id']}, finding {f['id'][:8]})\n{summary}"
+        )
+        if len(text) + len(entry) > MAX_CONTEXT_CHARS:
+            break
+        text += entry
+        used.append(f["id"])
+    return (text, used) if used else ("", [])
 
 
 def prepare_diagnosis(
@@ -110,17 +145,27 @@ def run_diagnosis(client: Any, prepared: PreparedDiagnosis) -> dict[str, Any]:
     }
 
 
-def record_diagnosis(db: Database, member_id: str, project_id: str, symptom: str, diagnosis: dict[str, Any]) -> str | None:
+def record_diagnosis(
+    db: Database,
+    member_id: str,
+    project_id: str,
+    symptom: str,
+    diagnosis: dict[str, Any],
+    context_finding_ids: list[str] | None = None,
+) -> str | None:
     """Save a finished diagnosis to the researcher's private memory, and draft a
     finding they may choose to share. Returns the draft ID, or None if there is
-    nothing to share. Nothing here touches the shared Super Brain."""
+    nothing to share. Nothing here touches the shared Super Brain. The IDs of the
+    findings it was given as context are kept so approval can link to them."""
     memory = PrivateMemory(db, member_id)
     issues = diagnosis.get("issues") or []
+    details = {"symptom": symptom, "reply": diagnosis["reply"], "issues": issues,
+               "context_finding_ids": list(context_finding_ids or [])}
     episode_id = memory.add_episode(
         project_id,
         "diagnosis",
         summary=issues[0]["title"] if issues else "Diagnosis with no issues found",
-        details=json.dumps({"symptom": symptom, "reply": diagnosis["reply"], "issues": issues}),
+        details=json.dumps(details),
         status="hypothesis" if diagnosis.get("analysis_ran") else "open",
         creao_run_id=diagnosis["run_id"],
     )

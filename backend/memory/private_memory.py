@@ -54,6 +54,14 @@ class PrivateMemory:
             conn.commit()
         return episode_id
 
+    def get_episode(self, episode_id: str) -> dict | None:
+        with closing(self.db.private(self.member_id)) as conn:
+            row = conn.execute("SELECT * FROM private_episodes WHERE id = ?", (episode_id,)).fetchone()
+        if row is None:
+            return None
+        self._check(row["project_id"])
+        return dict(row)
+
     def episodes(self, project_id: str) -> list[dict]:
         self._check(project_id)
         with closing(self.db.private(self.member_id)) as conn:

@@ -2,11 +2,12 @@
 
 Sharing always needs the researcher's explicit approval. Until then the draft
 stays in their private memory; a rejected draft never leaves it. Approving
-writes the approval record and the finding together, in one transaction, so a
-finding can't exist without its approval.
+writes the approval record, the finding and its links together, in one
+transaction, so a finding can't exist without its approval.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 import uuid
 from contextlib import closing
@@ -19,6 +20,7 @@ from backend.db.schema import FINDING_CATEGORIES, VERIFICATION_STATUSES
 from backend.memory.private_memory import DRAFT_FIELDS, PrivateMemory
 from backend.memory.shared_findings import get_finding
 from backend.orchestration.evidence_policy import redact_secrets
+from backend.workspaces.store import is_project_member
 
 MAX_TITLE_CHARS = 200
 MAX_SUMMARY_CHARS = 4_000
@@ -71,6 +73,7 @@ def approve_draft(db: Database, member_id: str, draft_id: str, edits: dict[str, 
     _validate(final)
     final["title"], _ = redact_secrets(final["title"].strip())
     final["summary"], _ = redact_secrets(final["summary"].strip())
+    used = _context_finding_ids(memory, draft)
 
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     approval_id, finding_id = str(uuid.uuid4()), str(uuid.uuid4())
@@ -92,6 +95,16 @@ def approve_draft(db: Database, member_id: str, draft_id: str, edits: dict[str, 
                     (finding_id, workspace_id, draft["project_id"], final["category"], final["title"], final["summary"],
                      final["verification_status"], member_id, approval_id, draft["source_creao_run_id"], now),
                 )
+                # Link to the earlier findings this diagnosis used. "associated_with", not
+                # "similar_to": using a finding as context doesn't show the problems are the same.
+                for prior_id in used:
+                    prior = conn.execute("SELECT project_id FROM shared_findings WHERE id = ?", (prior_id,)).fetchone()
+                    if prior and is_project_member(conn, member_id, prior["project_id"]):
+                        conn.execute(
+                            """INSERT OR IGNORE INTO finding_links (from_finding_id, to_finding_id, relation, created_at)
+                               VALUES (?, ?, 'associated_with', ?)""",
+                            (finding_id, prior_id, now),
+                        )
         except sqlite3.IntegrityError:
             # Already published by an earlier approval that stopped before updating the private draft.
             row = conn.execute(
@@ -111,6 +124,17 @@ def reject_draft(db: Database, member_id: str, draft_id: str) -> None:
     memory = PrivateMemory(db, member_id)
     _pending_draft(memory, draft_id)
     memory.decide_draft(draft_id, "rejected")
+
+
+def _context_finding_ids(memory: PrivateMemory, draft: dict) -> list[str]:
+    """The Super Brain findings the draft's diagnosis was given as context."""
+    episode = memory.get_episode(draft["episode_id"]) if draft["episode_id"] else None
+    if episode is None:
+        return []
+    try:
+        return list(json.loads(episode["details"]).get("context_finding_ids", []))
+    except (ValueError, AttributeError):
+        return []
 
 
 def _pending_draft(memory: PrivateMemory, draft_id: str) -> dict:

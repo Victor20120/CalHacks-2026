@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 import threading
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -24,6 +24,7 @@ class Job:
     project_id: str
     status: str  # "running", "completed" or "failed"
     created_at: str
+    prior_findings: list[dict[str, Any]] = field(default_factory=list)  # Super Brain findings given as context
     diagnosis: dict[str, Any] | None = None
     draft_id: str | None = None  # the private draft proposed for sharing, if any
     error: dict[str, Any] | None = None
@@ -35,9 +36,10 @@ class JobStore:
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
 
-    def create(self, member_id: str, project_id: str) -> Job:
+    def create(self, member_id: str, project_id: str, prior_findings: list[dict[str, Any]] | None = None) -> Job:
         job = Job(job_id=str(uuid.uuid4()), member_id=member_id, project_id=project_id, status="running",
-                  created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
+                  created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                  prior_findings=list(prior_findings or []))
         with self._lock:
             self._jobs[job.job_id] = job
         return job

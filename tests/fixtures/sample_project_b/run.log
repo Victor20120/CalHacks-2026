@@ -1,0 +1,21 @@
+heat2d: grid 81x81, dx=0.005, dt=0.01, alpha=0.001, steps=3000
+step    50  max|T| = 1.0956e+03  residual = 1.1930e+03
+step   100  max|T| = 6.4484e+19  residual = 9.4025e+19
+step   150  max|T| = 6.1961e+36  residual = 9.0269e+36
+step   200  max|T| = 6.5604e+53  residual = 9.5537e+53
+step   250  max|T| = 7.3244e+70  residual = 1.0664e+71
+step   300  max|T| = 8.4550e+87  residual = 1.2308e+88
+step   350  max|T| = 9.9747e+104  residual = 1.4518e+105
+step   400  max|T| = 1.1920e+122  residual = 1.7349e+122
+step   450  max|T| = 1.4366e+139  residual = 2.0907e+139
+step   500  max|T| = 1.7443e+156  residual = 2.5385e+156
+step   550  max|T| = 2.1279e+173  residual = 3.0966e+173
+step   600  max|T| = 2.6067e+190  residual = 3.7933e+190
+step   650  max|T| = 3.2071e+207  residual = 4.6669e+207
+step   700  max|T| = 3.9585e+224  residual = 5.7602e+224
+step   750  max|T| = 4.9000e+241  residual = 7.1302e+241
+step   800  max|T| = 6.0815e+258  residual = 8.8492e+258
+step   850  max|T| = 7.5659e+275  residual = 1.1009e+276
+step   900  max|T| = 9.4330e+292  residual = 1.3726e+293
+step   944  max|T| = inf  residual = inf
+ERROR: non-finite temperature at step 944, stopping

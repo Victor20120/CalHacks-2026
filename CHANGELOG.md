@@ -4,7 +4,27 @@ One entry per commit, newest first. Each commit adds its own entry with the hash
 
 ---
 
-## 2026-10-23 · `pending` · Add approval path from private diagnosis to shared finding
+## 2026-10-23 · `pending` · Add Super Brain search, links and diagnosis context
+
+**Why:** Build plan step 5: Researcher B's agent can use Researcher A's approved finding, while every lookup, link and piece of context respects project access.
+
+**Changed**
+- `backend/memory/shared_findings.py`: `search_findings` (access decided in SQL before ranking by shared words), `get_readable_finding` and `related_findings` (links into projects the member can't read are left out).
+- `backend/auth/permissions.py`: `context_project_ids`, so a diagnosis in project P only uses findings that everyone in P can already read.
+- `/diagnose` looks up earlier findings from the symptom text only (on by default, `use_super_brain: false` turns it off) and sends up to 3 to the agent as `known_context`, labelled with their verification status. Jobs report `prior_findings`.
+- Approving a draft links its finding (`associated_with`) to the findings its diagnosis used.
+- New endpoints `GET /superbrain/search` and `GET /findings/{id}`; connector commands `ask` and `finding`, and `diagnose --no-super-brain`.
+- Added `tests/fixtures/sample_project_b/` (Researcher B's refined grid, `dx = 0.005`, `dt = 0.01`, real blow-up log) and `tests/test_super_brain.py`.
+- Updated `README.md` (B's part of the flow), `backend/README.md` and `Documents/build-plan.md`.
+
+**Checks**
+- `python -m pytest`: 146 passed, 1 skipped (symlink test on Windows).
+- Real run `93ceb050` on Researcher B's agent with A's finding as context: the reply relied on and checked A's finding `744083a8`, and explained that its `dt = 0.02` advice doesn't carry over because the limit scales with `dx²`. B's approved finding is linked to A's; B's search returns both.
+- Secret scan: no API key or app ID in the commit; `backend/.env` and `backend/data/` not included.
+
+---
+
+## 2026-10-23 · `d6fec41` · Add approval path from private diagnosis to shared finding
 
 **Why:** Build plan step 4: a diagnosis is saved privately with a draft finding, and only the researcher's explicit approval shares it to the Super Brain.
 

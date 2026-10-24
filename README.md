@@ -45,6 +45,14 @@ python -m local_connector approve <draft id> --as researcher_a
 
 # Researcher B sees the shared finding
 python -m local_connector findings --as researcher_b --project heat-diffusion
+
+# Researcher B hits a related problem; their agent gets A's finding as context
+python -m local_connector grant tests/fixtures/sample_project_b
+python -m local_connector diagnose tests/fixtures/sample_project_b --as researcher_b --project heat-diffusion --symptom "I refined the grid to dx = 0.005. Now max|T| reaches inf at step 944, even though dt = 0.01 is below the dt = 0.02 we were told is safe." --file run.log --file config.json --file heat2d.py:16-23
+
+# Search the Super Brain, or open one finding and its links
+python -m local_connector ask "dt stability limit after refining the grid" --as researcher_b
+python -m local_connector finding <finding id> --as researcher_b
 ```
 
 The connector shows exactly what will be sent and asks before sending. Each researcher's diagnosis runs on their own CREAO agent, and drafts stay private until approved. Granted folders are remembered in `~/.simguard/grants.json`; take access back with `python -m local_connector revoke <folder>`. If the backend says the database is from an older version, run `python -m backend.workspaces.demo --reset`.

@@ -22,7 +22,7 @@
 | 2 | Diagnosis endpoint with file permissions | `backend/api/`, `backend/orchestration/`, `local_connector/` | Done |
 | 3 | SQLite models and demo data | `backend/db/`, `backend/workspaces/`, `backend/memory/`, `backend/auth/` | Done |
 | 4 | Approval path to publish a finding | `backend/knowledge_sharing/` | Done |
-| 5 | Scoped lookup for Researcher B | `backend/memory/`, `backend/auth/` | Not started |
+| 5 | Scoped lookup for Researcher B | `backend/memory/`, `backend/auth/` | Done |
 | 6 | Dashboard and local anomaly checks | `frontend/`, `local_connector/simulation_monitor/`, `backend/monitoring/` | Not started |
 | 7 | Optional: alert history and handoff | `backend/monitoring/`, `backend/memory/` | Not started |
 
@@ -130,16 +130,18 @@
 ## Step 5 — Scoped lookup for Researcher B
 
 **Tasks**
-- [ ] Search shared findings filtered by B's workspace and project access, checked in code (never left to the AI)
-- [ ] Follow `finding_links` only to findings B is allowed to see
-- [ ] Add retrieved findings as context to B's diagnosis request
-- [ ] Manual "Ask Super Brain" search
+- [x] Search shared findings filtered by B's workspace and project access, checked in code (never left to the AI). Access is decided in SQL before anything is ranked
+- [x] Follow `finding_links` only to findings B is allowed to see (`GET /findings/{id}`)
+- [x] Add retrieved findings as context to B's diagnosis request (`known_context`; on by default, `use_super_brain: false` turns it off). The query is only the researcher's symptom text. A diagnosis in project P only uses findings from projects that everyone in P can already read, so a shared result can't repeat restricted details
+- [x] Manual "Ask Super Brain" search (`GET /superbrain/search`, `python -m local_connector ask`)
+- [x] Link findings as approved knowledge arrives: approving a draft links its finding (`associated_with`) to the earlier findings its diagnosis used
+- [x] Sample project for Researcher B (`tests/fixtures/sample_project_b/`): grid refined to `dx = 0.005` with `dt = 0.01`, a real blow-up log
 
 **Checkpoint 5**
-- [ ] Automated: B retrieves A's approved finding from their shared project
-- [ ] Automated: B cannot retrieve a finding from the project they're not in, even by following a link
-- [ ] Automated: unapproved drafts are never returned
-- [ ] Manual: B's diagnosis mentions A's earlier finding **(uses credits)**
+- [x] Automated: B retrieves A's approved finding from their shared project
+- [x] Automated: B cannot retrieve a finding from the project they're not in, even by following a link
+- [x] Automated: unapproved drafts are never returned
+- [x] Manual: B's diagnosis mentions A's earlier finding **(uses credits)** — passed 2026-10-23, run `93ceb050` on Researcher B's own agent: "The prior shared hypothesis 744083a8 was relied on and independently corroborated, but … its `dt = 0.02` remedy would leave `r = 0.80` here — `dt_critical` scales with `dx²`". B's approved finding is linked to A's
 
 ---
 
