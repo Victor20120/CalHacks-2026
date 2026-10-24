@@ -23,14 +23,14 @@
 | 3 | SQLite models and demo data | `backend/db/`, `backend/workspaces/`, `backend/memory/`, `backend/auth/` | Done |
 | 4 | Approval path to publish a finding | `backend/knowledge_sharing/` | Done |
 | 5 | Scoped lookup for Researcher B | `backend/memory/`, `backend/auth/` | Done |
-| 6 | Dashboard and local anomaly checks | `frontend/`, `local_connector/simulation_monitor/`, `backend/monitoring/` | Not started |
+| 6 | Dashboard and local anomaly checks | `frontend/`, `local_connector/simulation_monitor/`, `backend/monitoring/` | Done except the click-through check |
 | 7 | Optional: alert history and handoff | `backend/monitoring/`, `backend/memory/` | Not started |
 
 ---
 
 ## Standing checks (before every push)
 
-- [ ] All tests pass (`python -m pytest` from the repo root), using mock CREAO only
+- [ ] All tests pass (`python -m pytest` from the repo root), using mock CREAO only, and the dashboard builds (`npm run build` in `frontend/`)
 - [ ] `git status` shows no `.env`, `.db` files or other secrets about to be committed
 - [ ] No code edits source files or stops a simulation without the researcher's approval
 - [ ] Any dashboard page you changed looks right at 1280px and 1440px wide
@@ -148,15 +148,17 @@
 ## Step 6 — Dashboard and local anomaly checks
 
 **Tasks**
-- [ ] React dashboard in `frontend/` (views in [dashboard-design.md](dashboard-design.md)), polling the backend for updates
-- [ ] `local_connector/simulation_monitor/`: local checks for NaN/Inf, large jumps, force spikes, missing outputs and configured thresholds, each labelled Informational, Warning or Critical
-- [ ] Sample simulation output with planted problems in `tests/fixtures/`
+- [x] React dashboard in `frontend/` (views in [dashboard-design.md](dashboard-design.md)), polling the backend for updates
+- [x] `local_connector/simulation_monitor/`: local checks for NaN/Inf, large jumps, force spikes, missing outputs and configured thresholds, each labelled Informational, Warning or Critical. Read-only
+- [x] Sample simulation output with planted problems in `tests/fixtures/` (planted lines in `tests/test_monitoring.py`, the two real blow-up logs, and a clean run in `tests/fixtures/monitor/stable.log`)
+- [x] Alerts in the backend: `POST /alerts` from the researcher's watcher, `GET /alerts` for the dashboard. Session-only, private to each researcher
+- [x] The local connector as a small service on `127.0.0.1:8001` (`python -m local_connector serve`), since a browser can't read local files: granted folders, file lists, evidence previews and log watching
 
 **Checkpoint 6**
-- [ ] Automated: each check flags its planted problem at the right severity and leaves clean output alone
-- [ ] Manual: a Critical alert shows in the dashboard while the simulation keeps running
-- [ ] Manual: the full A → approve → B flow works by clicking in the dashboard only **(uses credits)**
-- [ ] Pages look right at 1280px and 1440px wide
+- [x] Automated: each check flags its planted problem at the right severity and leaves clean output alone
+- [x] Manual: a Critical alert shows in the dashboard while the simulation keeps running — passed 2026-10-24 with a real solver run watched through the connector; screenshot taken while it ran, and the solver ended on its own (exit code 1 from its own error). Also an automated test (`test_the_simulation_keeps_running_after_a_critical_alert`)
+- [ ] Manual: the full A → approve → B flow works by clicking in the dashboard only **(uses credits)** — not done yet: needs a person clicking (the same flow is verified through the API and command line in steps 4 and 5)
+- [x] Pages look right at 1280px and 1440px wide — checked with headless-browser screenshots of every view at both widths; below 1280px a "built for laptop and desktop" notice appears
 
 ---
 
@@ -182,7 +184,7 @@ Demonstrate on one machine if necessary, with two demo researcher profiles in on
 - [x] Register a local repository folder and read authorized relevant content (step 2)
 - [x] Use the configured CREAO keys and known agent IDs to analyze a sample error (steps 1, 2 and 4)
 - [x] Store private project-specific context and a group shared finding separately (steps 3 and 4)
-- [ ] Show Informational / Warning / Critical alerts in the dashboard without stopping the simulation (step 6)
+- [x] Show Informational / Warning / Critical alerts in the dashboard without stopping the simulation (step 6)
 - [ ] Keep persistent alert saving opt-in and off by default (step 7)
 - [x] Present a proposed knowledge contribution, require approval, and store only approved findings (step 4; dashboard view in step 6)
 - [x] Researcher B can retrieve Researcher A's approved finding and use it to inform a diagnosis (step 5)

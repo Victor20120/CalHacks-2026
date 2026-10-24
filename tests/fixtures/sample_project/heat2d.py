@@ -1,11 +1,13 @@
 """Explicit 2D heat equation solver (SimGuard demo project).
 
 Forward Euler in time, 5-point Laplacian, Dirichlet 0 walls.
-Usage: python heat2d.py config.json > run.log
+Usage: python heat2d.py config.json [--delay SECONDS] > run.log
+--delay pauses after each log line, so a run can be watched live.
 """
 import json
 import math
 import sys
+import time
 
 
 def initial_field(n, peak):
@@ -23,13 +25,17 @@ def step(T, r):
     return new
 
 
-def main(config_path):
+def main(config_path, delay=0.0):
     with open(config_path) as f:
         cfg = json.load(f)
     n, dx, dt, alpha = cfg["grid_points"], cfg["dx"], cfg["dt"], cfg["alpha"]
     r = alpha * dt / dx ** 2
-    print(f"heat2d: grid {n}x{n}, dx={dx}, dt={dt}, alpha={alpha}, steps={cfg['steps']}")
 
+    def log(message):
+        print(message, flush=True)
+        time.sleep(delay)
+
+    log(f"heat2d: grid {n}x{n}, dx={dx}, dt={dt}, alpha={alpha}, steps={cfg['steps']}")
     T = initial_field(n, cfg["initial_peak"])
     for k in range(1, cfg["steps"] + 1):
         new = step(T, r)
@@ -37,14 +43,17 @@ def main(config_path):
         T = new
         peak = max(abs(v) for row in T for v in row)
         if not math.isfinite(peak) or not math.isfinite(residual):
-            print(f"step {k:5d}  max|T| = {peak:.4e}  residual = {residual:.4e}")
-            print(f"ERROR: non-finite temperature at step {k}, stopping")
+            log(f"step {k:5d}  max|T| = {peak:.4e}  residual = {residual:.4e}")
+            log(f"ERROR: non-finite temperature at step {k}, stopping")
             return 1
         if k % cfg["log_every"] == 0:
-            print(f"step {k:5d}  max|T| = {peak:.4e}  residual = {residual:.4e}")
-    print("done")
+            log(f"step {k:5d}  max|T| = {peak:.4e}  residual = {residual:.4e}")
+    log("done")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1] if len(sys.argv) > 1 else "config.json"))
+    args = sys.argv[1:]
+    delay = float(args[args.index("--delay") + 1]) if "--delay" in args else 0.0
+    paths = [a for i, a in enumerate(args) if a != "--delay" and (i == 0 or args[i - 1] != "--delay")]
+    sys.exit(main(paths[0] if paths else "config.json", delay))

@@ -135,11 +135,11 @@ Dashboard
 
 | Decision | Choice | Notes |
 |---|---|---|
-| Framework | React | Decided |
-| Getting updates | Polling | Decided: no real-time streaming in V1 |
-| Build tool | TBD | |
-| Routing | TBD | |
-| Styling / components | TBD | |
+| Framework | React 18 | Decided |
+| Getting updates | Polling | Alerts and drafts every 3 s, watches every 2 s, diagnosis jobs every 3 s. No real-time streaming in V1 |
+| Build tool | Vite | Its dev server also passes `/api` to the backend and `/connector` to the local connector |
+| Routing | None | Views switch inside the app; `?as=`, `&view=` and `&project=` open a given member and view |
+| Styling / components | Plain CSS, no component library | Light and dark themes follow the system setting |
 
 ---
 

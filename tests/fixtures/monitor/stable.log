@@ -1,0 +1,32 @@
+heat2d: grid 41x41, dx=0.01, dt=0.02, alpha=0.001, steps=3000
+step   100  max|T| = 3.1248e+02  residual = 7.7253e-01
+step   200  max|T| = 2.4411e+02  residual = 6.0350e-01
+step   300  max|T| = 1.9070e+02  residual = 4.7146e-01
+step   400  max|T| = 1.4898e+02  residual = 3.6831e-01
+step   500  max|T| = 1.1638e+02  residual = 2.8772e-01
+step   600  max|T| = 9.0918e+01  residual = 2.2477e-01
+step   700  max|T| = 7.1026e+01  residual = 1.7559e-01
+step   800  max|T| = 5.5485e+01  residual = 1.3717e-01
+step   900  max|T| = 4.3346e+01  residual = 1.0716e-01
+step  1000  max|T| = 3.3862e+01  residual = 8.3714e-02
+step  1100  max|T| = 2.6453e+01  residual = 6.5398e-02
+step  1200  max|T| = 2.0665e+01  residual = 5.1089e-02
+step  1300  max|T| = 1.6144e+01  residual = 3.9911e-02
+step  1400  max|T| = 1.2612e+01  residual = 3.1179e-02
+step  1500  max|T| = 9.8522e+00  residual = 2.4357e-02
+step  1600  max|T| = 7.6966e+00  residual = 1.9028e-02
+step  1700  max|T| = 6.0126e+00  residual = 1.4865e-02
+step  1800  max|T| = 4.6971e+00  residual = 1.1612e-02
+step  1900  max|T| = 3.6694e+00  residual = 9.0716e-03
+step  2000  max|T| = 2.8665e+00  residual = 7.0868e-03
+step  2100  max|T| = 2.2394e+00  residual = 5.5362e-03
+step  2200  max|T| = 1.7494e+00  residual = 4.3249e-03
+step  2300  max|T| = 1.3666e+00  residual = 3.3786e-03
+step  2400  max|T| = 1.0676e+00  residual = 2.6394e-03
+step  2500  max|T| = 8.3403e-01  residual = 2.0619e-03
+step  2600  max|T| = 6.5155e-01  residual = 1.6108e-03
+step  2700  max|T| = 5.0899e-01  residual = 1.2584e-03
+step  2800  max|T| = 3.9763e-01  residual = 9.8303e-04
+step  2900  max|T| = 3.1063e-01  residual = 7.6795e-04
+step  3000  max|T| = 2.4267e-01  residual = 5.9992e-04
+done

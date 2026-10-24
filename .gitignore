@@ -9,6 +9,9 @@ backend/data/
 *.sqlite
 *.sqlite3
 
+# Logs from live demo runs (the fixture run.log files are tracked)
+live.log
+
 # Dependencies and build output
 node_modules/
 dist/

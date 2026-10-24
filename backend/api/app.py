@@ -27,6 +27,7 @@ from backend.knowledge_sharing.publishing import (
     reject_draft,
 )
 from backend.memory.private_memory import PrivateMemory
+from backend.monitoring.alerts import AlertStore, InvalidAlert
 from backend.memory.shared_findings import (
     get_readable_finding,
     list_project_findings,
@@ -74,17 +75,34 @@ class ApproveIn(BaseModel):
     verification_status: str | None = None
 
 
+class AlertIn(BaseModel):
+    severity: str
+    check: str
+    message: str = Field(max_length=2000)
+    metric: str | None = Field(default=None, max_length=100)
+    line_number: int | None = None
+    line: str | None = Field(default=None, max_length=2000)
+
+
+class AlertsIn(BaseModel):
+    project_id: str = Field(min_length=1, max_length=64)
+    run_label: str = Field(min_length=1, max_length=100)
+    alerts: list[AlertIn] = Field(max_length=50)
+
+
 def create_app(
     client_factory: Callable[[str], Any] | None = None,
     jobs: JobStore | None = None,
     data_dir: str | Path | None = None,
+    alerts: AlertStore | None = None,
 ) -> FastAPI:
     """client_factory(agent_env_prefix) builds the CREAO client for a member's
     personal agent; tests pass a fake one. The databases are created (with the
-    demo workspace) on first use."""
+    demo workspace) on first use. Alerts are kept in memory only."""
     app = FastAPI(title="SimGuard backend", version="0.1.0")
     factory = client_factory or (lambda prefix: CreaoClient(personal_agent(prefix)))
     store = jobs or JobStore()
+    alert_store = alerts or AlertStore()
     db = Database(data_dir, seed=seed_demo)
     sessions = Sessions()
 
@@ -244,6 +262,30 @@ def create_app(
             if finding is None:  # findings in projects you can't read look like they don't exist
                 raise HTTPException(status_code=404, detail="No finding with that ID.")
             return {"finding": finding, "related": related_findings(conn, member["id"], finding_id)}
+
+    @app.post("/alerts")
+    def post_alerts(body: AlertsIn, member: dict[str, Any] = Depends(current_member)) -> dict[str, int]:
+        """From the researcher's local watcher. Kept for this session only, never saved."""
+        with closing(db.shared()) as conn:
+            require_member_of(conn, member["id"], body.project_id)
+        try:
+            records = alert_store.add(member["id"], body.project_id, body.run_label, [a.model_dump() for a in body.alerts])
+        except InvalidAlert as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        return {"stored": len(records)}
+
+    @app.get("/alerts")
+    def get_alerts(project_id: str | None = None, member: dict[str, Any] = Depends(current_member)) -> list[dict[str, Any]]:
+        """Your own alerts from this session, newest first."""
+        if project_id:
+            with closing(db.shared()) as conn:
+                require_member_of(conn, member["id"], project_id)
+        return alert_store.for_member(member["id"], project_id)
+
+    @app.delete("/alerts")
+    def clear_alerts(member: dict[str, Any] = Depends(current_member)) -> dict[str, str]:
+        alert_store.clear(member["id"])
+        return {"status": "cleared"}
 
     return app
 

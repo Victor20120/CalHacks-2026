@@ -74,6 +74,11 @@ It listens on this computer only (`127.0.0.1`), because sign-in is only a protot
 | `GET /projects/{project_id}/findings` | Approved findings in a project you belong to |
 | `GET /superbrain/search?q=...` | "Ask Super Brain": approved findings in your projects, ranked by shared words. Optional `project_id` narrows it |
 | `GET /findings/{finding_id}` | One finding and its links, leaving out links to findings you can't read. Findings in projects you can't read return `404` |
+| `POST /alerts` | From your local watcher. Body: `project_id` (one of your projects), `run_label`, `alerts` (list of `severity`, `check`, `message`, `metric`, `line_number`, `line`). Kept in memory for this session only |
+| `GET /alerts` | Your own alerts, newest first (optional `project_id`). Other researchers never see them |
+| `DELETE /alerts` | Clear your alerts |
+
+Alerts are never written to a database, so they disappear when the backend restarts. Saving alert history is opt-in and comes in build step 7.
 
 ### How the Super Brain is used in a diagnosis
 

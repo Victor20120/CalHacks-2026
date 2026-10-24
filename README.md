@@ -2,7 +2,7 @@
 
 A collaborative AI research assistant for research groups that build custom numerical solvers. Each researcher has a personal agent that helps them understand their code, monitor simulation runs and investigate bugs. Findings a researcher approves go into the group's private shared knowledge base, the **Super Brain**, so the next researcher who hits a related problem can find them.
 
-**Status:** prototype, early setup. The dashboard is built for laptops and desktop computers.
+**Status:** prototype. The dashboard is built for laptops and desktop computers.
 
 ## Docs
 
@@ -20,14 +20,29 @@ A collaborative AI research assistant for research groups that build custom nume
 | `tests/` | Automated tests (CREAO is mocked, so tests use no credits) |
 | `Documents/` | Build plan and dashboard design |
 
-## Setup so far
+## Setup
 
 1. Copy `backend/.env.example` to `backend/.env` and fill in the CREAO keys and app IDs. Never commit `.env`.
 2. Install the Python packages: `python -m pip install -r backend/requirements.txt`
-3. Run the tests from the repo root (no network, no credits): `python -m pytest`
-4. Check that CREAO works (this starts a real run and uses credits): `cd backend` then `python testcreo.py`
+3. Install the dashboard: `cd frontend` then `npm install`
+4. Run the tests from the repo root (no network, no credits): `python -m pytest`
+5. Check that CREAO works (this starts a real run and uses credits): `cd backend` then `python testcreo.py`
 
-## Try a diagnosis
+## Run the dashboard
+
+From the repo root, in three terminals:
+
+```
+python -m uvicorn backend.api.app:app --port 8000      # 1. the backend
+python -m local_connector serve                        # 2. the local connector (reads your granted folders)
+cd frontend && npm run dev                             # 3. the dashboard
+```
+
+Open http://127.0.0.1:5173 and choose a demo member. To show two researchers side by side, open http://127.0.0.1:5173/?as=researcher_a and http://127.0.0.1:5173/?as=researcher_b in two windows (add `&view=alerts`, `drafts` or `superbrain` to start on a view).
+
+To see live alerts, grant a project folder in the Alerts view, start watching its log, then run the sample solver slowly so you can watch it fail: `python tests/fixtures/sample_project/heat2d.py tests/fixtures/sample_project/config.json --delay 0.5 > tests/fixtures/sample_project/live.log`. SimGuard only reads the log; the solver keeps running until it stops on its own.
+
+## Try it from the command line
 
 From the repo root, in two terminals. The diagnosis starts a real CREAO run and uses credits.
 
@@ -37,7 +52,7 @@ python -m uvicorn backend.api.app:app --port 8000
 
 # Terminal 2: allow SimGuard to read the sample project, then diagnose it as Researcher A
 python -m local_connector grant tests/fixtures/sample_project
-python -m local_connector diagnose tests/fixtures/sample_project --as researcher_a --project heat-diffusion --symptom "max|T| reaches inf at step 2223" --file run.log --file config.json --file heat2d.py:16-23
+python -m local_connector diagnose tests/fixtures/sample_project --as researcher_a --project heat-diffusion --symptom "max|T| reaches inf at step 2223" --file run.log --file config.json --file heat2d.py:18-25
 
 # Review the private draft, then share it (or reject it)
 python -m local_connector drafts --as researcher_a
@@ -48,11 +63,14 @@ python -m local_connector findings --as researcher_b --project heat-diffusion
 
 # Researcher B hits a related problem; their agent gets A's finding as context
 python -m local_connector grant tests/fixtures/sample_project_b
-python -m local_connector diagnose tests/fixtures/sample_project_b --as researcher_b --project heat-diffusion --symptom "I refined the grid to dx = 0.005. Now max|T| reaches inf at step 944, even though dt = 0.01 is below the dt = 0.02 we were told is safe." --file run.log --file config.json --file heat2d.py:16-23
+python -m local_connector diagnose tests/fixtures/sample_project_b --as researcher_b --project heat-diffusion --symptom "I refined the grid to dx = 0.005. Now max|T| reaches inf at step 944, even though dt = 0.01 is below the dt = 0.02 we were told is safe." --file run.log --file config.json --file heat2d.py:18-25
 
 # Search the Super Brain, or open one finding and its links
 python -m local_connector ask "dt stability limit after refining the grid" --as researcher_b
 python -m local_connector finding <finding id> --as researcher_b
+
+# Watch a run log for anomalies (read-only; Ctrl+C stops watching, not the run)
+python -m local_connector watch tests/fixtures/sample_project --file live.log --as researcher_a --project heat-diffusion
 ```
 
 The connector shows exactly what will be sent and asks before sending. Each researcher's diagnosis runs on their own CREAO agent, and drafts stay private until approved. Granted folders are remembered in `~/.simguard/grants.json`; take access back with `python -m local_connector revoke <folder>`. If the backend says the database is from an older version, run `python -m backend.workspaces.demo --reset`.

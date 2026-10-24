@@ -4,7 +4,30 @@ One entry per commit, newest first. Each commit adds its own entry with the hash
 
 ---
 
-## 2026-10-23 · `pending` · Add the prototype definition of done to the build plan
+## 2026-10-24 · `pending` · Add the dashboard, local anomaly checks and alerts
+
+**Why:** Build plan step 6: researchers use SimGuard from a desktop dashboard, and get severity alerts from their running simulations without SimGuard ever touching the run.
+
+**Changed**
+- Added `local_connector/simulation_monitor/`: read-only checks on simulation logs (Critical for NaN/Inf, overflow-size values and error lines; Warning for sudden jumps and a steadily rising residual; Informational for configured thresholds and stalled output; Warning for a missing log), and a watcher that follows a growing log. Each check fires once per metric.
+- Added `backend/monitoring/alerts.py` and endpoints `POST /alerts`, `GET /alerts`, `DELETE /alerts`: session-only, private to each researcher, never written to a database.
+- Added `local_connector/service.py` (`python -m local_connector serve`, `127.0.0.1:8001`): granted folders, selectable files (no sensitive or binary files), evidence previews and log watching for the dashboard. Connector commands `serve` and `watch`. `GrantRegistry.check_path` checks a path that may not exist yet.
+- Added the React dashboard in `frontend/` (Vite, plain CSS, light and dark): sign-in, Diagnose, Drafts, Super Brain and Alerts views, an alerts panel, and `?as=` / `&view=` to open a given member and view.
+- Sample solver: `--delay` option for live demos (existing logs reproduce byte for byte); added a clean run log, `tests/fixtures/monitor/stable.log`.
+- Added `tests/test_monitoring.py`.
+- `.gitignore`: ignores `live.log` from demo runs.
+- Updated `README.md` (running the dashboard, live alerts, line range `heat2d.py:18-25`), `frontend/README.md`, `backend/README.md`, `Documents/dashboard-design.md` and `Documents/build-plan.md`.
+
+**Checks**
+- `python -m pytest`: 179 passed, 1 skipped (symlink test on Windows). `npm run build` succeeds.
+- Real solver run watched through the connector and dashboard: the first Critical alert arrived and was shown while the solver was still running, and the solver ended on its own with its own exit code. Also an automated test.
+- Headless-browser screenshots of every view at 1280px and 1440px, checked by eye; below 1280px the desktop notice appears.
+- Not done: the full A → approve → B flow by clicking in the dashboard (needs a person; costs credits).
+- Secret scan: no API key or app ID in the commit; `backend/.env`, `backend/data/` and `node_modules/` not included.
+
+---
+
+## 2026-10-23 · `1ffff36` · Add the prototype definition of done to the build plan
 
 **Why:** The build plan's final check needs the full checklist in one place.
 

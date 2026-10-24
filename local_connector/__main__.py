@@ -10,6 +10,8 @@
     python -m local_connector findings --as researcher_a --project heat-diffusion
     python -m local_connector ask "blows up after refining the grid" --as researcher_b
     python -m local_connector finding <finding id> --as researcher_b
+    python -m local_connector watch <folder> --file run.log --as researcher_a --project heat-diffusion
+    python -m local_connector serve        (the local service the dashboard talks to)
 
 `diagnose` shows exactly what will be sent and asks before sending it, and
 gives your agent earlier approved findings from the Super Brain unless you
@@ -68,6 +70,15 @@ def main(argv: list[str] | None = None) -> int:
             _ask(args)
         elif args.command == "finding":
             _finding(args)
+        elif args.command == "watch":
+            return _watch(registry, args)
+        elif args.command == "serve":
+            import uvicorn
+
+            from local_connector.service import create_service
+
+            print(f"Local connector for the dashboard on http://127.0.0.1:{args.port} (this computer only)")
+            uvicorn.run(create_service(registry, args.backend), host="127.0.0.1", port=args.port, log_level="warning")
     except (AccessDenied, ValueError) as exc:
         print(f"Refused: {exc}")
         return 2
@@ -193,6 +204,32 @@ def _finding(args: argparse.Namespace) -> None:
             print(f"  {arrow} {link['relation']}: {other['title']} (finding {other['id']}, {other['project_id']})")
 
 
+def _watch(registry: GrantRegistry, args: argparse.Namespace) -> int:
+    """Watch a run log in the foreground. Only reads the log; never touches the simulation."""
+    from local_connector.service import BackendPoster
+    from local_connector.simulation_monitor.watcher import LogWatcher
+
+    grant = registry.grant_for_root(args.folder)
+    resolved, relative = registry.check_path(args.file, grant)
+    poster = BackendPoster(args.backend, args.member, args.project, relative, requests.Session()) if args.member else None
+
+    def on_alerts(alerts):
+        for a in alerts:
+            print(f"[{a.severity.upper()}] {a.message}", flush=True)
+        if poster:
+            poster(alerts)
+
+    watcher = LogWatcher(resolved, on_alerts)
+    print(f"Watching {relative} (Ctrl+C to stop watching; the simulation is never touched)", flush=True)
+    try:
+        while True:
+            watcher.poll_once()
+            time.sleep(watcher.poll_seconds)
+    except KeyboardInterrupt:
+        print(f"\nStopped watching after {watcher.lines_read} lines and {len(watcher.alerts)} alert(s).")
+    return 0
+
+
 def _sign_in(args: argparse.Namespace) -> dict[str, str]:
     if not args.member:
         raise BackendError("Say who you are: --as <member id> (or set SIMGUARD_MEMBER).")
@@ -255,6 +292,12 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--project", help="only this project")
     o = sub.add_parser("finding", parents=[backend], help="one finding and its links")
     o.add_argument("finding_id")
+    w = sub.add_parser("watch", parents=[backend], help="watch a run log for anomalies (read-only)")
+    w.add_argument("folder", help="a granted project folder")
+    w.add_argument("--file", required=True, help="the log to watch, e.g. run.log")
+    w.add_argument("--project", required=True, help="SimGuard project ID")
+    s = sub.add_parser("serve", parents=[backend], help="run the local service the dashboard talks to")
+    s.add_argument("--port", type=int, default=8001)
     return parser
 
 

@@ -74,21 +74,27 @@ class GrantRegistry:
                 return g
         raise AccessDenied(f"{root} has not been granted. Run: python -m local_connector grant \"{root}\"")
 
-    def read_file(self, path: str | Path, grant: Grant) -> tuple[str, str, bool]:
-        """Read one file inside a granted folder.
-
-        Returns (path relative to the project folder, text, truncated).
-        """
+    def check_path(self, path: str | Path, grant: Grant) -> tuple[Path, str]:
+        """Check that a path is allowed (inside the granted folder, not sensitive),
+        whether or not the file exists yet. Returns (resolved path, relative path)."""
         resolved = Path(path).expanduser()
         if not resolved.is_absolute():
             resolved = grant.root / resolved
         resolved = resolved.resolve()  # follows symlinks and "..", so escapes are caught below
-        if resolved != grant.root and grant.root not in resolved.parents:
+        if resolved == grant.root or grant.root not in resolved.parents:
             raise AccessDenied(f"{path} is outside the granted project folder.")
         relative = resolved.relative_to(grant.root).as_posix()
         problem = path_problem(relative)
         if problem:
             raise AccessDenied(f"{relative} {problem}.")
+        return resolved, relative
+
+    def read_file(self, path: str | Path, grant: Grant) -> tuple[str, str, bool]:
+        """Read one file inside a granted folder.
+
+        Returns (path relative to the project folder, text, truncated).
+        """
+        resolved, relative = self.check_path(path, grant)
         if not resolved.is_file():
             raise AccessDenied(f"{relative} is not a file.")
 
