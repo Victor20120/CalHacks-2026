@@ -66,10 +66,12 @@ It listens on this computer only (`127.0.0.1`), because sign-in is only a protot
 | `GET /demo/members` | Demo members you can sign in as |
 | `POST /sign-in` | Body: `member_id`. Returns a `token`; send it as `Authorization: Bearer <token>` |
 | `GET /me` | The signed-in member and the projects they belong to |
-| `POST /diagnose` | Body: `project` (a name, not a path), `symptom`, optional `focus_areas`, `evidence` (list of `path`, `kind`, `excerpt`, `truncated`). Checks the evidence, starts a CREAO run and returns `202` with `job_id`, `evidence_sent` and `redactions` |
-| `GET /diagnose/{job_id}` | `status` is `running`, `completed` (with `diagnosis`: `reply`, `issues`, `summary`, `run_id`) or `failed` (with `error`: `type`, `message`, sometimes `run_id`) |
-
-`/diagnose` doesn't require sign-in yet; it gets tied to members and projects in build steps 4 and 5.
+| `POST /diagnose` | Signed in. Body: `project_id` (one of your projects), `symptom`, `focus_areas` (list; default `["numerical"]`), `analysis_depth` (default `standard`), `evidence` (list of `path`, `kind`, `excerpt`, `truncated`). Checks the evidence, starts a run on **your own** personal agent and returns `202` with `job_id`, `evidence_sent` and `redactions` |
+| `GET /diagnose/{job_id}` | Signed in, your own jobs only. `status` is `running`, `completed` (with `diagnosis`: `reply`, `issues`, `summary`, `run_id`; and `draft_id`) or `failed` (with `error`: `type`, `message`, sometimes `run_id`). A completed diagnosis is saved to your private memory |
+| `GET /drafts` | Your pending drafts for the Super Brain. Only you can see them |
+| `POST /drafts/{draft_id}/approve` | Publish a draft as a shared finding. Optional edits: `title`, `summary`, `category`, `verification_status` |
+| `POST /drafts/{draft_id}/reject` | Keep a draft private for good. Nothing is written to the shared database |
+| `GET /projects/{project_id}/findings` | Approved findings in a project you belong to |
 
 ## Databases
 
@@ -78,9 +80,11 @@ SQLite files in `backend/data/` (git ignores it; set `SIMGUARD_DATA_DIR` to move
 | File | Holds |
 |---|---|
 | `superbrain.db` | The group's shared Super Brain: workspace, members, projects, agents, approvals, shared findings and their links |
-| `private/<member>.db` | One researcher's private memory (runs and episodes), split by project. In the product this lives on the researcher's own computer |
+| `private/<member>.db` | One researcher's private memory (runs, episodes and drafts for the Super Brain), split by project. In the product this lives on the researcher's own computer |
 
-Private and shared data are in different files with different tables, so no shared query can return private memory. `approvals` stores no draft text: rejected drafts never reach the shared database.
+Private and shared data are in different files with different tables, so no shared query can return private memory. `approvals` stores no draft text: rejected drafts never reach the shared database. Approving writes the approval and the finding in one transaction.
+
+When the tables change, `SCHEMA_VERSION` in `backend/db/schema.py` goes up and older database files are refused with instructions to reset them (there are no migrations in the prototype).
 
 Demo workspace: a group leader, Researcher A (projects `heat-diffusion` and `wave-propagation`) and Researcher B (`heat-diffusion` only). Delete everything and reload it with:
 

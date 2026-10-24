@@ -3,9 +3,14 @@
     python -m local_connector grant <project folder>
     python -m local_connector list
     python -m local_connector revoke <project folder>
-    python -m local_connector diagnose <project folder> --symptom "..." --file run.log --file solver.py:10-40
+    python -m local_connector diagnose <folder> --as researcher_a --project heat-diffusion --symptom "..." --file run.log
+    python -m local_connector drafts --as researcher_a
+    python -m local_connector approve <draft id> --as researcher_a [--title ...] [--summary ...] [--status ...]
+    python -m local_connector reject <draft id> --as researcher_a
+    python -m local_connector findings --as researcher_a --project heat-diffusion
 
-`diagnose` shows exactly what will be sent and asks before sending it.
+`diagnose` shows exactly what will be sent and asks before sending it. Drafts
+stay private until you approve them. --as defaults to $SIMGUARD_MEMBER.
 """
 from __future__ import annotations
 
@@ -16,11 +21,17 @@ import time
 
 import requests
 
+from backend.creao.client import ANALYSIS_DEPTHS, FOCUS_AREAS
+from backend.db.schema import VERIFICATION_STATUSES
 from local_connector.evidence.extract import Evidence, extract_evidence
 from local_connector.file_access.grants import AccessDenied, GrantRegistry
 
 POLL_SECONDS = 3
 POLL_TIMEOUT_SECONDS = 360  # the backend gives CREAO up to 5 minutes
+
+
+class BackendError(Exception):
+    pass
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -38,49 +49,56 @@ def main(argv: list[str] | None = None) -> int:
             print("\n".join(f"{g.name}: {g.root} (since {g.granted_at})" for g in grants) or "No folders granted.")
         elif args.command == "diagnose":
             return _diagnose(registry, args)
+        elif args.command == "drafts":
+            _drafts(args)
+        elif args.command == "approve":
+            edits = {"title": args.title, "summary": args.summary, "verification_status": args.status}
+            finding = _call(args, "POST", f"/drafts/{args.draft_id}/approve", json=edits)
+            print(f"Shared to the Super Brain as finding {finding['id']} ({finding['verification_status']}):")
+            print(f"  {finding['title']}")
+        elif args.command == "reject":
+            print(_call(args, "POST", f"/drafts/{args.draft_id}/reject")["detail"])
+        elif args.command == "findings":
+            _findings(args)
     except (AccessDenied, ValueError) as exc:
         print(f"Refused: {exc}")
         return 2
+    except BackendError as exc:
+        print(exc)
+        return 1
     return 0
 
 
 def _diagnose(registry: GrantRegistry, args: argparse.Namespace) -> int:
     grant = registry.grant_for_root(args.folder)
     evidence = extract_evidence(registry, grant, args.files)
-    _preview(evidence, args.symptom)
+    _preview(evidence, args)
     if not args.yes and input("\nSend this to SimGuard? [y/N] ").strip().lower() not in ("y", "yes"):
         print("Nothing was sent.")
         return 1
 
-    payload = {"project": evidence.project, "symptom": args.symptom, "focus_areas": args.focus,
-               "evidence": evidence.to_payload()}
-    try:
-        response = requests.post(f"{args.backend}/diagnose", json=payload, timeout=30)
-    except requests.ConnectionError:
-        print(f"Could not reach the backend at {args.backend}. Start it with:\n"
-              "  python -m uvicorn backend.api.app:app --port 8000")
-        return 1
-    if response.status_code != 202:
-        print(f"The backend refused the request (HTTP {response.status_code}): {response.json().get('detail')}")
-        return 1
-    job_id = response.json()["job_id"]
-    print(f"\nSent. Diagnosis job {job_id}; waiting for the agent", end="", flush=True)
+    payload = {"project_id": args.project, "symptom": args.symptom, "focus_areas": args.focus or ["numerical"],
+               "analysis_depth": args.depth, "evidence": evidence.to_payload()}
+    headers = _sign_in(args)
+    started = _call(args, "POST", "/diagnose", json=payload, headers=headers)
+    job_id = started["job_id"]
+    print(f"\nSent. Diagnosis job {job_id}; waiting for your agent", end="", flush=True)
 
     deadline = time.monotonic() + POLL_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         time.sleep(POLL_SECONDS)
-        job = requests.get(f"{args.backend}/diagnose/{job_id}", timeout=30).json()
+        job = _call(args, "GET", f"/diagnose/{job_id}", headers=headers)
         if job["status"] != "running":
             print()
-            return _show(job)
+            return _show(job, args)
         print(".", end="", flush=True)
     print(f"\nStill running after {POLL_TIMEOUT_SECONDS}s. Check later: GET {args.backend}/diagnose/{job_id}")
     return 1
 
 
-def _preview(evidence: Evidence, symptom: str) -> None:
-    print(f"Project: {evidence.project}")
-    print(f"Symptom: {symptom}")
+def _preview(evidence: Evidence, args: argparse.Namespace) -> None:
+    print(f"Signed in as: {args.member}   Project: {args.project}")
+    print(f"Symptom: {args.symptom}")
     print(f"Evidence ({len(evidence.items)} excerpt(s), {evidence.total_chars} characters):")
     for item in evidence.items:
         note = ", partial" if item.truncated else ""
@@ -94,7 +112,7 @@ def _preview(evidence: Evidence, symptom: str) -> None:
             print(f"\n--- {item.path} ---\n{item.excerpt}")
 
 
-def _show(job: dict) -> int:
+def _show(job: dict, args: argparse.Namespace) -> int:
     if job["status"] == "failed":
         error = job["error"]
         print(f"Diagnosis failed ({error['type']}): {error['message']}")
@@ -107,23 +125,93 @@ def _show(job: dict) -> int:
             print(f"  [{issue['status']}, {issue['confidence'] or 'unknown'} confidence] {issue['title']}")
             print(f"      check: {issue['proposed_validation']}")
     print(f"\n{diagnosis['reply']}")
+    if job.get("warning"):
+        print(f"\nWarning: {job['warning']}")
+    if job.get("draft_id"):
+        print(f"\nSaved to your private memory. A draft finding was prepared; it stays private unless you approve it:")
+        print(f"  python -m local_connector drafts --as {args.member}")
     return 0
+
+
+def _drafts(args: argparse.Namespace) -> None:
+    drafts = _call(args, "GET", "/drafts", headers=_sign_in(args))
+    if not drafts:
+        print("No pending drafts.")
+    for d in drafts:
+        print(f"\nDraft {d['id']}  [{d['project_id']}, {d['category']}, {d['verification_status']}]")
+        print(f"Title: {d['title']}\n{d['summary']}")
+    if drafts:
+        print(f"\nShare one:  python -m local_connector approve <draft id> --as {args.member} [--title ...] [--summary ...]")
+        print(f"Keep private: python -m local_connector reject <draft id> --as {args.member}")
+
+
+def _findings(args: argparse.Namespace) -> None:
+    findings = _call(args, "GET", f"/projects/{args.project}/findings", headers=_sign_in(args))
+    if not findings:
+        print("No shared findings in this project yet.")
+    for f in findings:
+        edited = ", edited before approval" if f["edited_before_approval"] else ""
+        print(f"\n{f['title']}  [{f['category']}, {f['verification_status']}]")
+        print(f"Shared by {f['contributed_by_name']} on {f['approved_at']}{edited}; CREAO run {f['source_creao_run_id']}")
+        print(f["summary"])
+
+
+def _sign_in(args: argparse.Namespace) -> dict[str, str]:
+    if not args.member:
+        raise BackendError("Say who you are: --as <member id> (or set SIMGUARD_MEMBER).")
+    token = _call(args, "POST", "/sign-in", json={"member_id": args.member})["token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _call(args: argparse.Namespace, method: str, path: str, **kwargs) -> dict:
+    if "headers" not in kwargs and path != "/sign-in":
+        kwargs["headers"] = _sign_in(args)
+    try:
+        response = requests.request(method, f"{args.backend}{path}", timeout=30, **kwargs)
+    except requests.ConnectionError:
+        raise BackendError(f"Could not reach the backend at {args.backend}. Start it with:\n"
+                           "  python -m uvicorn backend.api.app:app --port 8000") from None
+    if not response.ok:
+        try:
+            detail = response.json().get("detail")
+        except ValueError:
+            detail = response.text[:200]
+        raise BackendError(f"The backend refused (HTTP {response.status_code}): {detail}")
+    return response.json()
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m local_connector", description="SimGuard local connector")
     sub = parser.add_subparsers(dest="command", required=True)
+    backend = argparse.ArgumentParser(add_help=False)
+    backend.add_argument("--as", dest="member", default=os.environ.get("SIMGUARD_MEMBER"),
+                         help="your member ID, e.g. researcher_a")
+    backend.add_argument("--backend", default=os.environ.get("SIMGUARD_BACKEND", "http://127.0.0.1:8000"))
+
     sub.add_parser("grant", help="allow SimGuard to read a project folder").add_argument("folder")
     sub.add_parser("revoke", help="take back access to a project folder").add_argument("folder")
     sub.add_parser("list", help="show granted project folders")
-    d = sub.add_parser("diagnose", help="send selected evidence for a diagnosis")
+
+    d = sub.add_parser("diagnose", parents=[backend], help="send selected evidence for a diagnosis")
     d.add_argument("folder", help="a granted project folder")
+    d.add_argument("--project", required=True, help="SimGuard project ID, e.g. heat-diffusion")
     d.add_argument("--symptom", required=True, help="what looked wrong")
     d.add_argument("--file", dest="files", action="append", required=True,
                    help="file to include, optionally with a line range: solver.py:10-40 (repeatable)")
-    d.add_argument("--focus", help="what the agent should focus on")
-    d.add_argument("--backend", default=os.environ.get("SIMGUARD_BACKEND", "http://127.0.0.1:8000"))
+    d.add_argument("--focus", action="append", choices=FOCUS_AREAS, help="focus area (repeatable; default numerical)")
+    d.add_argument("--depth", choices=ANALYSIS_DEPTHS, default="standard")
     d.add_argument("--yes", action="store_true", help="send without asking (after the preview)")
+
+    sub.add_parser("drafts", parents=[backend], help="your private drafts waiting for a decision")
+    a = sub.add_parser("approve", parents=[backend], help="share a draft to the Super Brain")
+    a.add_argument("draft_id")
+    a.add_argument("--title", help="replace the draft's title")
+    a.add_argument("--summary", help="replace the draft's summary")
+    a.add_argument("--status", choices=VERIFICATION_STATUSES, help="verification status (default: the draft's)")
+    r = sub.add_parser("reject", parents=[backend], help="keep a draft private for good")
+    r.add_argument("draft_id")
+    f = sub.add_parser("findings", parents=[backend], help="approved findings in a project")
+    f.add_argument("--project", required=True)
     return parser
 
 

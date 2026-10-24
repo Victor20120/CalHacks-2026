@@ -4,7 +4,29 @@ One entry per commit, newest first. Each commit adds its own entry with the hash
 
 ---
 
-## 2026-10-23 · `pending` · Add databases, demo workspace, sign-in and personal agents
+## 2026-10-23 · `pending` · Add approval path from private diagnosis to shared finding
+
+**Why:** Build plan step 4: a diagnosis is saved privately with a draft finding, and only the researcher's explicit approval shares it to the Super Brain.
+
+**Changed**
+- `/diagnose` now requires sign-in and project membership, runs on the researcher's own personal agent (`AGENT_1` / `AGENT_2`), and only the researcher can read their jobs. Requests use `project_id`, `focus_areas` (list) and `analysis_depth`.
+- Finished diagnoses are saved to the researcher's private memory as a hypothesis episode, with a draft built from the agent's top issue (symptom, likely cause, evidence, how to validate), always labelled `hypothesis`.
+- Added `backend/knowledge_sharing/publishing.py`: approve (with optional edits; approval and finding written in one transaction, secrets blanked, never published twice) and reject (nothing written to the shared database).
+- Added `backend/memory/shared_findings.py` and endpoints `GET /drafts`, `POST /drafts/{id}/approve`, `POST /drafts/{id}/reject`, `GET /projects/{id}/findings`.
+- Database: private `share_drafts` table, `approvals.draft_id`, and `SCHEMA_VERSION` so old database files are refused with reset instructions.
+- Local connector: `diagnose --as --project --focus --depth`, plus `drafts`, `approve`, `reject` and `findings` commands.
+- Added `tests/test_knowledge_sharing.py`; rewrote `tests/test_diagnose_api.py` for the signed-in, per-researcher flow.
+- Updated `README.md` (full A → approve → B flow), `backend/README.md` and `Documents/build-plan.md`.
+
+**Checks**
+- `python -m pytest`: 131 passed, 1 skipped (symlink test on Windows).
+- Real run `915f1428` on Researcher A's agent through the connector: draft created privately; Researcher B saw no findings before approval, saw the finding (still `hypothesis`, with provenance) after, and was refused on the wave project.
+- The old local database was refused with reset instructions, then reset.
+- Secret scan: no API key or app ID in the commit; `backend/.env` and `backend/data/` not included.
+
+---
+
+## 2026-10-23 · `524e7a1` · Add databases, demo workspace, sign-in and personal agents
 
 **Why:** Build plan step 3 (SQLite models and demo data), plus the start of step 4: each researcher gets their own CREAO agent, so CREAO's own agent memory can't carry one researcher's evidence into another's runs.
 

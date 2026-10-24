@@ -1,14 +1,20 @@
-"""Diagnosis workflow: re-check the evidence, build the CREAO inputs, run the agent.
+"""Diagnosis workflow: re-check the evidence, build the CREAO inputs, run the
+researcher's personal agent, and save the result to their private memory.
 
 The backend decides what is sent to CREAO, so the evidence from the local
 connector is checked again here instead of being trusted.
 """
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from typing import Any
 
+from backend.creao.client import ANALYSIS_DEPTHS, FOCUS_AREAS
+from backend.db.database import Database
+from backend.knowledge_sharing.publishing import draft_from_diagnosis
+from backend.memory.private_memory import PrivateMemory
 from backend.orchestration.evidence_policy import (
     MAX_ITEM_CHARS,
     MAX_ITEMS,
@@ -16,8 +22,6 @@ from backend.orchestration.evidence_policy import (
     path_problem,
     redact_secrets,
 )
-
-DEFAULT_FOCUS_AREAS = "numerical stability; most likely root cause; how to validate it"
 
 
 class EvidenceRejected(Exception):
@@ -30,12 +34,13 @@ class EvidenceRejected(Exception):
 class PreparedDiagnosis:
     project: str
     symptom: str
-    focus_areas: str
+    focus_areas: list[str]
+    analysis_depth: str
     evidence: list[dict[str, Any]]
     redactions: int
 
     def creao_inputs(self) -> dict[str, str]:
-        """Inputs for the hub agent. Only the project name is sent, never a local path."""
+        """Inputs for a personal agent. Only the project name is sent, never a local path."""
         parts = [self.symptom]
         if self.evidence:
             parts.append(
@@ -48,16 +53,22 @@ class PreparedDiagnosis:
         return {
             "project_path": f"{self.project} (local files are not attached; the relevant evidence is in observed_symptom)",
             "observed_symptom": "\n\n".join(parts),
-            "focus_areas": self.focus_areas,
+            "focus_areas": ", ".join(self.focus_areas),
+            "analysis_depth": self.analysis_depth,
         }
 
 
 def prepare_diagnosis(
-    project: str, symptom: str, focus_areas: str | None, evidence: list[dict[str, Any]]
+    project: str, symptom: str, focus_areas: list[str], analysis_depth: str, evidence: list[dict[str, Any]]
 ) -> PreparedDiagnosis:
     """Check a diagnosis request. Raises EvidenceRejected; nothing is sent if it does."""
     if re.search(r"[\\/:]", project):
         raise EvidenceRejected("The project must be a name, not a path.")
+    unknown = [f for f in focus_areas if f not in FOCUS_AREAS]
+    if not focus_areas or unknown:
+        raise EvidenceRejected(f"focus_areas must be one or more of: {', '.join(FOCUS_AREAS)}.")
+    if analysis_depth not in ANALYSIS_DEPTHS:
+        raise EvidenceRejected(f"analysis_depth must be one of: {', '.join(ANALYSIS_DEPTHS)}.")
     if len(evidence) > MAX_ITEMS:
         raise EvidenceRejected(f"Send at most {MAX_ITEMS} evidence excerpts.", 413)
 
@@ -80,7 +91,8 @@ def prepare_diagnosis(
     return PreparedDiagnosis(
         project=project.strip(),
         symptom=symptom,
-        focus_areas=(focus_areas or "").strip() or DEFAULT_FOCUS_AREAS,
+        focus_areas=list(dict.fromkeys(focus_areas)),
+        analysis_depth=analysis_depth,
         evidence=checked,
         redactions=redactions,
     )
@@ -96,3 +108,23 @@ def run_diagnosis(client: Any, prepared: PreparedDiagnosis) -> dict[str, Any]:
         "summary": result.summary,
         "analysis_ran": result.analysis_ran,
     }
+
+
+def record_diagnosis(db: Database, member_id: str, project_id: str, symptom: str, diagnosis: dict[str, Any]) -> str | None:
+    """Save a finished diagnosis to the researcher's private memory, and draft a
+    finding they may choose to share. Returns the draft ID, or None if there is
+    nothing to share. Nothing here touches the shared Super Brain."""
+    memory = PrivateMemory(db, member_id)
+    issues = diagnosis.get("issues") or []
+    episode_id = memory.add_episode(
+        project_id,
+        "diagnosis",
+        summary=issues[0]["title"] if issues else "Diagnosis with no issues found",
+        details=json.dumps({"symptom": symptom, "reply": diagnosis["reply"], "issues": issues}),
+        status="hypothesis" if diagnosis.get("analysis_ran") else "open",
+        creao_run_id=diagnosis["run_id"],
+    )
+    draft = draft_from_diagnosis(symptom, diagnosis)
+    if draft is None:
+        return None
+    return memory.add_draft(project_id, draft, source_creao_run_id=diagnosis["run_id"], episode_id=episode_id)

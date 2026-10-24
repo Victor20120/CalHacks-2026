@@ -35,9 +35,16 @@ From the repo root, in two terminals. The diagnosis starts a real CREAO run and 
 # Terminal 1: start the backend
 python -m uvicorn backend.api.app:app --port 8000
 
-# Terminal 2: allow SimGuard to read the sample project, then diagnose it
+# Terminal 2: allow SimGuard to read the sample project, then diagnose it as Researcher A
 python -m local_connector grant tests/fixtures/sample_project
-python -m local_connector diagnose tests/fixtures/sample_project --symptom "max|T| reaches inf at step 2223" --file run.log --file config.json --file heat2d.py:16-23
+python -m local_connector diagnose tests/fixtures/sample_project --as researcher_a --project heat-diffusion --symptom "max|T| reaches inf at step 2223" --file run.log --file config.json --file heat2d.py:16-23
+
+# Review the private draft, then share it (or reject it)
+python -m local_connector drafts --as researcher_a
+python -m local_connector approve <draft id> --as researcher_a
+
+# Researcher B sees the shared finding
+python -m local_connector findings --as researcher_b --project heat-diffusion
 ```
 
-The connector shows exactly what will be sent and asks before sending. Granted folders are remembered in `~/.simguard/grants.json`; take access back with `python -m local_connector revoke <folder>`.
+The connector shows exactly what will be sent and asks before sending. Each researcher's diagnosis runs on their own CREAO agent, and drafts stay private until approved. Granted folders are remembered in `~/.simguard/grants.json`; take access back with `python -m local_connector revoke <folder>`. If the backend says the database is from an older version, run `python -m backend.workspaces.demo --reset`.

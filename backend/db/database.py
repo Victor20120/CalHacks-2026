@@ -18,10 +18,15 @@ from contextlib import closing
 from pathlib import Path
 from typing import Callable
 
-from backend.db.schema import PRIVATE_SCHEMA, SHARED_SCHEMA
+from backend.db.schema import PRIVATE_SCHEMA, SCHEMA_VERSION, SHARED_SCHEMA
 
 DEFAULT_DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 _MEMBER_ID = re.compile(r"^[a-z0-9_-]{1,64}$")
+RESET_COMMAND = "python -m backend.workspaces.demo --reset"
+
+
+class OutdatedDatabase(Exception):
+    """A database file was made by an older SimGuard version."""
 
 
 def connect(path: Path) -> sqlite3.Connection:
@@ -30,6 +35,17 @@ def connect(path: Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
+
+
+def _create_tables(conn: sqlite3.Connection, schema: str, path: Path) -> None:
+    has_tables = conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'").fetchone()[0] > 0
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    if has_tables and version != SCHEMA_VERSION:
+        raise OutdatedDatabase(
+            f"{path} was made by an older SimGuard version. Delete the databases and reload the demo: {RESET_COMMAND}"
+        )
+    conn.executescript(schema)
+    conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
 
 class Database:
@@ -59,7 +75,7 @@ class Database:
         with self._lock:
             if not self._ready:
                 with closing(connect(self.shared_path)) as conn:
-                    conn.executescript(SHARED_SCHEMA)
+                    _create_tables(conn, SHARED_SCHEMA, self.shared_path)
                     if self._seed:
                         self._seed(conn)
                     conn.commit()
@@ -68,8 +84,13 @@ class Database:
 
     def private(self, member_id: str) -> sqlite3.Connection:
         """Open one researcher's private memory database."""
-        conn = connect(self.private_path(member_id))
-        conn.executescript(PRIVATE_SCHEMA)
+        path = self.private_path(member_id)
+        conn = connect(path)
+        try:
+            _create_tables(conn, PRIVATE_SCHEMA, path)
+        except Exception:
+            conn.close()
+            raise
         return conn
 
     def reset(self) -> list[Path]:

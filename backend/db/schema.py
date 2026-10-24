@@ -6,6 +6,13 @@ memory. Rejected drafts and draft text never go into the shared database:
 `approvals` only records that an approved finding was approved, by whom.
 """
 
+# Bump when a table changes. An existing database file with another version is
+# refused with instructions to reset it (prototype: there are no migrations).
+SCHEMA_VERSION = 2
+
+FINDING_CATEGORIES = ("research_result", "code_change", "error_diagnosis")
+VERIFICATION_STATUSES = ("hypothesis", "supported", "verified", "unresolved")
+
 SHARED_TABLES = (
     "workspaces",
     "members",
@@ -16,7 +23,7 @@ SHARED_TABLES = (
     "shared_findings",
     "finding_links",
 )
-PRIVATE_TABLES = ("runs", "private_episodes")
+PRIVATE_TABLES = ("runs", "private_episodes", "share_drafts")
 
 SHARED_SCHEMA = """
 CREATE TABLE IF NOT EXISTS workspaces (
@@ -59,11 +66,14 @@ CREATE TABLE IF NOT EXISTS agents (
     created_at        TEXT NOT NULL
 );
 
+-- draft_id names the researcher's private draft that was approved (an ID only, no
+-- text); UNIQUE so the same draft can never be published twice.
 CREATE TABLE IF NOT EXISTS approvals (
     id            TEXT PRIMARY KEY,
     workspace_id  TEXT NOT NULL REFERENCES workspaces(id),
     project_id    TEXT NOT NULL REFERENCES projects(id),
     member_id     TEXT NOT NULL REFERENCES members(id),
+    draft_id      TEXT NOT NULL UNIQUE,
     edited        INTEGER NOT NULL DEFAULT 0 CHECK (edited IN (0, 1)),
     approved_at   TEXT NOT NULL
 );
@@ -114,5 +124,22 @@ CREATE TABLE IF NOT EXISTS private_episodes (
     run_id        TEXT REFERENCES runs(id),
     creao_run_id  TEXT,
     created_at    TEXT NOT NULL
+);
+
+-- Proposed contributions to the Super Brain. They stay in this private file until
+-- the researcher approves one; rejected drafts never leave it.
+CREATE TABLE IF NOT EXISTS share_drafts (
+    id                   TEXT PRIMARY KEY,
+    project_id           TEXT NOT NULL,
+    category             TEXT NOT NULL CHECK (category IN ('research_result', 'code_change', 'error_diagnosis')),
+    title                TEXT NOT NULL,
+    summary              TEXT NOT NULL,
+    verification_status  TEXT NOT NULL CHECK (verification_status IN ('hypothesis', 'supported', 'verified', 'unresolved')),
+    source_creao_run_id  TEXT,
+    episode_id           TEXT REFERENCES private_episodes(id),
+    status               TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+    finding_id           TEXT,
+    created_at           TEXT NOT NULL,
+    decided_at           TEXT
 );
 """

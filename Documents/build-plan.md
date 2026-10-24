@@ -21,7 +21,7 @@
 | 1 | Verify CREAO with a known-good input | `backend/creao/`, `tests/` | Done except recording credits |
 | 2 | Diagnosis endpoint with file permissions | `backend/api/`, `backend/orchestration/`, `local_connector/` | Done |
 | 3 | SQLite models and demo data | `backend/db/`, `backend/workspaces/`, `backend/memory/`, `backend/auth/` | Done |
-| 4 | Approval path to publish a finding | `backend/knowledge_sharing/` | Not started |
+| 4 | Approval path to publish a finding | `backend/knowledge_sharing/` | Done |
 | 5 | Scoped lookup for Researcher B | `backend/memory/`, `backend/auth/` | Not started |
 | 6 | Dashboard and local anomaly checks | `frontend/`, `local_connector/simulation_monitor/`, `backend/monitoring/` | Not started |
 | 7 | Optional: alert history and handoff | `backend/monitoring/`, `backend/memory/` | Not started |
@@ -114,16 +114,16 @@
 - [x] Set up separate CREAO agents for Researchers A and B (`CREAO_AGENT_1_*` and `CREAO_AGENT_2_*` in `backend/.env`; the demo data already points A and B at these). If both used the one hub agent, CREAO's own long-term agent memory could carry A's evidence into B's runs, outside SimGuard's access checks. Both agents verified with a short run on 2026-10-23
 - [x] Give both personal agents the same input contract (verified 2026-10-23: `AGENT_2` is now a copy of `AGENT_1`; see `backend/README.md`)
 - [x] Configure the adapter for the personal agents' inputs (`personal_agent()`: `focus_areas` choices sent as comma-separated text, required `analysis_depth`, issue-list request). Verified on run `aaa9f564` **(uses credits)**
-- [ ] Use each signed-in researcher's own personal agent for `/diagnose` (today it still uses the hub agent)
-- [ ] The agent drafts an editable, minimum-necessary summary in one of the three categories: research result, code bug / new implementation, error diagnosis
-- [ ] The researcher approves (optionally after editing) or rejects it
-- [ ] On approval, store the shared finding with provenance (who, when, source project, verification status), its project label and its links
+- [x] Use each signed-in researcher's own personal agent for `/diagnose` (requires sign-in and project membership; only the researcher can read their own diagnosis jobs)
+- [x] An editable, minimum-necessary draft in one of the three categories. SimGuard builds it from the agent's top issue (symptom, likely cause, evidence, how to validate), always as a hypothesis, and keeps it in the researcher's private memory with the diagnosis
+- [x] The researcher approves (optionally after editing) or rejects it (`POST /drafts/{id}/approve`, `POST /drafts/{id}/reject`)
+- [x] On approval, store the shared finding with provenance (who, when, source project, CREAO run, verification status, whether it was edited) and its project label. Links between findings come with step 5, when a second finding exists to link to
 
 **Checkpoint 4**
-- [ ] Automated: nothing reaches `shared_findings` without an approval record
-- [ ] Automated: a rejected draft stays private
-- [ ] Automated: a hypothesis is still labelled a hypothesis after publishing, not verified
-- [ ] Manual: approve a draft, and it appears in the Super Brain
+- [x] Automated: nothing reaches `shared_findings` without an approval record
+- [x] Automated: a rejected draft stays private (not even its text is in the shared database file)
+- [x] Automated: a hypothesis is still labelled a hypothesis after publishing, not verified
+- [x] Manual: approve a draft, and it appears in the Super Brain **(uses credits)** — passed 2026-10-23, run `915f1428` on Researcher A's own agent: B saw nothing before approval, saw the finding after, and was refused on the wave project
 
 ---
 

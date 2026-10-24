@@ -1,6 +1,7 @@
 """Diagnosis jobs. A CREAO run takes about a minute, so the API starts a job
 and the caller polls it. Prototype: jobs live in memory and are lost when the
-backend restarts (durable storage comes with SQLite in build step 3)."""
+backend restarts; the diagnosis itself is saved to the researcher's private
+memory when it finishes."""
 from __future__ import annotations
 
 import logging
@@ -19,10 +20,14 @@ log = logging.getLogger(__name__)
 @dataclass
 class Job:
     job_id: str
+    member_id: str
+    project_id: str
     status: str  # "running", "completed" or "failed"
     created_at: str
     diagnosis: dict[str, Any] | None = None
+    draft_id: str | None = None  # the private draft proposed for sharing, if any
     error: dict[str, Any] | None = None
+    warning: str | None = None
 
 
 class JobStore:
@@ -30,8 +35,8 @@ class JobStore:
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
 
-    def create(self) -> Job:
-        job = Job(job_id=str(uuid.uuid4()), status="running",
+    def create(self, member_id: str, project_id: str) -> Job:
+        job = Job(job_id=str(uuid.uuid4()), member_id=member_id, project_id=project_id, status="running",
                   created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
         with self._lock:
             self._jobs[job.job_id] = job
@@ -42,10 +47,10 @@ class JobStore:
             job = self._jobs.get(job_id)
             return asdict(job) if job else None
 
-    def finish(self, job_id: str, diagnosis: dict[str, Any]) -> None:
+    def finish(self, job_id: str, diagnosis: dict[str, Any], draft_id: str | None, warning: str | None = None) -> None:
         with self._lock:
-            self._jobs[job_id].status = "completed"
-            self._jobs[job_id].diagnosis = diagnosis
+            job = self._jobs[job_id]
+            job.status, job.diagnosis, job.draft_id, job.warning = "completed", diagnosis, draft_id, warning
 
     def fail(self, job_id: str, error: dict[str, Any]) -> None:
         with self._lock:
@@ -53,8 +58,15 @@ class JobStore:
             self._jobs[job_id].error = error
 
 
-def run_job(store: JobStore, job_id: str, client_factory: Callable[[], Any], prepared: PreparedDiagnosis) -> None:
-    """Run one diagnosis and record the outcome. Never logs evidence or replies."""
+def run_job(
+    store: JobStore,
+    job_id: str,
+    client_factory: Callable[[], Any],
+    prepared: PreparedDiagnosis,
+    on_success: Callable[[dict[str, Any]], str | None] | None = None,
+) -> None:
+    """Run one diagnosis and record the outcome. on_success saves it privately and
+    returns a draft ID. Never logs evidence or replies."""
     try:
         diagnosis = run_diagnosis(client_factory(), prepared)
     except CreaoTimeout as exc:
@@ -71,5 +83,12 @@ def run_job(store: JobStore, job_id: str, client_factory: Callable[[], Any], pre
         log.exception("Diagnosis job %s failed unexpectedly", job_id)
         store.fail(job_id, {"type": "internal", "message": "Unexpected error; see the backend log."})
     else:
-        store.finish(job_id, diagnosis)
+        draft_id, warning = None, None
+        if on_success:
+            try:
+                draft_id = on_success(diagnosis)
+            except Exception:
+                log.exception("Diagnosis job %s: could not save to private memory", job_id)
+                warning = "The diagnosis could not be saved to private memory, so no draft was made."
+        store.finish(job_id, diagnosis, draft_id, warning)
         log.info("Diagnosis job %s completed (CREAO run %s)", job_id, diagnosis["run_id"])

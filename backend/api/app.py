@@ -15,10 +15,20 @@ from typing import Any, Callable
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
+from backend.auth.permissions import PermissionDenied, require_project_member
 from backend.auth.sessions import Sessions
-from backend.creao import CreaoClient, hub_agent
+from backend.creao import CreaoClient, personal_agent
 from backend.db.database import Database
-from backend.orchestration.diagnosis import EvidenceRejected, prepare_diagnosis
+from backend.knowledge_sharing.publishing import (
+    DraftAlreadyDecided,
+    DraftNotFound,
+    InvalidDraft,
+    approve_draft,
+    reject_draft,
+)
+from backend.memory.private_memory import PrivateMemory
+from backend.memory.shared_findings import list_project_findings
+from backend.orchestration.diagnosis import EvidenceRejected, prepare_diagnosis, record_diagnosis
 from backend.orchestration.evidence_policy import MAX_ITEMS
 from backend.orchestration.jobs import JobStore, run_job
 from backend.workspaces.demo import seed_demo
@@ -33,9 +43,10 @@ class EvidenceIn(BaseModel):
 
 
 class DiagnoseIn(BaseModel):
-    project: str = Field(min_length=1, max_length=100)
+    project_id: str = Field(min_length=1, max_length=64)
     symptom: str = Field(min_length=1, max_length=4000)
-    focus_areas: str | None = Field(default=None, max_length=500)
+    focus_areas: list[str] = Field(default_factory=lambda: ["numerical"], max_length=6)
+    analysis_depth: str = "standard"
     evidence: list[EvidenceIn] = Field(default_factory=list, max_length=MAX_ITEMS)
 
 
@@ -43,15 +54,24 @@ class SignInIn(BaseModel):
     member_id: str = Field(min_length=1, max_length=64)
 
 
+class ApproveIn(BaseModel):
+    """Optional edits made before approving; anything left out keeps the draft's value."""
+    title: str | None = None
+    summary: str | None = None
+    category: str | None = None
+    verification_status: str | None = None
+
+
 def create_app(
-    client_factory: Callable[[], Any] | None = None,
+    client_factory: Callable[[str], Any] | None = None,
     jobs: JobStore | None = None,
     data_dir: str | Path | None = None,
 ) -> FastAPI:
-    """client_factory builds the CREAO client per job; tests pass a fake one.
-    The databases are created (with the demo workspace) on first use."""
+    """client_factory(agent_env_prefix) builds the CREAO client for a member's
+    personal agent; tests pass a fake one. The databases are created (with the
+    demo workspace) on first use."""
     app = FastAPI(title="SimGuard backend", version="0.1.0")
-    factory = client_factory or (lambda: CreaoClient(hub_agent()))
+    factory = client_factory or (lambda prefix: CreaoClient(personal_agent(prefix)))
     store = jobs or JobStore()
     db = Database(data_dir, seed=seed_demo)
     sessions = Sessions()
@@ -67,6 +87,12 @@ def create_app(
         if member is None or member["status"] != "active":
             raise HTTPException(status_code=403, detail="This member no longer has access.")
         return member
+
+    def require_member_of(conn: Any, member_id: str, project_id: str) -> None:
+        try:
+            require_project_member(conn, member_id, project_id)
+        except PermissionDenied:
+            raise HTTPException(status_code=403, detail="You are not a member of that project.") from None
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -95,15 +121,31 @@ def create_app(
         return {"member": member, "projects": projects}
 
     @app.post("/diagnose", status_code=202)
-    def start_diagnosis(request: DiagnoseIn, background: BackgroundTasks) -> dict[str, Any]:
+    def start_diagnosis(
+        request: DiagnoseIn, background: BackgroundTasks, member: dict[str, Any] = Depends(current_member)
+    ) -> dict[str, Any]:
+        with closing(db.shared()) as conn:
+            require_member_of(conn, member["id"], request.project_id)
+            project_name = conn.execute("SELECT name FROM projects WHERE id = ?", (request.project_id,)).fetchone()[0]
+            agent = conn.execute(
+                "SELECT creao_env_prefix FROM agents WHERE member_id = ? AND status = 'active'", (member["id"],)
+            ).fetchone()
+        if agent is None:
+            raise HTTPException(status_code=403, detail="You have no active personal agent.")
         try:
             prepared = prepare_diagnosis(
-                request.project, request.symptom, request.focus_areas, [e.model_dump() for e in request.evidence]
+                project_name, request.symptom, request.focus_areas, request.analysis_depth,
+                [e.model_dump() for e in request.evidence],
             )
         except EvidenceRejected as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from None
-        job = store.create()
-        background.add_task(run_job, store, job.job_id, factory, prepared)
+
+        job = store.create(member["id"], request.project_id)
+        prefix = agent["creao_env_prefix"]
+        background.add_task(
+            run_job, store, job.job_id, lambda: factory(prefix), prepared,
+            lambda diagnosis: record_diagnosis(db, member["id"], request.project_id, prepared.symptom, diagnosis),
+        )
         return {
             "job_id": job.job_id,
             "status": job.status,
@@ -112,11 +154,48 @@ def create_app(
         }
 
     @app.get("/diagnose/{job_id}")
-    def get_diagnosis(job_id: str) -> dict[str, Any]:
+    def get_diagnosis(job_id: str, member: dict[str, Any] = Depends(current_member)) -> dict[str, Any]:
         job = store.get(job_id)
-        if job is None:
+        if job is None or job["member_id"] != member["id"]:  # other members' jobs look like they don't exist
             raise HTTPException(status_code=404, detail="No diagnosis job with that ID.")
         return job
+
+    @app.get("/drafts")
+    def my_drafts(member: dict[str, Any] = Depends(current_member)) -> list[dict[str, Any]]:
+        """Your pending drafts. Only you can see them."""
+        return PrivateMemory(db, member["id"]).drafts()
+
+    @app.post("/drafts/{draft_id}/approve")
+    def approve(draft_id: str, edits: ApproveIn, member: dict[str, Any] = Depends(current_member)) -> dict[str, Any]:
+        try:
+            return approve_draft(db, member["id"], draft_id, edits.model_dump())
+        except DraftNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+        except DraftAlreadyDecided as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        except InvalidDraft as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        except PermissionDenied:
+            raise HTTPException(status_code=403, detail="You are no longer a member of that project.") from None
+
+    @app.post("/drafts/{draft_id}/reject")
+    def reject(draft_id: str, member: dict[str, Any] = Depends(current_member)) -> dict[str, str]:
+        try:
+            reject_draft(db, member["id"], draft_id)
+        except DraftNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+        except DraftAlreadyDecided as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        except PermissionDenied:
+            raise HTTPException(status_code=403, detail="You are no longer a member of that project.") from None
+        return {"status": "rejected", "detail": "The draft stays private; nothing was shared."}
+
+    @app.get("/projects/{project_id}/findings")
+    def project_findings(project_id: str, member: dict[str, Any] = Depends(current_member)) -> list[dict[str, Any]]:
+        """Approved findings in one project of the Super Brain."""
+        with closing(db.shared()) as conn:
+            require_member_of(conn, member["id"], project_id)
+            return list_project_findings(conn, project_id)
 
     return app
 
