@@ -16,6 +16,7 @@ from backend.workspaces.store import is_project_member, projects_for_member
 EXPECTED_DEMO_COUNTS = {
     "workspaces": 1, "members": 4, "projects": 2, "project_members": 6, "agents": 3,
     "approvals": 0, "shared_findings": 0, "finding_links": 0, "handoff_events": 0, "handoff_records": 0,
+    "simulation_runs": 0, "run_points": 0, "run_alerts": 0,
 }
 MARKER = "PRIVATE-MARKER-7f3c: suspect ghost-cell sign error in my branch"
 

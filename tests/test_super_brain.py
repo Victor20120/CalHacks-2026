@@ -136,6 +136,21 @@ def test_search_needs_sign_in_and_a_real_query(lab):
     assert lab.search("researcher_b", "x").status_code == 422
 
 
+def test_findings_list_covers_every_project_you_belong_to_newest_first(lab):
+    heat = lab.publish("researcher_a", "heat-diffusion", HEAT_TITLE, HEAT_SUMMARY)
+    wave = lab.publish("researcher_a", "wave-propagation", WAVE_TITLE, WAVE_SUMMARY)
+
+    def listed(member, **params):
+        response = lab.client.get("/superbrain/findings", params=params, headers=lab.headers(member))
+        return response.status_code, [f["id"] for f in response.json()] if response.status_code == 200 else None
+
+    assert listed("leader") == (200, [wave["id"], heat["id"]])
+    assert listed("leader", project_id="heat-diffusion") == (200, [heat["id"]])
+    assert listed("researcher_b") == (200, [heat["id"]])  # never the wave project
+    assert listed("researcher_b", project_id="wave-propagation")[0] == 403
+    assert lab.client.get("/superbrain/findings").status_code == 401
+
+
 def test_query_terms_keep_numbers_and_short_symbols():
     assert {"dt", "0.03", "cfl", "inf"} <= _terms("The dt = 0.03 run hits the CFL limit and reaches inf.")
     assert "the" not in _terms("the and of")

@@ -3,7 +3,7 @@ project as a whole without the whole repo ever leaving the computer.
 
 The map holds:
 - the folder tree (file names and sizes; big folders are summarized by file type);
-- the start of the key files: the README, dependency and build files, configs,
+- the start of the key files: the README and other guides, dependency and build files, configs,
   an outline of the main scripts (opening lines plus function and class names)
   and the headings of notebooks.
 Sensitive and binary files are never included, secrets are blanked, and the
@@ -28,7 +28,7 @@ MAX_MAP_EXCERPT_CHARS = 1_800
 MAX_MAP_CHARS = 24_000  # tree + excerpts
 MAX_LISTED_PATHS = 2_000  # file list kept for checking the agent's answer; never sent to CREAO
 MAX_CONFIG_BYTES = 200_000
-DIR_LISTING_LIMIT = 8  # more files than this in one folder are summarized by type
+DIR_LISTING_LIMIT = 40  # more files than this in one folder are summarized by type
 TREE_DEPTH = 4
 
 README = re.compile(r"^readme(\.\w+)?$", re.IGNORECASE)
@@ -45,6 +45,10 @@ ENTRY_WORDS = {"main", "run", "app", "cli", "sim", "model", "driver", "solver", 
                "simulation", "experiment", "pipeline"}
 CONFIG_WORDS = {"config", "configs", "params", "parameters", "settings", "input", "inputs", "case", "setup"}
 TEST_FOLDERS = {"test", "tests", "testing", "fixtures", "__tests__"}
+# Notes and guides other than a README (many research projects have no README).
+DOC_SUFFIXES = {".md", ".txt", ".rst"}
+DOC_WORDS = {"readme", "howto", "how", "run", "running", "guide", "handoff", "overview", "notes", "usage",
+             "install", "start", "quickstart", "getting", "instructions", "doc", "docs"}
 FORTRAN = {".f", ".f90", ".f95", ".f03", ".f08"}
 C_LIKE = {".c", ".cc", ".cpp", ".cxx", ".h", ".hpp", ".cu", ".java", ".go", ".rs", ".js", ".ts"}
 SIGNATURES = {
@@ -56,7 +60,7 @@ SIGNATURES = {
 }
 FORTRAN_SIGNATURE = re.compile(r"^\s*(program|module|subroutine|contains|(\w+(\(\w+\))?\s+)*function)\b", re.I)
 C_SIGNATURE = re.compile(r"^(class|struct|namespace|fn|pub\s+fn|func|function|export|def)\b|^[A-Za-z_][\w:<>,*&\s]*\([^;]*\)\s*(const\s*)?\{?\s*$")
-HEAD_LINES = {"readme": 60, "dependencies": 40, "config": 40}
+HEAD_LINES = {"readme": 60, "docs": 50, "dependencies": 40, "config": 40}
 OUTLINE_HEAD_LINES = 12
 OUTLINE_SIGNATURES = 40
 
@@ -64,7 +68,7 @@ OUTLINE_SIGNATURES = 40
 @dataclass
 class MapItem:
     path: str
-    kind: str  # "readme", "dependencies", "config", "code outline" or "notebook outline"
+    kind: str  # "readme", "docs", "dependencies", "config", "code outline" or "notebook outline"
     excerpt: str
     truncated: bool
 
@@ -152,14 +156,19 @@ def _key_files(entries: list[tuple[str, int]]) -> list[tuple[str, str]]:
     chosen: list[tuple[str, str]] = []
     readmes = sorted((p for p in main_paths if README.match(name(p)) and depth(p) <= 1), key=depth)
     chosen += [(p, "readme") for p in readmes[:3]]
+    docs = [p for p in main_paths if PurePosixPath(p).suffix.lower() in DOC_SUFFIXES and depth(p) <= 1
+            and not README.match(name(p)) and name(p) not in DEPENDENCY_FILES]
+    docs.sort(key=lambda p: (depth(p), not words(p) & DOC_WORDS, p))  # top-level guides first
+    chosen += [(p, "docs") for p in docs[:4]]
     chosen += [(p, "dependencies") for p in main_paths if name(p) in DEPENDENCY_FILES and depth(p) <= 1][:4]
     configs = [p for p in main_paths if file_kind(p) == "config" and depth(p) <= 2 and name(p) not in NOT_CONFIG
                and name(p) not in DEPENDENCY_FILES and sizes[p] <= MAX_CONFIG_BYTES]
     configs.sort(key=lambda p: (not words(p) & CONFIG_WORDS, depth(p), p))
     chosen += [(p, "config") for p in configs[:4]]
     code = [p for p in main_paths if PurePosixPath(p).suffix.lower() in CODE_SUFFIXES and depth(p) <= 2]
-    code.sort(key=lambda p: (not words(p) & ENTRY_WORDS, depth(p), p))
-    chosen += [(p, "code outline") for p in code[:6]]
+    # Main scripts first, then parameter files, then the rest; as many as the size limit allows.
+    code.sort(key=lambda p: (not words(p) & ENTRY_WORDS, not words(p) & CONFIG_WORDS, depth(p), p))
+    chosen += [(p, "code outline") for p in code[:10]]
     notebooks = sorted((p for p in main_paths if p.lower().endswith(".ipynb") and depth(p) <= 2), key=depth)
     chosen += [(p, "notebook outline") for p in notebooks[:2]]
     return chosen

@@ -1,5 +1,6 @@
 from .client import (
     AgentConfig,
+    ChatSettings,
     CreaoClient,
     CreaoConfigError,
     CreaoError,
@@ -8,6 +9,8 @@ from .client import (
     CreaoRunFailed,
     CreaoTimeout,
     RunResult,
+    chat_agent,
+    chat_settings,
     hub_agent,
     parse_run,
     personal_agent,
@@ -15,6 +18,7 @@ from .client import (
 
 __all__ = [
     "AgentConfig",
+    "ChatSettings",
     "CreaoClient",
     "CreaoConfigError",
     "CreaoError",
@@ -23,6 +27,8 @@ __all__ = [
     "CreaoRunFailed",
     "CreaoTimeout",
     "RunResult",
+    "chat_agent",
+    "chat_settings",
     "hub_agent",
     "parse_run",
     "personal_agent",

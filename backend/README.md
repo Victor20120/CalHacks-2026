@@ -72,6 +72,7 @@ It listens on this computer only (`127.0.0.1`), because sign-in is only a protot
 | `POST /drafts/{draft_id}/approve` | Publish a draft as a shared finding. Optional edits: `title`, `summary`, `category`, `verification_status` |
 | `POST /drafts/{draft_id}/reject` | Keep a draft private for good. Nothing is written to the shared database |
 | `GET /projects/{project_id}/findings` | Approved findings in a project you belong to |
+| `GET /superbrain/findings` | Approved findings across every project you belong to, newest first, with who shared each one. Optional `project_id` narrows it |
 | `GET /superbrain/search?q=...` | "Ask Super Brain": approved findings in your projects, ranked by shared words. Optional `project_id` narrows it |
 | `GET /findings/{finding_id}` | One finding and its links, leaving out links to findings you can't read. Findings in projects you can't read return `404` |
 | `POST /alerts` | From your local watcher. Body: `project_id` (one of your projects), `run_label`, `alerts` (list of `severity`, `check`, `message`, `metric`, `line_number`, `line`). Kept in memory for this session only |
@@ -88,8 +89,46 @@ It listens on this computer only (`127.0.0.1`), because sign-in is only a protot
 | `GET /projects/{project_id}/overview` | Your saved overview of that project (purpose, structure, how to run, key parameters, open questions). Only you can see it |
 | `POST /projects` | Body: `id`, `name`, `description`, `member_ids`. Create a project in your group (leader only; the leader is always a member) |
 | `GET /jobs/{job_id}` | Any of your jobs (diagnosis or overview); same as `GET /diagnose/{job_id}` |
+| `POST /simulation-runs` | Body: `project_id`, `run_label`. Put a run you started watching on the dashboard (sent by your local connector). Returns `201` |
+| `POST /simulation-runs/{run_id}/report` | Body: `points` (list of `step` and `values`, a metric name to a number, or `null` for NaN/Inf), `alerts`, `stopped`. Only the researcher watching the run can report |
+| `GET /simulation-runs` | Runs you may see, newest first (optional `project_id`): your own, and for the group leader every run in their projects. Each has who, when, the last step, alert counts and its metric names |
+| `GET /simulation-runs/{run_id}` | One run with its numbers per metric (for graphs) and its alerts. Runs you can't see return `404` |
+| `GET /simulation-runs/alerts` | The newest alerts from runs you may see (optional `limit`, up to 100) |
 
 Session alerts are never written to a database, so they disappear when the backend restarts. With alert history turned on, alerts are also saved in your private memory file, never in the shared database.
+
+A watched run is kept in the shared database (`simulation_runs`, `run_points`, `run_alerts`): the numbers the connector read from each step and the run's alerts, never the log file. Only the researcher and the group leader (if they are a member of the run's project) can see it; other researchers never do. A run keeps up to 6 metrics; past 1,000 points per metric every other point is dropped, keeping the last one and every NaN/Inf point.
+
+### Central CREAO hub conversation
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /superbrain/chat` | Body: `project_id`, `message` (up to 4,000 characters), `scope` (`project` or `all`). Starts a CREAO response on the dedicated chat agent, or on the hub until it is set up, and returns `202` with `job_id`, selected `prior_findings`, `knowledge_stats`, `agent_slot` (`CHAT` or `HUB`), and any updated `instructions`. Poll `GET /jobs/{job_id}` for `diagnosis.reply` |
+| `POST /agent/chat` | Compatibility alias for the same central-hub conversation |
+| `GET /projects/{project_id}/chat?scope=project` | Your last 12 completed exchanges for this knowledge scope and a matching `pending_job_id` |
+| `DELETE /projects/{project_id}/chat?scope=project` | Clear this local conversation; refuses while a reply runs. Keeps rules and does not reset provider memory |
+| `GET /projects/{project_id}/agent-rules` | Your saved `instructions` and `default_instructions` |
+| `PUT /projects/{project_id}/agent-rules` | Body: `instructions` (up to 2,000 characters). Blank restores defaults. Applied to subsequent chat, diagnosis, and overview requests |
+
+**Knowledge flow:** personal CREAO agent A/B diagnosis → private draft → researcher approval → shared `shared_findings` record → retrieval for the current question → `CREAO_CHAT` (or `CREAO_HUB`) request → synthesized answer. There is no second provider ingestion call at approval time: the shared database is the durable knowledge store, and the hub receives the retrieved specialized records when answering. New approved contributions are available on the next question.
+
+All chat replies use `hub_agent()`, regardless of who asks. Personal diagnoses and overviews still use the researcher's personal agent. The hub receives the user's current message, saved response rules, bounded recent conversation, and structured specialized knowledge. Each selected record retains its full published summary (up to 4,000 characters), author, project, verification label, and source agent run. At most eight records enter a 40,000-character context, and recent conversation stays under 4,500 characters. The prompt permits general scientific knowledge and reasoning, while requiring project-specific claims to come from retrieved records. No private project overview is sent to the shared hub.
+
+Greetings, empty retrieval, and preference changes also go to CREAO; there is no local-answer or lookup branch. Natural standalone style directives are saved before starting the request. `/rules <text>` replaces preferences, `/rules show` asks the hub to explain them, and `/rules reset` restores defaults. The hub is told which preference action the application completed, so acknowledgments reflect saved state.
+
+Chat polls CREAO every second; the browser polls the local job every 750 ms. `elapsed_ms`, `provider_ms`, and `prompt_chars` expose latency. Selected sources are shown while the provider works. This reduces delivery overhead without replacing CREAO's reasoning.
+
+Retrieval and local history/job reads check current project membership. All-project scope uses only the viewer's projects; older combined answers are hidden if relevant access is removed. These checks govern application-supplied records. The configured shared CREAO hub may retain provider-side memory across runs; strict isolation of that memory requires provider configuration or separate hubs and is not guaranteed by prompt instructions. Rules and conversation history are persisted in the user's private settings table; no schema reset is needed. Chat never creates a sharing draft. One hub chat run per user/project at a time; duplicates return `409`.
+
+### Chat agent, model and latency
+
+Chat speed is set by CREAO's run, not by the app: the app prepares a question in about 50 ms and checks for the answer every second. Measured on real runs, the hub spent 21 s on "hello" and 35 to 46 s on questions, because it runs its full audit workflow (skills, tools) on every message. A faster model alone did not help (54 to 60 s), so chat now:
+
+- runs on the dedicated chat agent when `CREAO_CHAT_APP_ID` and `CREAO_CHAT_KEY` are set: a CREAO agent with only `question` and `context` inputs and no tools ([setup](../Documents/super-brain-chat-agent.md)). It uses an ordinary `capi_` app key. Until then, the hub;
+- asks the hub for a direct answer from the supplied context, without an audit, tools or skills;
+- sends `chatModelId` from `CREAO_CHAT_MODEL_ID` (empty: `gemini-3-flash`; `saved`: the agent's own model).
+
+Diagnoses and project overviews still use each researcher's own agent with its saved model and workflow. The [speed benchmark](../Documents/benchmarks/hub-chat-speed-2026-10-24.md) records the earlier comparison of these settings.
 
 ### Offboarding
 

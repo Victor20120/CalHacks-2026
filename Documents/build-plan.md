@@ -25,7 +25,7 @@
 | 5 | Scoped lookup for Researcher B | `backend/memory/`, `backend/auth/` | Done |
 | 6 | Dashboard and local anomaly checks | `frontend/`, `local_connector/simulation_monitor/`, `backend/monitoring/` | Done |
 | 7 | Optional: alert history and handoff | `backend/memory/`, `backend/knowledge_sharing/` | Done |
-| 8 | Project overview | `local_connector/evidence/`, `backend/orchestration/overview.py` | Built; real-project test pending |
+| 8 | Project overview | `local_connector/evidence/`, `backend/orchestration/overview.py` | Done |
 
 ---
 
@@ -192,7 +192,7 @@
 **Checkpoint 8**
 - [x] Automated: the map covers the project but never includes sensitive, binary, tool or test files; it stays within its size limit (`tests/test_project_overview.py`)
 - [x] Automated: unsafe or oversized maps are refused by the backend; the overview is private; later diagnoses include it
-- [ ] Manual: build an overview of a real research project **(uses credits)**, and check whether the personal agent (an audit agent) explains the project or only audits it
+- [x] Manual: build an overview of a real research project **(uses credits)**, and check whether the personal agent (an audit agent) explains the project or only audits it — passed 2026-10-24, run `416d9fb0` on a Fortran flagellum-hydrodynamics code (40 files, about 19,400 characters sent after a manual check for personal details): accurate purpose, 37-entry structure, key parameters and 10 sharp open questions. The audit agent explains well, so no separate agent is needed. It led to three fixes: other guides besides a README are picked (that project has none), small folders are listed in full, and the project's own folder counts as part of the project
 
 ---
 

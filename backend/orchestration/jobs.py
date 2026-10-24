@@ -1,4 +1,4 @@
-"""Agent jobs (diagnoses and project overviews). A CREAO run takes about a
+"""Agent jobs (diagnoses, project overviews, and chat). A CREAO run takes about a
 minute, so the API starts a job and the caller polls it. Prototype: jobs live
 in memory and are lost when the backend restarts; results are saved to the
 researcher's private memory when they finish."""
@@ -23,12 +23,13 @@ class Job:
     project_id: str
     status: str  # "running", "completed" or "failed"
     created_at: str
-    kind: str = "diagnosis"  # or "overview"
+    kind: str = "diagnosis"  # or "overview" or "chat"
     prior_findings: list[dict[str, Any]] = field(default_factory=list)  # Super Brain findings given as context
     diagnosis: dict[str, Any] | None = None  # the result (also for overviews)
     draft_id: str | None = None  # the private draft proposed for sharing, if any
     error: dict[str, Any] | None = None
     warning: str | None = None
+    scope: str = "project"
 
 
 class JobStore:
@@ -37,10 +38,10 @@ class JobStore:
         self._lock = threading.Lock()
 
     def create(self, member_id: str, project_id: str, prior_findings: list[dict[str, Any]] | None = None,
-               kind: str = "diagnosis") -> Job:
+               kind: str = "diagnosis", scope: str = "project") -> Job:
         job = Job(job_id=str(uuid.uuid4()), member_id=member_id, project_id=project_id, status="running",
                   created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"), kind=kind,
-                  prior_findings=list(prior_findings or []))
+                  prior_findings=list(prior_findings or []), scope=scope)
         with self._lock:
             self._jobs[job.job_id] = job
         return job
@@ -49,6 +50,12 @@ class JobStore:
         with self._lock:
             job = self._jobs.get(job_id)
             return asdict(job) if job else None
+
+    def running_chat(self, member_id: str, project_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            return next((asdict(j) for j in self._jobs.values()
+                         if j.member_id == member_id and j.project_id == project_id
+                         and j.kind == "chat" and j.status == "running"), None)
 
     def finish(self, job_id: str, result: dict[str, Any], draft_id: str | None, warning: str | None = None) -> None:
         with self._lock:

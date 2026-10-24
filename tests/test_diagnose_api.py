@@ -133,7 +133,8 @@ def test_creao_gets_personal_agent_inputs_and_no_local_paths(api):
     inputs = api.fake.calls[0]
     assert set(inputs) == {"project_path", "observed_symptom", "focus_areas", "analysis_depth"}
     assert inputs["project_path"].startswith("Heat diffusion solver (local files are not attached")
-    assert inputs["observed_symptom"].startswith("max|T| reaches inf at step 2223")
+    assert inputs["observed_symptom"].startswith("Response guidelines selected by this user:")
+    assert "max|T| reaches inf at step 2223" in inputs["observed_symptom"]
     assert "--- run.log (log, partial) ---" in inputs["observed_symptom"]
     assert inputs["focus_areas"] == "numerical"
     assert inputs["analysis_depth"] == "standard"

@@ -23,6 +23,7 @@ _PAIR = re.compile(rf"([A-Za-z_][\w|\[\]]*)\s*[=:]\s*({_NUMBER})(?![\w.])", re.I
 _NON_FINITE_WORD = re.compile(r"(?<![\w.])[-+]?(nan|inf|infinity)(?![\w.])", re.IGNORECASE)
 _ERROR_LINE = re.compile(r"\b(error|traceback|segmentation fault|exception|fatal)\b", re.IGNORECASE)
 _STEP = re.compile(r"\b(?:step|iter(?:ation)?|it)\s*[=:]?\s*(\d+)", re.IGNORECASE)
+_STEP_NAMES = {"step", "steps", "iter", "iteration", "it", "timestep"}  # counters, not metrics to plot
 MAX_LINE_CHARS = 300
 
 
@@ -34,6 +35,18 @@ class Alert:
     metric: str | None = None
     line_number: int | None = None
     line: str = ""  # the log line that triggered it, secrets blanked out
+    step: int | None = None  # the step the log line reports, if any
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass
+class Sample:
+    """The numbers one log line reports for one step, for graphs. None means NaN or Inf."""
+
+    step: int
+    values: dict[str, float | None]
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -62,12 +75,14 @@ class LogMonitor:
         self._rises: dict[str, int] = {}
         self._fired: set[tuple[str, str]] = set()
         self._stalled = False
+        self._step: int | None = None
 
     def feed(self, line: str, line_number: int) -> list[Alert]:
         self._stalled = False
         text = line.rstrip("\r\n")
         alerts: list[Alert] = []
         where = _where(text, line_number)
+        self._step = _step_of(text)
 
         pairs = [(name, _to_float(value)) for name, value in _PAIR.findall(text)]
         named_non_finite = False
@@ -120,7 +135,21 @@ class LogMonitor:
             return
         self._fired.add(key)
         shown, _ = redact_secrets(line[:MAX_LINE_CHARS])
-        alerts.append(Alert(severity, check, message, metric, line_number, shown))
+        alerts.append(Alert(severity, check, message, metric, line_number, shown, self._step))
+
+
+def sample_of(line: str) -> Sample | None:
+    """The step and named numbers on a log line such as "step 200  max|T| = 2.75e+14  residual = 4.7e+14".
+    Lines without a step number (headers, errors) give None."""
+    step = _step_of(line)
+    if step is None:
+        return None
+    values: dict[str, float | None] = {}
+    for name, value in _PAIR.findall(line):
+        if name.lower() not in _STEP_NAMES:
+            number = _to_float(value)
+            values[name] = number if math.isfinite(number) else None
+    return Sample(step, values) if values else None
 
 
 def scan_lines(lines: list[str], config: MonitorConfig | None = None) -> list[Alert]:
@@ -142,6 +171,11 @@ def _to_float(value: str) -> float:
 def _is_residual(name: str, residual_names: tuple[str, ...]) -> bool:
     """Whole words only: "residual" and "res_norm" count, "resolution" doesn't."""
     return any(part in residual_names for part in re.split(r"[^a-z]+", name.lower()))
+
+
+def _step_of(text: str) -> int | None:
+    step = _STEP.search(text)
+    return int(step.group(1)) if step else None
 
 
 def _where(text: str, line_number: int) -> str:

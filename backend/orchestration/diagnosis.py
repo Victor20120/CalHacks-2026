@@ -50,6 +50,7 @@ class PreparedDiagnosis:
     known_context: str = ""  # earlier Super Brain findings, as sent to the agent
     context_finding_ids: list[str] = field(default_factory=list)
     project_context: str = ""  # from the researcher's saved project overview
+    agent_rules: str = ""
 
     def creao_inputs(self) -> dict[str, str]:
         """Inputs for a personal agent. Only the project name is sent, never a local path."""
@@ -73,6 +74,9 @@ class PreparedDiagnosis:
         }
         if self.known_context:
             inputs["known_context"] = self.known_context
+        if self.agent_rules:
+            from backend.orchestration.chat import with_agent_rules
+            inputs = with_agent_rules(inputs, self.agent_rules)
         return inputs
 
 

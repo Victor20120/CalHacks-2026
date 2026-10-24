@@ -59,7 +59,7 @@ def research_project(tmp_path):
         (root / rel).write_text(text, encoding="utf-8")
     (root / "results.bin").write_bytes(b"\x00\x01binary")
     (root / "data").mkdir()
-    for i in range(30):
+    for i in range(50):
         (root / "data" / f"run_{i:03d}.csv").write_text("t,maxT\n0,400\n")
     return root
 
@@ -75,8 +75,9 @@ def registry(tmp_path):
 def test_the_map_covers_the_project_but_never_sensitive_files(registry, research_project):
     m = build_project_map(registry, registry.grant(research_project))
 
-    assert "README.md" in m.tree and "solver.py" in m.tree and "data/  (30 files)" in m.tree
-    assert "30 files: .csv x30" in m.tree  # big folders are summarized, not listed
+    assert "README.md" in m.tree and "solver.py" in m.tree and "data/  (50 files)" in m.tree
+    assert "50 files: .csv x50" in m.tree  # big folders are summarized, not listed
+    assert "run_000.csv" in m.tree and "run_049.csv" not in m.tree
     for never in (".env", "id_rsa", ".git", "venv", "results.bin", "site.py"):
         assert never not in m.tree
         assert all(never not in f for f in m.files)
@@ -154,7 +155,8 @@ def test_the_connector_service_serves_the_map_for_granted_folders_only(registry,
 OVERVIEW = {
     "purpose": "Solve the 2D heat equation with an explicit scheme.",
     "structure": [{"path": "src/solver.py", "role": "Time stepping"}, {"path": "data", "role": "Run outputs"},
-                  {"path": "src/imaginary.py", "role": "Something the agent made up"}],
+                  {"path": "src/imaginary.py", "role": "Something the agent made up"},
+                  {"path": "diffusion_study/", "role": "The project folder itself"}],
     "how_to_run": "python src/solver.py config/params.yaml",
     "key_parameters": [{"name": "dt", "value": "0.02", "meaning": "time step"}],
     "open_questions": ["Which boundary condition is intended?"],
@@ -228,7 +230,7 @@ def test_paths_the_agent_invented_are_marked(lab, payload):
     lab.send_overview(payload)
 
     flags = {s["path"]: s["in_project"] for s in lab.saved().json()["overview"]["structure"]}
-    assert flags == {"src/solver.py": True, "data": True, "src/imaginary.py": False}
+    assert flags == {"src/solver.py": True, "data": True, "src/imaginary.py": False, "diffusion_study/": True}
 
 
 def test_creao_gets_the_map_and_the_overview_request(lab, payload):

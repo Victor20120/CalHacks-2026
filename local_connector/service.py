@@ -24,13 +24,16 @@ from local_connector.evidence.extract import extract_evidence, file_kind
 from local_connector.evidence.project_map import build_project_map
 from local_connector.file_access.grants import AccessDenied, Grant, GrantRegistry
 from local_connector.file_access.walk import iter_project_files
-from local_connector.simulation_monitor.checks import Alert
+from local_connector.simulation_monitor.checks import Alert, Sample
 from local_connector.simulation_monitor.watcher import LogWatcher
 
 log = logging.getLogger(__name__)
 
 DEFAULT_BACKEND = "http://127.0.0.1:8000"
 MAX_LISTED_FILES = 500
+MAX_REPORT_POINTS = 2_000  # per request to the backend
+MAX_REPORT_ALERTS = 50
+MAX_PENDING_POINTS = 5_000  # waiting while the backend can't be reached; the oldest go first
 
 
 class RootIn(BaseModel):
@@ -50,30 +53,77 @@ class WatchIn(BaseModel):
 
 
 class BackendPoster:
-    """Sends a watcher's alerts to the backend as the researcher (prototype sign-in).
-    If the backend can't be reached, the alerts stay visible in the watch status."""
+    """Sends a watched run to the backend as the researcher (prototype sign-in), so it
+    shows live on the dashboard and can be opened again later: the numbers read from
+    each step of the log (for graphs) and the alerts, never the log file itself.
+    What couldn't be delivered waits for the next try; undelivered alerts are counted
+    in the watch status."""
 
     def __init__(self, backend_url: str, member_id: str, project_id: str, run_label: str, http: Any):
         self.backend_url, self.member_id, self.project_id, self.run_label = backend_url, member_id, project_id, run_label
         self.http = http
+        self.run_id: str | None = None  # the run on the dashboard, once the backend has it
         self.undelivered = 0
         self._token: str | None = None
+        self._points: list[dict] = []
+        self._alerts: list[dict] = []
 
     def __call__(self, alerts: list[Alert]) -> None:
         body = {"project_id": self.project_id, "run_label": self.run_label, "alerts": [a.to_dict() for a in alerts]}
         try:
-            if self._token is None:
-                signed_in = self.http.post(f"{self.backend_url}/sign-in", json={"member_id": self.member_id}, timeout=10)
-                signed_in.raise_for_status()
-                self._token = signed_in.json()["token"]
-            sent = self.http.post(f"{self.backend_url}/alerts", json=body, timeout=10,
-                                  headers={"Authorization": f"Bearer {self._token}"})
-            if sent.status_code == 401:  # the backend restarted; sign in again next time
-                self._token = None
-            sent.raise_for_status()
+            self._post("/alerts", body)
         except Exception:
             self.undelivered += len(alerts)
             log.warning("Could not send %d alert(s) to the backend", len(alerts))
+        self._alerts = (self._alerts + [a.to_dict() for a in alerts])[-MAX_REPORT_ALERTS * 4:]
+        self._report()
+
+    def start(self) -> None:
+        """Put the run on the dashboard right away, before the log has any numbers."""
+        self._report()
+
+    def samples(self, samples: list[Sample]) -> None:
+        """Step numbers from the watcher."""
+        self._points = (self._points + [s.to_dict() for s in samples])[-MAX_PENDING_POINTS:]
+        self._report()
+
+    def stopped(self) -> None:
+        """Marks the run as no longer watched (the simulation itself is never touched)."""
+        self._report(stopped=True)
+
+    def new_run(self) -> None:
+        """The log was replaced by a new run: close this run; the next numbers start another."""
+        if self.run_id:
+            self._report(stopped=True)
+            self.run_id, self._points, self._alerts = None, [], []
+
+    def _report(self, stopped: bool = False) -> None:
+        try:
+            if self.run_id is None:
+                run = self._post("/simulation-runs", {"project_id": self.project_id, "run_label": self.run_label})
+                self.run_id = run["id"]
+            while True:
+                points, alerts = self._points[:MAX_REPORT_POINTS], self._alerts[:MAX_REPORT_ALERTS]
+                last = len(points) == len(self._points) and len(alerts) == len(self._alerts)
+                self._post(f"/simulation-runs/{self.run_id}/report",
+                           {"points": points, "alerts": alerts, "stopped": stopped and last})
+                del self._points[: len(points)], self._alerts[: len(alerts)]
+                if last:
+                    return
+        except Exception:
+            log.warning("Could not send the run's numbers to the backend; will try again")
+
+    def _post(self, path: str, body: dict) -> Any:
+        if self._token is None:
+            signed_in = self.http.post(f"{self.backend_url}/sign-in", json={"member_id": self.member_id}, timeout=10)
+            signed_in.raise_for_status()
+            self._token = signed_in.json()["token"]
+        sent = self.http.post(f"{self.backend_url}{path}", json=body, timeout=10,
+                              headers={"Authorization": f"Bearer {self._token}"})
+        if sent.status_code == 401:  # the backend restarted; sign in again next time
+            self._token = None
+        sent.raise_for_status()
+        return sent.json()
 
 
 def list_files(grant: Grant) -> tuple[list[dict], bool]:
@@ -152,6 +202,8 @@ def create_service(
             raise HTTPException(status_code=403, detail=str(exc)) from None
         poster = BackendPoster(backend, body.member_id, body.project_id, relative, http)
         watcher = watcher_factory(resolved, poster)
+        watcher.on_samples, watcher.on_restart = poster.samples, poster.new_run
+        poster.start()
         watch_id = str(uuid.uuid4())
         with lock:
             watches[watch_id] = {"watcher": watcher, "poster": poster, "root": str(g.root), "file": relative,
@@ -172,6 +224,7 @@ def create_service(
         if w is None:
             raise HTTPException(status_code=404, detail="No watch with that ID.")
         w["watcher"].stop()
+        w["poster"].stopped()
         return {"status": "stopped", "detail": "Stopped watching. The simulation was not touched."}
 
     return app
@@ -179,5 +232,6 @@ def create_service(
 
 def _status(watch_id: str, w: dict) -> dict:
     return {"root": w["root"], "project_id": w["project_id"], "member_id": w["member_id"],
-            **w["watcher"].status(), "file": w["file"], "undelivered": w["poster"].undelivered}
+            **w["watcher"].status(), "file": w["file"], "undelivered": w["poster"].undelivered,
+            "run_id": w["poster"].run_id}
 

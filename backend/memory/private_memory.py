@@ -152,6 +152,50 @@ class PrivateMemory:
 
     # --- Settings and alert history (history stays off unless the researcher turns it on) ---
 
+    def agent_rules(self, project_id: str) -> str:
+        from backend.orchestration.chat import DEFAULT_AGENT_RULES
+        return self._project_setting(project_id, "agent_rules", DEFAULT_AGENT_RULES)
+
+    def set_agent_rules(self, project_id: str, rules: str) -> None:
+        self._set_project_setting(project_id, "agent_rules", rules)
+
+    def chat_history(self, project_id: str, scope: str = "project") -> list[dict]:
+        name = "agent_chat" if scope == "project" else "agent_chat_all"
+        return json.loads(self._project_setting(project_id, name, "[]"))
+
+    def save_chat_exchange(self, project_id: str, question: str, result: dict, scope: str = "project") -> dict:
+        from backend.orchestration.chat import MAX_CHAT_EXCHANGES
+        self._check(project_id)
+        with closing(self.db.private(self.member_id)) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            name = "agent_chat" if scope == "project" else "agent_chat_all"
+            key = f"{name}:{project_id}"
+            row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+            history = json.loads(row["value"]) if row else []
+            exchange = {"id": str(uuid.uuid4()), "question": question, **result, "created_at": _now()}
+            history.append(exchange)
+            conn.execute("INSERT INTO settings (key, value) VALUES (?, ?) "
+                         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                         (key, json.dumps(history[-MAX_CHAT_EXCHANGES:])))
+            conn.commit()
+        return exchange
+
+    def clear_chat(self, project_id: str, scope: str = "project") -> None:
+        self._set_project_setting(project_id, "agent_chat" if scope == "project" else "agent_chat_all", "[]")
+
+    def _project_setting(self, project_id: str, name: str, default: str) -> str:
+        self._check(project_id)
+        with closing(self.db.private(self.member_id)) as conn:
+            row = conn.execute("SELECT value FROM settings WHERE key = ?", (f"{name}:{project_id}",)).fetchone()
+        return row["value"] if row else default
+
+    def _set_project_setting(self, project_id: str, name: str, value: str) -> None:
+        self._check(project_id)
+        with closing(self.db.private(self.member_id)) as conn:
+            conn.execute("INSERT INTO settings (key, value) VALUES (?, ?) "
+                         "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (f"{name}:{project_id}", value))
+            conn.commit()
+
     def alert_history_enabled(self) -> bool:
         with closing(self.db.private(self.member_id)) as conn:
             row = conn.execute("SELECT value FROM settings WHERE key = 'save_alert_history'").fetchone()

@@ -45,14 +45,14 @@ Desktop-first allows multi-pane layouts, side-by-side evidence and diagnosis, ke
 Dashboard
 ├── Workspace & project picker   (+ demo researcher switcher)
 ├── Diagnosis                    (agent conversation, evidence, proposed fix)
-├── Alerts                       (Informational / Warning / Critical)
+├── Runs                         (watched runs, live and earlier, with graphs and alerts)
 ├── Approvals                    (knowledge contributions, proposed code edits)
-├── Super Brain                  ("Ask Super Brain" search, shared findings)
-├── Settings                     (alert history saving, automatic Super Brain search)
+├── Super Brain                  (shared updates by researcher, "Ask Super Brain" box at the bottom)
+├── Settings                     (automatic Super Brain search)
 └── Offboarding                  (leader only, optional)
 ```
 
-Built so far: researchers get Diagnose, Drafts, Super Brain and Alerts; the group leader (who has no personal agent) gets Super Brain, Alerts and Offboarding. The two settings live where they're used: "Save alert history" in Alerts, and "Give my agent relevant findings from the Super Brain" in Diagnose.
+Built so far: researchers get Project, Diagnose, Drafts, Super Brain and Runs; the group leader (who has no personal agent) gets Super Brain, Runs and Offboarding. Every page works on the project chosen in the top bar. "Give my agent relevant findings from the Super Brain" lives in Diagnose.
 
 > Template for each view: **Purpose · Shows · Actions · Rules**
 
@@ -69,11 +69,12 @@ Built so far: researchers get Diagnose, Drafts, Super Brain and Alerts; the grou
 - Actions: _TODO_
 - Rules: a proposed code edit is never applied without approval.
 
-### 4.3 Alerts
-- Purpose: _TODO_
-- Shows: _TODO_
-- Actions: _TODO_
-- Rules: alerts never pause or stop the simulation. Without alert saving turned on, alerts last only for the session.
+### 4.3 Runs (the nav item formerly called Alerts)
+- Purpose: watch a simulation live, get its alerts, and open earlier runs again.
+- Flow: the researcher runs the simulation on their computer, picks its log here and clicks **Start watching**; the local connector reads the log and sends the numbers from each step and the alerts; the run shows here live.
+- Shows: (researcher only) a "Watch a run" bar: the log (from granted folders, refreshed every few seconds), **Start watching**, and "Add a folder". Then two columns: on the left the runs in this project, **Live** first, then **Earlier runs** (log name, who for the leader, start time, alert counts); on the right the chosen run: name, Live or Stopped, who, start time, current step, last update; up to 3 line charts, one per measure read from the log (e.g. max|T| and residual) on a shared step axis, with a log scale when values span 1,000x or more and Warning and Critical alerts marked at their step (hover shows the value at that step in every chart); then the run's alerts, newest first, and the numbers as a table.
+- Actions: **Stop watching** (a live run watched on this computer); **Replay** (an earlier run: the graphs and alerts play back step by step in about 8 seconds).
+- Rules: ExpandRG only reads the log and never pauses or stops a simulation. The log file never leaves the researcher's computer, only the numbers and alerts. A run is seen by the researcher and the group leader, never by other researchers. The Runs tab shows a count of Critical alerts in runs being watched right now.
 
 ### 4.4 Approvals
 - Purpose: _TODO_
@@ -82,13 +83,12 @@ Built so far: researchers get Diagnose, Drafts, Super Brain and Alerts; the grou
 - Rules: nothing reaches the Super Brain without approval.
 
 ### 4.5 Super Brain
-- Purpose: _TODO_
-- Shows: _TODO_
-- Actions: "Ask Super Brain" search (always available)
-- Rules: results respect project access; hypotheses never look like verified facts.
+- Purpose: one place to see what the group has shared, and to ask it for more detail.
+- Shows, top to bottom, for the project chosen in the top bar: four counts (updates shared, researchers sharing, verified, still hypotheses), a bar chart of updates shared per researcher (hover or focus a bar for the status breakdown, latest date and projects; click it to jump to that researcher), then each researcher's updates, newest first: title, verification tag, the issue (the summary's "Symptom" line), category, project and date.
+- Actions: open an update for the full finding and its links; ask a question in the "Ask Super Brain" box docked at the bottom of the page. Answers stack just above the box, newest at the bottom, from the chosen project.
+- Rules: results respect project access; hypotheses never look like verified facts. The chart uses one colour and square bar ends; every number in it is also written in the researcher sections, so the tooltip is never the only way to read it.
 
 ### 4.6 Settings
-- Save alert history: **off** by default
 - Automatic Super Brain search: **on** by default
 - _TODO_
 
@@ -105,14 +105,15 @@ Built so far: researchers get Diagnose, Drafts, Super Brain and Alerts; the grou
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│  Top bar: workspace · project · researcher · Ask Super Brain     │
-├────────────┬───────────────────────────────────┬─────────────────┤
-│            │                                   │                 │
-│  Left nav  │           Main view               │  Alerts panel   │
-│            │                                   │  (collapsible)  │
-│            │                                   │                 │
-└────────────┴───────────────────────────────────┴─────────────────┘
+│  Top bar: ExpandRG · project picker · member                     │
+├────────────┬─────────────────────────────────────────────────────┤
+│            │                                                     │
+│  Left nav  │                   Main view                         │
+│            │                                                     │
+└────────────┴─────────────────────────────────────────────────────┘
 ```
+
+The shell fills the window: the top bar and left nav stay in place and only the main view scrolls. Alerts live with their run on the Runs page. On the Super Brain, the "Ask Super Brain" box is docked at the bottom of the main view, with answers just above it.
 
 ### 5.2 Breakpoints
 

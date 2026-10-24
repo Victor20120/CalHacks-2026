@@ -1,11 +1,10 @@
 import { useEffect, useState } from "react";
 import { backend, remember } from "./api.js";
-import { SeverityBadge } from "./components.jsx";
-import AlertsView from "./views/AlertsView.jsx";
 import DiagnoseView from "./views/DiagnoseView.jsx";
 import DraftsView from "./views/DraftsView.jsx";
 import ProjectView from "./views/ProjectView.jsx";
 import OffboardingView from "./views/OffboardingView.jsx";
+import RunsView from "./views/RunsView.jsx";
 import SignIn from "./views/SignIn.jsx";
 import SuperBrainView from "./views/SuperBrainView.jsx";
 
@@ -14,7 +13,7 @@ const VIEWS = [
   ["diagnose", "Diagnose"],
   ["drafts", "Drafts"],
   ["superbrain", "Super Brain"],
-  ["alerts", "Alerts"],
+  ["alerts", "Runs"],
   ["offboarding", "Offboarding"],
 ];
 // The group leader has no personal agent; researchers don't manage membership.
@@ -33,10 +32,8 @@ export default function App() {
   const [projects, setProjects] = useState([]);
   const [projectId, setProjectId] = useState(START.get("project") || remember.get("expandrg.project"));
   const [view, setView] = useState(START_VIEW);
-  const [alerts, setAlerts] = useState([]);
+  const [liveCritical, setLiveCritical] = useState(0);
   const [draftCount, setDraftCount] = useState(0);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [panelOpen, setPanelOpen] = useState(true);
 
   async function signIn(memberId) {
     const { token, member } = await backend("/sign-in", { method: "POST", body: { member_id: memberId } });
@@ -50,7 +47,6 @@ export default function App() {
   function signOut() {
     remember.set("expandrg.member", null);
     setSession(null);
-    setAlerts([]);
   }
 
   useEffect(() => {
@@ -60,22 +56,20 @@ export default function App() {
 
   useEffect(() => remember.set("expandrg.project", projectId), [projectId]);
 
-  // Poll this researcher's alerts and pending drafts.
+  // Critical alerts in runs being watched right now (shown on the Runs tab), and pending drafts.
   useEffect(() => {
-    if (!session) return undefined;
+    if (!session || !projectId) return undefined;
     let stopped = false;
     async function poll() {
       try {
-        const [latest, drafts] = await Promise.all([
-          backend("/alerts", { token: session.token }),
-          backend("/drafts", { token: session.token }),
-        ]);
+        const runs = await backend(`/simulation-runs?project_id=${encodeURIComponent(projectId)}`, { token: session.token });
+        const drafts = session.member.role === "leader" ? [] : await backend("/drafts", { token: session.token });
         if (!stopped) {
-          setAlerts(latest);
+          setLiveCritical(runs.filter((r) => r.watching).reduce((sum, r) => sum + r.critical, 0));
           setDraftCount(drafts.length);
         }
       } catch (e) {
-        if (e.status === 401 || e.status === 403) signOut();
+        if (e.status === 401) signOut();
       }
     }
     poll();
@@ -84,26 +78,17 @@ export default function App() {
       stopped = true;
       clearInterval(timer);
     };
-  }, [session]);
+  }, [session, projectId]);
 
   if (!session) return <SignIn onSignIn={signIn} />;
 
   const allowed = VIEWS_FOR_ROLE[session.member.role] || VIEWS_FOR_ROLE.researcher;
   const current = allowed.includes(view) ? view : allowed[0];
   const project = projects.find((p) => p.id === projectId);
-  const criticalCount = alerts.filter((a) => a.severity === "critical").length;
   const shared = { session, project, projects };
 
-  function ask(event) {
-    event.preventDefault();
-    setView("superbrain");
-  }
-
-  // Drafts are only polled for researchers; the leader has none.
-  const showDraftCount = allowed.includes("drafts");
-
   return (
-    <div className={`app ${panelOpen ? "" : "panel-closed"}`}>
+    <div className="app">
       <div className="narrow-notice">ExpandRG is built for laptop and desktop screens. Widen the window for the best view.</div>
       <header className="topbar">
         <span className="brand" title="Expand Researching Globally">ExpandRG</span>
@@ -117,16 +102,6 @@ export default function App() {
             ))}
           </select>
         </label>
-        <form className="ask" onSubmit={ask}>
-          <input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Ask Super Brain, e.g. blows up after refining the grid"
-          />
-          <button type="submit" disabled={searchQuery.trim().length < 2}>
-            Ask
-          </button>
-        </form>
         <span className="member">
           {session.member.display_name}
           <button className="link" onClick={signOut}>
@@ -139,40 +114,21 @@ export default function App() {
         {VIEWS.filter(([id]) => allowed.includes(id)).map(([id, label]) => (
           <button key={id} className={current === id ? "active" : ""} onClick={() => setView(id)}>
             {label}
-            {id === "drafts" && showDraftCount && draftCount > 0 && <span className="count">{draftCount}</span>}
-            {id === "alerts" && criticalCount > 0 && <span className="count critical">{criticalCount}</span>}
+            {id === "drafts" && draftCount > 0 && <span className="count">{draftCount}</span>}
+            {id === "alerts" && liveCritical > 0 && <span className="count critical">{liveCritical}</span>}
           </button>
         ))}
       </nav>
 
-      <main className="main">
-        {!project && <p>You are not a member of any project yet.</p>}
+      <main className={`main ${current === "superbrain" ? "docked" : ""}`}>
+        {!project && current !== "offboarding" && <p>You are not a member of any project yet.</p>}
         {project && current === "project" && <ProjectView {...shared} />}
         {project && current === "diagnose" && <DiagnoseView {...shared} onOpenDrafts={() => setView("drafts")} />}
         {project && current === "drafts" && <DraftsView {...shared} />}
-        {project && current === "superbrain" && <SuperBrainView {...shared} query={searchQuery} onQuery={setSearchQuery} />}
-        {project && current === "alerts" && <AlertsView {...shared} alerts={alerts} onCleared={() => setAlerts([])} />}
+        {project && current === "superbrain" && <SuperBrainView {...shared} />}
+        {project && current === "alerts" && <RunsView {...shared} />}
         {current === "offboarding" && <OffboardingView {...shared} />}
       </main>
-
-      <aside className="alerts-panel">
-        <button className="panel-toggle" onClick={() => setPanelOpen(!panelOpen)}>
-          {panelOpen ? "Hide alerts ›" : "‹ Alerts"}
-        </button>
-        {panelOpen && (
-          <>
-            <h3>Recent alerts</h3>
-            <p className="muted small">Alerts never stop your simulation. They are not saved.</p>
-            {!alerts.length && <p className="muted">No alerts this session.</p>}
-            {alerts.slice(0, 8).map((a) => (
-              <div key={a.id} className={`alert-card severity-border-${a.severity}`}>
-                <SeverityBadge severity={a.severity} /> <span className="muted small">{a.run_label}</span>
-                <p>{a.message}</p>
-              </div>
-            ))}
-          </>
-        )}
-      </aside>
     </div>
   );
 }

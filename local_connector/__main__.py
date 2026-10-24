@@ -290,13 +290,20 @@ def _watch(registry: GrantRegistry, args: argparse.Namespace) -> int:
         if poster:
             poster(alerts)
 
-    watcher = LogWatcher(resolved, on_alerts)
+    watcher = LogWatcher(resolved, on_alerts, on_samples=poster.samples if poster else None,
+                         on_restart=poster.new_run if poster else None)
     print(f"Watching {relative} (Ctrl+C to stop watching; the simulation is never touched)", flush=True)
+    if poster:
+        poster.start()
+        print("The run shows live on the dashboard for you and your group leader (the log file stays here).",
+              flush=True)
     try:
         while True:
             watcher.poll_once()
             time.sleep(watcher.poll_seconds)
     except KeyboardInterrupt:
+        if poster:
+            poster.stopped()
         print(f"\nStopped watching after {watcher.lines_read} lines and {len(watcher.alerts)} alert(s).")
     return 0
 

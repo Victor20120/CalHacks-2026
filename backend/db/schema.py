@@ -26,6 +26,9 @@ SHARED_TABLES = (
     "finding_links",
     "handoff_events",
     "handoff_records",
+    "simulation_runs",
+    "run_points",
+    "run_alerts",
 )
 PRIVATE_TABLES = ("runs", "private_episodes", "share_drafts", "settings", "alerts", "project_context")
 
@@ -126,6 +129,42 @@ CREATE TABLE IF NOT EXISTS handoff_records (
     finding_id  TEXT NOT NULL UNIQUE REFERENCES shared_findings(id),
     source      TEXT NOT NULL CHECK (source IN ('episode', 'draft')),
     PRIMARY KEY (handoff_id, finding_id)
+);
+
+-- Runs watched on a researcher's computer, seen by them and the group leader.
+-- Only the numbers read from the log and its alerts are kept, never the log file.
+CREATE TABLE IF NOT EXISTS simulation_runs (
+    id            TEXT PRIMARY KEY,
+    workspace_id  TEXT NOT NULL REFERENCES workspaces(id),
+    project_id    TEXT NOT NULL REFERENCES projects(id),
+    member_id     TEXT NOT NULL REFERENCES members(id),
+    run_label     TEXT NOT NULL,
+    watching      INTEGER NOT NULL DEFAULT 1 CHECK (watching IN (0, 1)),
+    last_step     INTEGER,
+    started_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+
+-- One number per metric per step. NULL means the log reported NaN or Inf there.
+CREATE TABLE IF NOT EXISTS run_points (
+    run_id  TEXT NOT NULL REFERENCES simulation_runs(id),
+    metric  TEXT NOT NULL,
+    step    INTEGER NOT NULL,
+    value   REAL
+);
+CREATE INDEX IF NOT EXISTS run_points_by_metric ON run_points (run_id, metric, step);
+
+CREATE TABLE IF NOT EXISTS run_alerts (
+    id           TEXT PRIMARY KEY,
+    run_id       TEXT NOT NULL REFERENCES simulation_runs(id),
+    severity     TEXT NOT NULL CHECK (severity IN ('informational', 'warning', 'critical')),
+    check_name   TEXT NOT NULL,
+    message      TEXT NOT NULL,
+    metric       TEXT,
+    step         INTEGER,
+    line_number  INTEGER,
+    line         TEXT NOT NULL DEFAULT '',
+    created_at   TEXT NOT NULL
 );
 """
 

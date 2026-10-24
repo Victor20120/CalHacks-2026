@@ -1,0 +1,86 @@
+{
+  "date": "2026-10-24",
+  "scope": "Six sequential live runs on the existing CREAO hub and app-trigger key, with synthetic shared A/B findings. No production data changes.",
+  "selected_model_request": "gemini-3-flash",
+  "limitations": "Two questions per variant; run-level platform and network overhead varied. Timings measure the backend provider adapter, excluding browser rendering. The API accepted the requested model ID; its response does not echo the actual serving model.",
+  "results": [
+    {
+      "variant": "baseline",
+      "question": 0,
+      "status": "completed",
+      "run_id": "dc57e0c2-21c5-4164-beca-f346eca79b9f",
+      "model_requested": null,
+      "seconds": 11.752,
+      "execution_seconds": 11.132,
+      "queue_seconds": 0.013,
+      "quality_passed": true,
+      "reply": "Researcher A used a time step of dt = 0.02 in the Aster-17 baseline trial, with alpha = 0.001 and dx = dy = 0.01 under the explicit 2D five-point scheme (finding a-aster-17; recorded as a hypothesis, and the observed stability is not a proof of a universal bound).",
+      "prompt_chars": 3393
+    },
+    {
+      "variant": "compact",
+      "question": 0,
+      "status": "completed",
+      "run_id": "73658051-af95-4331-b270-f80c7809c584",
+      "model_requested": null,
+      "seconds": 49.501,
+      "execution_seconds": 20.591,
+      "queue_seconds": 0.01,
+      "quality_passed": true,
+      "reply": "In trial **Aster-17** (Researcher A, project heat-diffusion), the explicit 2D five-point scheme was run with **dt = 0.02**, alongside α = 0.001 and dx = dy = 0.01, and the run stayed finite and decayed (finding `a-aster-17`). Note this is a recorded single observation, not a demonstrated stability bound — Researcher B's refined-mesh trial `b-beryl-23` blew up at a smaller dt = 0.01, which is consistent with the suspected mesh-refinement/Δt cause but is itself labeled a hypothesis.",
+      "prompt_chars": 2382
+    },
+    {
+      "variant": "compact_flash_requested",
+      "question": 0,
+      "status": "completed",
+      "run_id": "17650d6e-c6db-48e1-a2ec-2db8f2e42b20",
+      "model_requested": "gemini-3-flash",
+      "seconds": 10.975,
+      "execution_seconds": 10.115,
+      "queue_seconds": 0.017,
+      "quality_passed": true,
+      "reply": "Researcher A used a time step of dt = 0.02 in the Aster-17 baseline trial (finding `a-aster-17`, labeled a hypothesis/observed stable run, not a proven stability bound).",
+      "prompt_chars": 2382
+    },
+    {
+      "variant": "compact",
+      "question": 1,
+      "status": "completed",
+      "run_id": "87f4b95a-93b9-4dd2-8955-b80205771003",
+      "model_requested": null,
+      "seconds": 50.037,
+      "execution_seconds": 20.672,
+      "queue_seconds": 0.015,
+      "quality_passed": true,
+      "reply": "**Aster-17 vs. Beryl-23 — they agree.**\n\n*Observations (reported, hypothesis-stage):* Aster-17 (α=0.001, dx=dy=0.01, dt=0.02) stayed finite and decayed. Beryl-23 refined dx=dy=0.005 with the same α but dt=0.01, and blew up.\n\n*Theory:* for the explicit 2D five-point (FTCS) scheme the von Neumann limit is α·dt/dx² ≤ ¼, i.e. dt ≤ dx²/(4α).\n\n- Aster-17: α·dt/dx² = 0.20 ≤ 0.25 → stable, as observed.\n- Maximum stable dt for Beryl-23: (0.005)²/(4×0.001) = **6.25×10⁻³**.\n- Beryl-23 used dt=0.01, giving 0.40 > 0.25 → unstable, as observed.\n\nSo there is no contradiction: halving dx cuts the stable step fourfold (0.025 → 0.00625), but Beryl-23 only halved dt from 0.02 to 0.01. Both trials follow one criterion; Aster-17's finiteness is an observation, not proof of a universal bound. Untested: boundary-condition and mode-content effects.",
+      "prompt_chars": 2588
+    },
+    {
+      "variant": "baseline",
+      "question": 1,
+      "status": "completed",
+      "run_id": "23911f8a-bfd9-49f3-8fc7-8a832722a2f7",
+      "model_requested": null,
+      "seconds": 60.855,
+      "execution_seconds": 35.232,
+      "queue_seconds": 0.02,
+      "quality_passed": true,
+      "reply": "I'll start by reading the agent's skill manifest.No on-disk project at \"Heat diffusion solver\" and no uploaded artifacts, so I'll ground the audit in the two supplied trial records.Observations agree; stability theory explains why.\n\n**Observations** (both supplied records are labelled *hypothesis*, not verified runs): **Aster-17** (α=0.001, dx=dy=0.01, dt=0.02) stayed finite and decayed. **Beryl-23** refined the same five-point scheme to dx=dy=0.005, kept α and dt=0.01, and diverged with no boundary change.\n\n**Theory** — for the explicit 2D five-point Laplacian, von Neumann analysis gives dt ≤ dx²/(4α), which is the missing link:\n\n- Aster-17: 0.01²/(4·0.001) = 0.025 → dt=0.02 is 0.80 of the bound. Stable.\n- Beryl-23: 0.005²/(4·0.001) = 6.25×10⁻³ → dt=0.01 is 1.60 of the bound. Unstable.\n\n**Derived answer:** maximum stable dt for Beryl-23 is **6.25×10⁻³**; run at **5.0×10⁻³** for margin, since dt exactly at the bound is neutrally stable and can ring. Halving dx cuts dt_max fourfold — the trials agree, nothing was violated except the timestep rescale.\n\n**Bottom line:** the two trials do not conflict — they sit on opposite sides of one bound. Aster-17 was at 0.80 of it, Beryl-23 at 1.60. The single actionable fix is to rescale dt to 5.0×10⁻³ for the refined mesh; that makes Beryl-23 comparable to Aster-17 rather than invalid. Note this diagnosis rests on the two supplied hypothesis-stage records plus my own re-solve of the scheme — the workspace contained no solver code, config or logs, so line-level confirmation is still outstanding.",
+      "prompt_chars": 3599
+    },
+    {
+      "variant": "compact_flash_requested",
+      "question": 1,
+      "status": "completed",
+      "run_id": "655f22e0-7926-4b28-b7e1-1899bb96389d",
+      "model_requested": "gemini-3-flash",
+      "seconds": 13.795,
+      "execution_seconds": 13.053,
+      "queue_seconds": 0.018,
+      "quality_passed": true,
+      "reply": "**Conclusion: the two trials agree; they are the same scheme sampled at different CFL ratios.**\n\n**Observations** — *Aster-17 baseline trial* (dx=dy=0.01, α=0.001, dt=0.02) stayed finite and decayed. *Beryl-23 refined mesh trial* (dx=dy=0.005, same α, dt=0.01) blew up with no boundary change. Both are recorded as hypotheses, not proofs.\n\n**Theory** — the explicit 2D five-point scheme is stable when dt ≤ dx²/(4α). Aster-17: limit 0.025 vs dt 0.02 (inside). Beryl-23: limit 0.00625 vs dt 0.01, so it exceeds stability even though dt was halved — halving dx cuts the allowable dt fourfold. Thus Beryl-23's dt_max = 6.25×10⁻³, and its blow-up confirms rather than contradicts Aster-17.",
+      "prompt_chars": 2588
+    }
+  ]
+}

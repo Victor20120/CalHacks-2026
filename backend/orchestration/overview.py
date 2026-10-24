@@ -48,19 +48,24 @@ class PreparedOverview:
     files: list[str]
     stats: dict
     redactions: int
+    agent_rules: str = ""
 
     def creao_inputs(self) -> dict[str, str]:
         parts = [ONBOARDING_REQUEST, f"Folder tree:\n{self.tree}"]
         for item in self.excerpts:
             note = ", partial" if item["truncated"] else ""
             parts.append(f"--- {item['path']} ({item['kind']}{note}) ---\n{item['excerpt']}")
-        return {
+        inputs = {
             "project_path": f"{self.project} (local files are not attached; a map of the project is in observed_symptom)",
             "observed_symptom": "\n\n".join(parts),
             "focus_areas": "all",
             "analysis_depth": "standard",
             "output_format": OVERVIEW_INSTRUCTIONS,
         }
+        if self.agent_rules:
+            from backend.orchestration.chat import with_agent_rules
+            inputs = with_agent_rules(inputs, self.agent_rules)
+        return inputs
 
 
 def prepare_overview(project: str, tree: str, excerpts: list[dict[str, Any]], files: list[str], stats: dict) -> PreparedOverview:
@@ -105,17 +110,17 @@ def run_overview(client: Any, prepared: PreparedOverview) -> dict[str, Any]:
     return {
         "run_id": result.run_id,
         "reply": reply,
-        "overview": clean_overview(data, prepared.files),
+        "overview": clean_overview(data, prepared.files, root_name(prepared.tree)),
     }
 
 
-def clean_overview(data: Any, known_paths: list[str]) -> dict | None:
+def clean_overview(data: Any, known_paths: list[str], root: str = "") -> dict | None:
     """Keep only well-formed fields from the agent's overview. Every path is marked
     with whether it really exists in the project, so invented files show up."""
     if not isinstance(data, dict):
         return None
     folders = {p.rsplit("/", i)[0] for p in known_paths for i in range(1, p.count("/") + 1)}
-    known = set(known_paths) | folders
+    known = set(known_paths) | folders | ({root, "."} if root else {"."})  # the project folder itself counts
 
     def text(value: Any, limit: int) -> str:
         return str(value).strip()[:limit] if isinstance(value, (str, int, float)) else ""
@@ -160,3 +165,9 @@ def context_text(context: dict | None) -> str:
         parts.append(context["reply"])
     text = "\n".join(parts)
     return text if len(text) <= MAX_CONTEXT_CHARS else text[: MAX_CONTEXT_CHARS - 6].rstrip() + " [...]"
+
+
+def root_name(tree: str) -> str:
+    """The project folder's name: the first line of the tree, e.g. "my_project/  (40 files)"."""
+    first = tree.splitlines()[0] if tree else ""
+    return first.split("/")[0].strip()

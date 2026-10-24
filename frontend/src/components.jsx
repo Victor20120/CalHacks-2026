@@ -61,10 +61,12 @@ function inline(text) {
   });
 }
 
-// Pick (or grant) a project folder through the local connector.
+// Pick (or grant) a project folder through the local connector. Folders are shown by
+// name; the full path is in the tooltip.
 export function FolderPicker({ root, onChange }) {
   const [grants, setGrants] = useState([]);
   const [newFolder, setNewFolder] = useState("");
+  const [adding, setAdding] = useState(false);
   const [error, setError] = useState("");
 
   async function load() {
@@ -87,6 +89,7 @@ export function FolderPicker({ root, onChange }) {
     try {
       const granted = await connector("/grants", { method: "POST", body: { root: newFolder } });
       setNewFolder("");
+      setAdding(false);
       await load();
       onChange(granted.root);
     } catch (e) {
@@ -94,30 +97,45 @@ export function FolderPicker({ root, onChange }) {
     }
   }
 
+  // Two folders with the same name are told apart by the folder they're in.
+  const label = (g) => (grants.filter((o) => o.name === g.name).length > 1 ? `${g.name} (in ${parentName(g.root)})` : g.name);
+
   return (
     <div className="folder-picker">
-      <label>
-        Project folder on this computer
-        <select value={root || ""} onChange={(e) => onChange(e.target.value)}>
-          {!grants.length && <option value="">No folders granted yet</option>}
-          {grants.map((g) => (
-            <option key={g.root} value={g.root}>
-              {g.name} — {g.root}
-            </option>
-          ))}
-        </select>
-      </label>
-      <form className="inline-form" onSubmit={grant}>
-        <input
-          value={newFolder}
-          onChange={(e) => setNewFolder(e.target.value)}
-          placeholder={"Grant access to another folder, e.g. C:\\research\\heat_solver"}
-        />
-        <button type="submit" disabled={!newFolder.trim()}>
-          Grant access
+      <div className="folder-row">
+        <label>
+          Project folder
+          <select value={root || ""} onChange={(e) => onChange(e.target.value)} title={root || ""}>
+            {!grants.length && <option value="">No folders yet</option>}
+            {grants.map((g) => (
+              <option key={g.root} value={g.root} title={g.root}>
+                {label(g)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button type="button" className="link" onClick={() => setAdding(!adding)}>
+          {adding ? "Cancel" : "Add a folder"}
         </button>
-      </form>
+      </div>
+      {(adding || !grants.length) && (
+        <form className="inline-form" onSubmit={grant}>
+          <input
+            value={newFolder}
+            onChange={(e) => setNewFolder(e.target.value)}
+            placeholder={"Folder on this computer, e.g. C:\\research\\heat_solver"}
+          />
+          <button type="submit" disabled={!newFolder.trim()}>
+            Grant access
+          </button>
+        </form>
+      )}
       <ErrorNote error={error} />
     </div>
   );
+}
+
+function parentName(path) {
+  const parts = path.split(/[\\/]/).filter(Boolean);
+  return parts.length > 1 ? parts[parts.length - 2] : path;
 }

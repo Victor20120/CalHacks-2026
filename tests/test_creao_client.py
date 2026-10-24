@@ -119,6 +119,23 @@ def test_sends_the_verified_request_shape():
     assert poll["url"] == f"https://agent.creao.ai/api/v1/runs/{RUN_ID}"
 
 
+def test_model_override_is_a_run_option_not_an_agent_input():
+    session = FakeSession(post=[ok(COMPLETED["start_response"])], get=[ok(COMPLETED["final_response"])])
+    make_client(session, chat_model_id="test-fast-model").run(GOOD_INPUTS)
+    body = session.calls[0]["json"]
+    assert body["chatModelId"] == "test-fast-model"
+    assert body["inputs"] == GOOD_INPUTS
+    assert "chatModelId" not in body["inputs"]
+
+
+@pytest.mark.parametrize("model_id", ["", "bad model", "x" * 121, "model\nother"])
+def test_invalid_model_override_is_rejected_before_a_paid_run(model_id):
+    session = FakeSession()
+    with pytest.raises(CreaoConfigError):
+        make_client(session, chat_model_id=model_id)
+    assert session.calls == []
+
+
 def test_missing_inputs_reply_is_recognised():
     # CREAO marks this run "completed" even though no analysis ran.
     result = parse_run(MISSING_INPUTS["final_response"])

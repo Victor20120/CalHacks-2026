@@ -4,7 +4,91 @@ One entry per commit, newest first. Each commit adds its own entry with the hash
 
 ---
 
-## 2026-10-24 · `pending` · Rename to ExpandRG, straight design, demo launcher and project overview
+## 2026-10-24 · `pending` · Runs page, Super Brain page with CREAO chat, and project-map fixes
+
+**Why:** The dashboard was too complicated. The leader needs one clear page of what each researcher has shared, and a way to ask the group's knowledge for more detail. Simulations should be watched live on the dashboard, with their alerts, and old runs opened again later. The first real-project test of the project overview (build plan step 8) also showed three gaps in the project map.
+
+**Changed**
+- Layout:
+  - the project picker is in the top bar on every page, and every page works on the chosen project;
+  - the right-hand alerts panel is gone (alerts now live with their run);
+  - the window doesn't scroll as a whole: only the main view scrolls;
+  - every page uses the same width;
+  - card headers align on the text baseline.
+- **Runs** page (the nav item formerly called Alerts), for researchers and the leader:
+  - A researcher picks a log from their granted folders (the list refreshes itself) and clicks **Start watching**. The local connector reads the log and sends the numbers from each step line (e.g. `step 200  max|T| = 2.75e+14  residual = 4.7e+14`) and the alerts, never the log file. The run appears on the dashboard at once.
+  - On the left, the project's runs: **Live** first, then **Earlier runs**. On the right, the chosen run:
+    - the newest alerts under its header;
+    - up to 3 line charts, one per measure, on a shared step axis. They switch to a log scale for values spanning 1,000x or more. Warning and Critical alerts are marked at their step, and hovering (or arrow keys) shows the value at that step in every chart;
+    - all alerts, and the numbers as a table.
+  - **Stop watching** ends a live run. **Replay** plays an earlier run back step by step in about 8 seconds. A new run written into the same log becomes a new run.
+  - The Runs tab shows a count of Critical alerts in runs being watched right now.
+  - Runs are seen by the researcher and the group leader, never by other researchers. The "Save alert history" switch is no longer in the dashboard (its API remains); runs keep their alerts instead.
+  - Backend:
+    - new shared tables `simulation_runs`, `run_points` and `run_alerts`;
+    - `POST /simulation-runs`, `POST /simulation-runs/{id}/report`, `GET /simulation-runs`, `GET /simulation-runs/{id}`, `GET /simulation-runs/alerts`;
+    - a run keeps up to 6 metrics, and past 1,000 points per metric every other point is dropped, keeping the last one and every NaN/Inf point;
+    - alerts record their step;
+    - `watch` on the command line also sends the run.
+- **Super Brain** page:
+  - four counts: updates shared, researchers sharing, verified, still hypotheses;
+  - a bar chart of updates per researcher (one colour, square ends, value at the tip, hover for the status breakdown, click to jump to that researcher);
+  - each researcher's updates: title, verification tag, the issue (the summary's "Symptom" line), category and date;
+  - `GET /superbrain/findings` lists approved findings across your projects (optional `project_id`).
+- **Ask Super Brain** chat, docked at the bottom of the Super Brain page:
+  - Every message is a CREAO run. Real runs showed the time goes to the hub's audit workflow (21 s for "hello", 35 to 46 s for questions), not to the app. So chat:
+    - runs on a dedicated chat agent once `CREAO_CHAT_APP_ID` and `CREAO_CHAT_KEY` are set. It's an ordinary CREAO agent with an app key (`capi_`), only `question` and `context` inputs and no tools. Until then it runs on the hub (`CREAO_HUB`), which is only used for chat and can instead be slimmed down in CREAO itself. `Documents/super-brain-chat-agent.md` gives both setups;
+    - asks the hub for a direct answer without its audit, tools or skills;
+    - asks CREAO for a fast model (`CREAO_CHAT_MODEL_ID`; empty means `gemini-3-flash`, `saved` keeps the agent's own).
+  - Diagnoses and project overviews still use each researcher's own agent and its saved model.
+  - `POST /superbrain/chat` (alias `/agent/chat`) retrieves the approved findings the member may read: complete summaries with author, project, verification label and source run. The hub combines them with its own scientific knowledge, keeping observations apart from theory and citing the findings it used.
+  - Knowledge scope: the chosen project (default) or all your projects. Recent conversation is included. The last 12 exchanges are kept in private settings, and `GET`/`DELETE /projects/{id}/chat` show and clear them.
+  - **Instructions** (how the agent should answer; `GET`/`PUT /projects/{id}/agent-rules`) are saved per user and project and also apply to diagnoses and project overviews. They can be set in chat ("Act as a researcher and be clear", `/rules`, `/rules reset`).
+  - Private project overviews are never sent to the hub. Personal diagnoses and overviews still use each researcher's own agent. Every message uses CREAO credits.
+  - The box is one compact row aligned with the page.
+- Diagnose and Project: folders are shown by name (full path on hover), with **Add a folder** to grant another.
+- Project map (`local_connector/evidence/project_map.py`):
+  - other guides besides a README are picked (`.md`, `.txt` and `.rst` notes such as how-to-run files);
+  - folders of up to 40 files are listed in full;
+  - up to 10 code outlines are included, main scripts first, then parameter files.
+- Overview check (`backend/orchestration/overview.py`): the project's own folder counts as part of the project, so the agent naming it isn't marked as invented.
+- Added `Documents/benchmarks/hub-chat-speed-2026-10-24.md` (and its JSON): a historical comparison of hub request setups. That faster setup is no longer active.
+- Updated `README.md`, `backend/README.md`, `frontend/README.md`, `Documents/dashboard-design.md`, `Documents/demo-script.md` and `Documents/build-plan.md` (step 8 done).
+
+**Checks**
+- `python -m pytest`: 287 passed, 1 skipped (symlink test on Windows). `npm run build` succeeds.
+  - `tests/test_simulation_runs.py` covers:
+    - reading step numbers and alert steps from a log;
+    - who may see and report a run (other researchers never; the leader only in their projects);
+    - bad alerts storing nothing, secrets blanked, the metric cap and thinning;
+    - a watched run appearing at once and reaching the leader, and a rerun into the same log becoming a new run;
+    - numbers waiting while the backend is down.
+  - `tests/test_agent_chat.py` covers:
+    - chat, scopes, instructions, history and access, including an A diagnosis, B diagnosis, then hub request with both findings in the hub's input;
+    - the chat settings from `.env`, the chat agent getting only `question` and `context`, chat moving to it once it is set up, and the model reaching CREAO for chat but not for diagnoses.
+- End to end on scratch data with the real backend, connector and dashboard, on separate ports:
+  - Researcher A started the solver, watched it live from the Runs page, stopped it and saw it under Earlier runs;
+  - the leader saw A's and B's runs and replayed one;
+  - Researcher B only saw their own run.
+- Screenshots of every page for both roles, light and dark, at 1440px and 1280px. No page errors and no sideways scrolling. The chat box, Send button and page content end on the same edge.
+- Live CREAO runs (these used credits):
+  - one hub run on synthetic findings (`32f10389-ee80-492c-8eac-0c60975c9b95`) cited both records and derived the refined-grid limit `dt <= 0.00625 s`;
+  - six benchmark runs, all answer checks passed;
+  - chat speed on the hub, timed from the question to the answer for the same three questions:
+
+    | Question | Before | Fast model only | Fast model + direct answer (two runs) | + hub's chat skill in CREAO |
+    |---|---|---|---|---|
+    | "hello" | 21 s | 61 s | 19.9 s, 20.6 s | 11.2 s |
+    | A and B results | 35.6 s | 60.7 s | 27.3 s, 31.2 s | 10.3 s |
+    | "What else do you know" | 60.5 s | not run | 13.3 s, 10.0 s | 16.3 s |
+
+    Replies now answer directly instead of narrating an audit. With the app changes alone, the hub kept a floor of about 20 s. That was its "Research Code & Reproducibility Audit" skill: `analysis_depth` was required with a `standard` default, so every message started an audit, and memory saved audit numbers after each reply. Replacing the hub's skill in CREAO with the chat skill in `Documents/super-brain-chat-agent.md` (Way A) brought replies to 10 to 16 s, about 3x faster than at the start.
+- Real-project overview: run `416d9fb0` on a Fortran flagellum-hydrodynamics project gave an accurate overview.
+- Secret scan: no API key or app ID in the commit.
+
+---
+
+## 2026-10-24 · `aac6cbf` · Rename to ExpandRG, straight design, demo launcher and project overview
 
 **Why:** The project is now called ExpandRG (Expand Researching Globally), the dashboard gets a straight, clean look, a solo presenter gets a one-command demo, and a new member's agent can understand a whole project before diagnosing.
 

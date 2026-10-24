@@ -30,6 +30,10 @@ TERMINAL_STATUSES = ("completed", "failed", "cancelled")
 # Required inputs of the configured hub agent. A run without them still
 # "completes" (and costs credits) but only reports what is missing.
 HUB_REQUIRED_INPUTS = ("project_path", "observed_symptom", "focus_areas")
+# The dedicated Super Brain chat agent (made in agent.creao.ai) takes just these two.
+CHAT_REQUIRED_INPUTS = ("question", "context")
+# Measured at about a third of the hub's saved model's time (Documents/benchmarks/).
+FAST_CHAT_MODEL_ID = "gemini-3-flash"
 
 # Summary counts the hub agent returns in result.text when an analysis ran.
 SUMMARY_FIELDS = (
@@ -162,6 +166,31 @@ def hub_agent(env_file: Path | None = DEFAULT_ENV_FILE) -> AgentConfig:
     )
 
 
+@dataclass(frozen=True)
+class ChatSettings:
+    """Which agent answers Super Brain chat, and with which CREAO model."""
+
+    slot: str  # "CHAT" (the dedicated chat agent) or "HUB"
+    model_id: str | None  # sent as chatModelId; None keeps the agent's saved model
+
+
+def chat_settings(env_file: Path | None = DEFAULT_ENV_FILE) -> ChatSettings:
+    """Super Brain chat runs on the dedicated chat agent once CREAO_CHAT_APP_ID and
+    CREAO_CHAT_KEY are set (an ordinary capi_ app key), otherwise on the hub.
+    CREAO_CHAT_MODEL_ID picks the model, a fast one by default; "saved" keeps the
+    agent's own model."""
+    if env_file is not None:
+        load_dotenv(env_file)
+    dedicated = all(os.environ.get(v, "").strip() for v in ("CREAO_CHAT_APP_ID", "CREAO_CHAT_KEY"))
+    model = os.environ.get("CREAO_CHAT_MODEL_ID", "").strip() or FAST_CHAT_MODEL_ID
+    return ChatSettings("CHAT" if dedicated else "HUB", None if model.lower() == "saved" else model)
+
+
+def chat_agent(env_file: Path | None = DEFAULT_ENV_FILE) -> AgentConfig:
+    """Config for the dedicated Super Brain chat agent: a question and its context, nothing else."""
+    return AgentConfig.from_env("CHAT", CHAT_REQUIRED_INPUTS, env_file)
+
+
 def personal_agent(prefix: str, env_file: Path | None = DEFAULT_ENV_FILE) -> AgentConfig:
     """Config for a researcher's personal agent (e.g. prefix "AGENT_1"): its required
     inputs, its fixed choices, and the request to end each reply with a JSON issue list."""
@@ -280,7 +309,10 @@ class CreaoClient:
         request_timeout: float = 30.0,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
+        chat_model_id: str | None = None,
     ):
+        if chat_model_id is not None and not re.fullmatch(r"[A-Za-z0-9_.:/-]{1,120}", chat_model_id):
+            raise CreaoConfigError("CREAO_HUB_CHAT_MODEL_ID must be a valid model identifier.")
         self.agent = agent
         self.session = session or requests.Session()
         self.poll_interval = poll_interval
@@ -288,6 +320,7 @@ class CreaoClient:
         self.request_timeout = request_timeout
         self._sleep = sleep
         self._clock = clock
+        self.chat_model_id = chat_model_id
 
     def run(self, inputs: dict[str, Any]) -> RunResult:
         """Start a run and wait for it to finish."""
@@ -306,7 +339,10 @@ class CreaoClient:
             raise CreaoInputError(missing, invalid)
 
         payload = {**self.agent.extra_inputs, **inputs}  # the caller's inputs win
-        data = self._request("POST", "/runs", json={"appId": self.agent.app_id, "inputs": payload})
+        body = {"appId": self.agent.app_id, "inputs": payload}
+        if self.chat_model_id:
+            body["chatModelId"] = self.chat_model_id
+        data = self._request("POST", "/runs", json=body)
         run_id = data.get("id")
         if not run_id:
             raise CreaoRequestError("CREAO accepted the run but returned no run ID.")

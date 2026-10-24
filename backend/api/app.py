@@ -11,14 +11,16 @@ from __future__ import annotations
 from contextlib import closing
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Callable
+from threading import Lock
+import time
+from typing import Any, Callable, Literal
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from backend.auth.permissions import PermissionDenied, context_project_ids, require_project_member
 from backend.auth.sessions import Sessions
-from backend.creao import CreaoClient, personal_agent
+from backend.creao import ChatSettings, CreaoClient, chat_agent, chat_settings, hub_agent, personal_agent
 from backend.db.database import Database
 from backend.knowledge_sharing.offboarding import (
     OFFBOARDING_POLICY,
@@ -35,11 +37,23 @@ from backend.knowledge_sharing.publishing import (
 )
 from backend.memory.private_memory import PrivateMemory
 from backend.monitoring.alerts import AlertStore, InvalidAlert
+from backend.monitoring.runs import (
+    MAX_METRICS_PER_RUN,
+    RunNotFound,
+    add_report,
+    create_run,
+    get_visible_run,
+    recent_alerts,
+    run_detail,
+    visible_runs,
+)
 from backend.memory.shared_findings import (
     get_readable_finding,
     list_project_findings,
+    list_readable_findings,
     related_findings,
     search_findings,
+    select_chat_findings,
 )
 from backend.orchestration.diagnosis import (
     MAX_CONTEXT_FINDINGS,
@@ -49,8 +63,11 @@ from backend.orchestration.diagnosis import (
     record_diagnosis,
     run_diagnosis,
 )
-from backend.orchestration.evidence_policy import MAX_ITEMS
+from backend.orchestration.evidence_policy import MAX_ITEMS, redact_secrets
 from backend.orchestration.jobs import JobStore, run_job
+from backend.orchestration.chat import (
+    DEFAULT_AGENT_RULES, MAX_RULE_CHARS, knowledge_context, rule_command, run_chat,
+)
 from backend.orchestration.overview import context_text, prepare_overview, run_overview
 from backend.workspaces.demo import seed_demo
 from backend.workspaces.store import InvalidProject, create_project, get_member, list_members, projects_for_member
@@ -74,6 +91,17 @@ class DiagnoseIn(BaseModel):
 
 class SignInIn(BaseModel):
     member_id: str = Field(min_length=1, max_length=64)
+
+
+class ChatIn(BaseModel):
+    model_config = {"extra": "forbid"}
+    project_id: str = Field(min_length=1, max_length=64)
+    message: str = Field(min_length=1, max_length=4000)
+    scope: Literal["project", "all"] = "project"
+
+
+class AgentRulesIn(BaseModel):
+    instructions: str = Field(max_length=MAX_RULE_CHARS)
 
 
 class OverviewExcerptIn(BaseModel):
@@ -113,12 +141,29 @@ class AlertIn(BaseModel):
     metric: str | None = Field(default=None, max_length=100)
     line_number: int | None = None
     line: str | None = Field(default=None, max_length=2000)
+    step: int | None = None
 
 
 class AlertsIn(BaseModel):
     project_id: str = Field(min_length=1, max_length=64)
     run_label: str = Field(min_length=1, max_length=100)
     alerts: list[AlertIn] = Field(max_length=50)
+
+
+class RunIn(BaseModel):
+    project_id: str = Field(min_length=1, max_length=64)
+    run_label: str = Field(min_length=1, max_length=200)
+
+
+class RunPointIn(BaseModel):
+    step: int = Field(ge=0)
+    values: dict[str, float | None] = Field(max_length=MAX_METRICS_PER_RUN)  # None: NaN or Inf in the log
+
+
+class RunReportIn(BaseModel):
+    points: list[RunPointIn] = Field(default_factory=list, max_length=2000)
+    alerts: list[AlertIn] = Field(default_factory=list, max_length=50)
+    stopped: bool = False  # the researcher stopped watching
 
 
 class SettingsIn(BaseModel):
@@ -134,12 +179,17 @@ def create_app(
     jobs: JobStore | None = None,
     data_dir: str | Path | None = None,
     alerts: AlertStore | None = None,
+    chat_setup: Callable[[], ChatSettings] | None = None,
 ) -> FastAPI:
     """client_factory(agent_env_prefix) builds the CREAO client for a member's
     personal agent; tests pass a fake one. The databases are created (with the
-    demo workspace) on first use. Alerts are kept in memory only."""
+    demo workspace) on first use. Alerts are kept in memory only.
+    chat_setup() says which agent and model answer Super Brain chat: from
+    backend/.env with real CREAO, the hub with its saved model with a fake one."""
     app = FastAPI(title="ExpandRG backend", version="0.1.0")
-    factory = client_factory or (lambda prefix: CreaoClient(personal_agent(prefix)))
+    factory = client_factory or (lambda prefix: CreaoClient(hub_agent() if prefix == "HUB" else personal_agent(prefix)))
+    chat_choice = chat_setup or (chat_settings if client_factory is None else (lambda: ChatSettings("HUB", None)))
+    chat_lock = Lock()
     store = jobs or JobStore()
     alert_store = alerts or AlertStore()
     db = Database(data_dir, seed=seed_demo)
@@ -227,6 +277,7 @@ def create_app(
             ]
 
         prepared.project_context = context_text(PrivateMemory(db, member["id"]).project_context(request.project_id))
+        prepared.agent_rules = PrivateMemory(db, member["id"]).agent_rules(request.project_id)
 
         job = store.create(member["id"], request.project_id, prior)
         background.add_task(
@@ -256,6 +307,8 @@ def create_app(
         except EvidenceRejected as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from None
 
+        prepared.agent_rules = PrivateMemory(db, member["id"]).agent_rules(request.project_id)
+
         def save(result: dict[str, Any]) -> None:
             PrivateMemory(db, member["id"]).save_project_context(
                 request.project_id, result["overview"], result["reply"], prepared.stats, result["run_id"])
@@ -264,6 +317,111 @@ def create_app(
         background.add_task(run_job, store, job.job_id, lambda: run_overview(factory(prefix), prepared), save)
         return {"job_id": job.job_id, "status": job.status, "chars_sent": len(prepared.creao_inputs()["observed_symptom"]),
                 "redactions": prepared.redactions}
+
+    @app.get("/projects/{project_id}/agent-rules")
+    def agent_rules(project_id: str, member: dict[str, Any] = Depends(current_member)) -> dict:
+        with closing(db.shared()) as conn:
+            require_member_of(conn, member["id"], project_id)
+        return {"instructions": PrivateMemory(db, member["id"]).agent_rules(project_id),
+                "default_instructions": DEFAULT_AGENT_RULES}
+
+    @app.put("/projects/{project_id}/agent-rules")
+    def save_agent_rules(project_id: str, body: AgentRulesIn, member: dict[str, Any] = Depends(current_member)) -> dict:
+        with closing(db.shared()) as conn:
+            require_member_of(conn, member["id"], project_id)
+        instructions, _ = redact_secrets(body.instructions.strip() or DEFAULT_AGENT_RULES)
+        PrivateMemory(db, member["id"]).set_agent_rules(project_id, instructions)
+        return {"instructions": instructions, "default_instructions": DEFAULT_AGENT_RULES}
+
+    def readable_chat(memory: PrivateMemory, project_id: str, scope: str, member_id: str) -> list[dict]:
+        # If project access is later removed, old all-project replies containing
+        # that project's knowledge must not be displayed or sent back to CREAO.
+        with closing(db.shared()) as conn:
+            allowed = {p["id"] for p in projects_for_member(conn, member_id)}
+        return [x for x in memory.chat_history(project_id, scope)
+                if all(pid in allowed for pid in x.get("context_project_ids", []))
+                and all(source["project_id"] in allowed for source in x.get("sources", []))]
+
+    @app.get("/projects/{project_id}/chat")
+    def chat_history(project_id: str, scope: Literal["project", "all"] = "project",
+                     member: dict[str, Any] = Depends(current_member)) -> dict:
+        with closing(db.shared()) as conn:
+            require_member_of(conn, member["id"], project_id)
+        pending = store.running_chat(member["id"], project_id)
+        return {"exchanges": readable_chat(PrivateMemory(db, member["id"]), project_id, scope, member["id"]),
+                "pending_job_id": pending["job_id"] if pending and pending["scope"] == scope else None}
+
+    @app.delete("/projects/{project_id}/chat")
+    def clear_chat(project_id: str, scope: Literal["project", "all"] = "project",
+                   member: dict[str, Any] = Depends(current_member)) -> dict:
+        with closing(db.shared()) as conn:
+            require_member_of(conn, member["id"], project_id)
+        with chat_lock:
+            if store.running_chat(member["id"], project_id):
+                raise HTTPException(status_code=409, detail="Wait for the current reply before clearing the conversation.")
+            PrivateMemory(db, member["id"]).clear_chat(project_id, scope)
+        return {"exchanges": []}
+
+    @app.post("/superbrain/chat", status_code=202)
+    @app.post("/agent/chat", status_code=202)
+    def start_chat(body: ChatIn, background: BackgroundTasks, member: dict[str, Any] = Depends(current_member)) -> dict:
+        """One answer from the central CREAO hub, grounded in shared agent knowledge."""
+        started = time.perf_counter()
+        message, _ = redact_secrets(body.message.strip())
+        if not message:
+            raise HTTPException(status_code=422, detail="Enter a message first.")
+        with closing(db.shared()) as conn:
+            require_member_of(conn, member["id"], body.project_id)
+            project_name = conn.execute("SELECT name FROM projects WHERE id = ?", (body.project_id,)).fetchone()[0]
+            allowed = [p["id"] for p in projects_for_member(conn, member["id"])]
+        project_ids = allowed if body.scope == "all" else [body.project_id]
+        scope_name = "all projects you can access" if body.scope == "all" else project_name
+        memory = PrivateMemory(db, member["id"])
+        with chat_lock:
+            if store.running_chat(member["id"], body.project_id):
+                raise HTTPException(status_code=409, detail="Your Super Brain reply is still running in this project.")
+            history = readable_chat(memory, body.project_id, body.scope, member["id"])
+            rules = memory.agent_rules(body.project_id)
+            command = rule_command(message)
+            instructions, instruction_action = None, None
+            if command:
+                instruction_action, text = command
+                if instruction_action != "show":
+                    instructions = (rules + "\n" + text) if instruction_action == "append" else text
+                    if len(instructions) > MAX_RULE_CHARS:
+                        raise HTTPException(status_code=422, detail="Instructions are too long. Edit them in Agent instructions (2,000 characters maximum).")
+                    memory.set_agent_rules(body.project_id, instructions)
+                    rules = instructions
+            previous = history[-1].get("sources", []) if history else []
+            with closing(db.shared()) as conn:
+                matches, stats = select_chat_findings(conn, member["id"], message, project_ids, previous)
+            findings = knowledge_context(matches, stats)
+            included = {f["id"] for f in findings["selected_findings"]}
+            prior = [{k: f[k] for k in ("id", "project_id", "title", "verification_status", "contributed_by_name")}
+                     for f in matches if f["id"] in included]
+            job = store.create(member["id"], body.project_id, prior, kind="chat", scope=body.scope)
+        settings = chat_choice()
+
+        def task() -> dict:
+            # A and B keep their personal agents for analysis. Super Brain chat runs on the
+            # dedicated chat agent once it is set up, otherwise on the central hub.
+            if client_factory:
+                client = client_factory(settings.slot)
+            else:
+                config = chat_agent() if settings.slot == "CHAT" else hub_agent()
+                client = CreaoClient(config, poll_interval=1.0, chat_model_id=settings.model_id)
+            result = run_chat(client, scope_name, message, rules, history, findings, instruction_action,
+                              dedicated=settings.slot == "CHAT")
+            return {**result, "agent_slot": settings.slot, "model": settings.model_id or "saved",
+                    "knowledge_stats": stats, "context_project_ids": project_ids,
+                    "elapsed_ms": round((time.perf_counter() - started) * 1000)}
+
+        def save(result: dict) -> None:
+            memory.save_chat_exchange(body.project_id, message, {**result, "sources": prior}, body.scope)
+
+        background.add_task(run_job, store, job.job_id, task, save)
+        return {"job_id": job.job_id, "status": job.status, "prior_findings": prior,
+                "knowledge_stats": stats, "instructions": instructions, "agent_slot": settings.slot}
 
     @app.get("/projects/{project_id}/overview")
     def project_overview(project_id: str, member: dict[str, Any] = Depends(current_member)) -> dict[str, Any]:
@@ -293,6 +451,13 @@ def create_app(
         job = store.get(job_id)
         if job is None or job["member_id"] != member["id"]:  # other members' jobs look like they don't exist
             raise HTTPException(status_code=404, detail="No diagnosis job with that ID.")
+        if job["kind"] == "chat":
+            with closing(db.shared()) as conn:
+                allowed = {p["id"] for p in projects_for_member(conn, member["id"])}
+            used = {source["project_id"] for source in job["prior_findings"]}
+            used.update((job.get("diagnosis") or {}).get("context_project_ids", []))
+            if job["project_id"] not in allowed or not used <= allowed:
+                raise HTTPException(status_code=404, detail="No chat job with that ID.")
         return job
 
     @app.get("/drafts")
@@ -331,6 +496,16 @@ def create_app(
         with closing(db.shared()) as conn:
             require_member_of(conn, member["id"], project_id)
             return list_project_findings(conn, project_id)
+
+    @app.get("/superbrain/findings")
+    def super_brain_findings(
+        project_id: str | None = None, member: dict[str, Any] = Depends(current_member)
+    ) -> list[dict[str, Any]]:
+        """Approved findings across every project you belong to, newest first."""
+        with closing(db.shared()) as conn:
+            if project_id:
+                require_member_of(conn, member["id"], project_id)
+            return list_readable_findings(conn, member["id"], [project_id] if project_id else None)
 
     @app.get("/superbrain/search")
     def ask_super_brain(
@@ -429,6 +604,55 @@ def create_app(
     def clear_alerts(member: dict[str, Any] = Depends(current_member)) -> dict[str, str]:
         alert_store.clear(member["id"])
         return {"status": "cleared"}
+
+    @app.post("/simulation-runs", status_code=201)
+    def share_run(body: RunIn, member: dict[str, Any] = Depends(current_member)) -> dict[str, Any]:
+        """Put a run you started watching on the dashboard (sent by your local connector)."""
+        with closing(db.shared()) as conn:
+            require_member_of(conn, member["id"], body.project_id)
+            return create_run(conn, member, body.project_id, body.run_label)
+
+    @app.post("/simulation-runs/{run_id}/report")
+    def report_run(run_id: str, body: RunReportIn, member: dict[str, Any] = Depends(current_member)) -> dict[str, int]:
+        """New step numbers and alerts for a run you watch. Only the researcher watching it can report."""
+        with closing(db.shared()) as conn:
+            run = get_visible_run(conn, member, run_id)
+            if run is None or run["member_id"] != member["id"]:
+                raise HTTPException(status_code=404, detail="No run with that ID.")
+            require_member_of(conn, member["id"], run["project_id"])
+            try:
+                points = [p.model_dump() for p in body.points]
+                return add_report(conn, member["id"], run_id, points, [a.model_dump() for a in body.alerts], body.stopped)
+            except RunNotFound as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from None
+            except InvalidAlert as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from None
+
+    @app.get("/simulation-runs")
+    def shared_runs(project_id: str | None = None, member: dict[str, Any] = Depends(current_member)) -> list[dict[str, Any]]:
+        """Runs you may see, newest first: your own and, for the group leader, every run
+        in their projects. Other researchers' runs never appear."""
+        with closing(db.shared()) as conn:
+            if project_id:
+                require_member_of(conn, member["id"], project_id)
+            return visible_runs(conn, member, [project_id] if project_id else None)
+
+    @app.get("/simulation-runs/alerts")
+    def shared_run_alerts(
+        limit: int = Query(default=20, ge=1, le=100), member: dict[str, Any] = Depends(current_member)
+    ) -> list[dict[str, Any]]:
+        """The newest alerts from runs you may see."""
+        with closing(db.shared()) as conn:
+            return recent_alerts(conn, member, limit)
+
+    @app.get("/simulation-runs/{run_id}")
+    def shared_run(run_id: str, member: dict[str, Any] = Depends(current_member)) -> dict[str, Any]:
+        """One run: its numbers per metric, for graphs, and its alerts."""
+        with closing(db.shared()) as conn:
+            detail = run_detail(conn, member, run_id)
+        if detail is None:  # runs you can't see look like they don't exist
+            raise HTTPException(status_code=404, detail="No run with that ID.")
+        return detail
 
     return app
 

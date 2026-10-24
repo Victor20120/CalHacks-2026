@@ -55,8 +55,8 @@ I refined the grid to dx = 0.005 for better resolution. Now the run blows up: ma
 > "While my agent works, ExpandRG also watches my running simulations."
 
 1. In the terminal, press Enter to start the solver (it runs slowly on purpose).
-2. In A's window, click **Alerts**, pick `live.log`, and click **Start watching**.
-3. Within seconds: **Warning** (sudden jump at step 200), then **Critical** (overflow at step 800).
+2. In A's window, click **Runs**, pick `sample_project / live.log`, and click **Start watching**.
+3. The run appears under **Live** and its graphs grow as the solver writes. Within seconds: **Warning** (sudden jump at step 200), then **Critical** (overflow at step 800), marked on the graphs and listed under them.
 
 > "These are cheap local checks, no AI needed. The Warning came 600 steps before the crash. And ExpandRG never stops my simulation, even on a Critical alert. It only reads the log."
 
@@ -77,7 +77,7 @@ I refined the grid to dx = 0.005 for better resolution. Now the run blows up: ma
 
 > "Now I'm Researcher B, on the same project. I refined my grid and my run blew up too. And I was told dt = 0.02 is safe."
 
-1. Click **Super Brain**: A's finding is already there, marked *Hypothesis · not verified*.
+1. Click **Super Brain**: A's finding is already there under **Researcher A**, marked *Hypothesis · not verified*.
 2. Click **Diagnose**. Choose the folder `sample_project_b`, tick the same three files, lines `18-25`, paste B's symptom, then **Preview** and **Send to my agent**.
 3. Point at **Retrieved from the Super Brain**: A's finding was given to B's agent automatically.
 
@@ -108,6 +108,14 @@ I refined the grid to dx = 0.005 for better resolution. Now the run blows up: ma
 
 4. Show the ✓ steps: 3 handed off, 2 left out.
 5. Back in B's window, refresh **Super Brain**: C's work is there, marked **handed off at offboarding**.
+6. In the leader's window, click **Super Brain**: the bar chart shows how many updates each researcher shared, and each researcher's updates are listed with their issue underneath.
+
+> "As the leader I see what everyone shared, in one place. For more detail I just ask the Super Brain at the bottom of the page."
+
+7. Type `blows up after refining the grid` in **Ask Super Brain** and press **Ask**.
+8. Click **Runs**: A's run is in the list with its alerts. Click it, then **Replay**.
+
+> "I see every run my researchers watch, live or afterwards. Here's A's run again, step by step: the Warning at step 200 and the Critical at step 800, long before the crash. The log file never left A's computer."
 
 ### 8. Close (30 seconds)
 

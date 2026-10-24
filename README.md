@@ -66,11 +66,25 @@ python -m local_connector serve                        # 2. the local connector 
 cd frontend && npm run dev                             # 3. the dashboard
 ```
 
-Open http://127.0.0.1:5173 and choose a demo member. To show two researchers side by side, open http://127.0.0.1:5173/?as=researcher_a and http://127.0.0.1:5173/?as=researcher_b in two windows (add `&view=alerts`, `drafts` or `superbrain` to start on a view).
+Open http://127.0.0.1:5173 and choose a demo member. To show two researchers side by side, open http://127.0.0.1:5173/?as=researcher_a and http://127.0.0.1:5173/?as=researcher_b in two windows (add `&view=alerts` for Runs, or `&view=drafts` or `&view=superbrain`, to start on a view).
 
-To see live alerts, grant a project folder in the Alerts view, start watching its log, then run the sample solver slowly so you can watch it fail: `python tests/fixtures/sample_project/heat2d.py tests/fixtures/sample_project/config.json --delay 0.5 > tests/fixtures/sample_project/live.log`. ExpandRG only reads the log; the solver keeps running until it stops on its own. Alerts are kept for the session only, unless you tick "Save alert history" (off by default).
+To watch a run live, start the sample solver slowly so you can watch it fail: `python tests/fixtures/sample_project/heat2d.py tests/fixtures/sample_project/config.json --delay 2 > tests/fixtures/sample_project/live.log`. Then, in the **Runs** page, pick `sample_project / live.log` and click **Start watching**. The local connector reads the log on your computer and sends the numbers from each step and any alerts, so the run shows live with its graphs and alerts. Earlier runs stay in the list to open or replay. You and your group leader can see your runs; other researchers can't. The log file itself never leaves your computer, and ExpandRG never stops a simulation.
 
 To show offboarding, first run `python -m backend.workspaces.demo` once (it adds Researcher C's sample work history), then sign in as the Group Leader and use the Offboarding view on Researcher C. The handed-off work appears in the Super Brain marked "handed off at offboarding". Offboarding can't be undone except with `python -m backend.workspaces.demo --reset`, which starts the demo over.
+
+## Ask the Super Brain
+
+The chat is **CREAO plus your group's specialized research knowledge**. Researchers A and B keep their own personal agents for diagnoses and project work. When a researcher approves a finding for sharing, it enters the shared Super Brain database. Every chat message retrieves relevant approved records and sends them to the central CREAO hub, which combines those records with its own scientific knowledge and reasoning to produce one answer.
+
+Open **Super Brain → Ask Super Brain**. By default the chat retrieves across **All my projects**, limited to those you can access; the Knowledge selector can narrow it to the current project. Try "How do Researcher A's and Researcher B's results relate?" or "Explain why refining the grid changes the stability limit." The answer can explain general concepts even when no specialized findings are available, while identifying what your group has actually observed. Shared findings retain their source author and hypothesis/verification labels.
+
+There is one response path: every message goes to CREAO, including greetings and response-style requests. There is no separate lookup mode or locally generated substitute answer. Sending uses CREAO credits, and an agent run can still take tens of seconds.
+
+You can say **Act as a researcher and be clear and concise.** The app saves standalone response instructions and includes them in the hub request, so CREAO can acknowledge and follow them. `/rules <instructions>` replaces preferences, `/rules show` asks about them, and `/rules reset` restores defaults. You can also use **Agent instructions → Save instructions**. Rules remain private per user and selected project and apply to later diagnoses and overviews too.
+
+The last 12 completed exchanges are kept privately per project and knowledge scope. Recent conversation and up to eight selected approved records are supplied to the hub on each request; the records include their evidence and original agent run IDs. Private project overviews and unapproved drafts are not added to the hub's shared knowledge. **Clear chat** clears the selected local conversation and keeps instructions; it does not erase CREAO's own memory. Restarting the backend can interrupt tracking of in-progress jobs.
+
+Super Brain chat is tuned for speed. It asks CREAO for a fast model (`gemini-3-flash`), and asks the hub to answer directly, without its audit workflow, tools or skills: that workflow made replies take 20 to 60 seconds, even for "hello". Set `CREAO_CHAT_MODEL_ID=saved` in `backend/.env` to keep the agent's own model. For the fastest replies, make the dedicated chat agent in CREAO ([setup](Documents/super-brain-chat-agent.md)); it uses an ordinary `capi_` app key.
 
 ## Try it from the command line
 
