@@ -4,7 +4,19 @@ One entry per commit, newest first. Each commit adds its own entry with the hash
 
 ---
 
-## 2026-10-23 · `pending` · Add Super Brain search, links and diagnosis context
+## 2026-10-23 · `pending` · Add the prototype definition of done to the build plan
+
+**Why:** The build plan's final check needs the full checklist in one place.
+
+**Changed**
+- Copied the prototype definition-of-done checklist into the build plan's final check, ticking what steps 1–5 have done.
+
+**Checks**
+- Secret scan: no API key or app ID in the commit.
+
+---
+
+## 2026-10-23 · `eae4dc0` · Add Super Brain search, links and diagnosis context
 
 **Why:** Build plan step 5: Researcher B's agent can use Researcher A's approved finding, while every lookup, link and piece of context respects project access.
 

@@ -174,6 +174,18 @@
 
 ---
 
-## Final check
+## Final check — prototype definition of done
 
-Go through the prototype definition of done and tick every box.
+Demonstrate on one machine if necessary, with two demo researcher profiles in one workspace.
+
+- [x] Create or select one demo workspace and two researcher profiles (step 3)
+- [x] Register a local repository folder and read authorized relevant content (step 2)
+- [x] Use the configured CREAO keys and known agent IDs to analyze a sample error (steps 1, 2 and 4)
+- [x] Store private project-specific context and a group shared finding separately (steps 3 and 4)
+- [ ] Show Informational / Warning / Critical alerts in the dashboard without stopping the simulation (step 6)
+- [ ] Keep persistent alert saving opt-in and off by default (step 7)
+- [x] Present a proposed knowledge contribution, require approval, and store only approved findings (step 4; dashboard view in step 6)
+- [x] Researcher B can retrieve Researcher A's approved finding and use it to inform a diagnosis (step 5)
+- [x] Demonstrate project isolation: an unauthorized researcher cannot retrieve restricted knowledge (steps 3–5)
+- [ ] Demonstrate handoff → verification → deactivation for a demo agent (step 7)
+- [ ] Never expose provider credentials or change source files without approval (holds so far; confirm at the end)
