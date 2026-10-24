@@ -19,7 +19,7 @@
 |---|---|---|---|
 | 0 | Setup | `backend/` | Mostly done |
 | 1 | Verify CREAO with a known-good input | `backend/creao/`, `tests/` | Done except recording credits |
-| 2 | Diagnosis endpoint with file permissions | `backend/api/`, `backend/orchestration/`, `local_connector/` | Not started |
+| 2 | Diagnosis endpoint with file permissions | `backend/api/`, `backend/orchestration/`, `local_connector/` | Done |
 | 3 | SQLite models and demo data | `backend/db/`, `backend/workspaces/`, `backend/memory/`, `backend/auth/` | Not started |
 | 4 | Approval path to publish a finding | `backend/knowledge_sharing/` | Not started |
 | 5 | Scoped lookup for Researcher B | `backend/memory/`, `backend/auth/` | Not started |
@@ -76,18 +76,20 @@
 ## Step 2 — Diagnosis endpoint with file permissions
 
 **Tasks**
-- [ ] FastAPI app in `backend/api/` with `GET /health`
-- [ ] `local_connector/file_access/`: the researcher registers a project folder and explicitly grants access
-- [ ] Reading is allowed only inside granted folders. `.env`, credentials and private keys are always excluded
-- [ ] `local_connector/evidence/`: extract only the relevant lines and files, never the whole repo
-- [ ] `POST /diagnose` in `backend/orchestration/`: symptom + selected evidence → CREAO adapter → diagnosis
+- [x] FastAPI app in `backend/api/` with `GET /health`
+- [x] `local_connector/file_access/`: the researcher registers a project folder and explicitly grants access (`python -m local_connector grant <folder>`)
+- [x] Reading is allowed only inside granted folders. `.env`, credentials and private keys are always excluded (rules in `backend/orchestration/evidence_policy.py`)
+- [x] `local_connector/evidence/`: extract only the relevant lines and files, never the whole repo
+- [x] `POST /diagnose` in `backend/orchestration/`: symptom + selected evidence → CREAO adapter → diagnosis. Returns a job ID; `GET /diagnose/{job_id}` gives the result
+- [x] Sample solver project with a real blow-up log in `tests/fixtures/sample_project/`
 
 **Checkpoint 2**
-- [ ] Automated: `GET /health` returns 200
-- [ ] Automated: reading a file outside the granted folder is refused
-- [ ] Automated: `.env`, `*.pem`, `id_rsa` and similar files are never included, even inside a granted folder
-- [ ] Automated: `/diagnose` with mock CREAO returns a diagnosis, and the evidence stays under a size limit
-- [ ] Manual: one real `/diagnose` call on a sample error gives a sensible answer **(uses credits)**
+- [x] Automated: `GET /health` returns 200
+- [x] Automated: reading a file outside the granted folder is refused
+- [x] Automated: `.env`, `*.pem`, `id_rsa` and similar files are never included, even inside a granted folder
+- [x] Automated: `/diagnose` with mock CREAO returns a diagnosis, and the evidence stays under a size limit
+- [x] Manual: one real `/diagnose` call on a sample error gives a sensible answer **(uses credits)** — passed 2026-10-23, run `e191c825`: with no hint in the symptom, the agent found `r = 0.30 > 0.25` from the config and code
+- Note: the symlink-escape test is skipped on Windows machines that can't create symlinks
 
 ---
 

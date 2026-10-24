@@ -1,0 +1,25 @@
+heat2d: grid 41x41, dx=0.01, dt=0.03, alpha=0.001, steps=3000
+step   100  max|T| = 2.7685e+02  residual = 3.7102e+00
+step   200  max|T| = 2.7549e+14  residual = 4.7355e+14
+step   300  max|T| = 6.6751e+28  residual = 1.1464e+29
+step   400  max|T| = 1.8612e+43  residual = 3.1952e+43
+step   500  max|T| = 5.5456e+57  residual = 9.5185e+57
+step   600  max|T| = 1.7032e+72  residual = 2.9232e+72
+step   700  max|T| = 5.3113e+86  residual = 9.1153e+86
+step   800  max|T| = 1.6648e+101  residual = 2.8572e+101
+step   900  max|T| = 5.2281e+115  residual = 8.9724e+115
+step  1000  max|T| = 1.6448e+130  residual = 2.8228e+130
+step  1100  max|T| = 5.1758e+144  residual = 8.8827e+144
+step  1200  max|T| = 1.6288e+159  residual = 2.7953e+159
+step  1300  max|T| = 5.1258e+173  residual = 8.7968e+173
+step  1400  max|T| = 1.6131e+188  residual = 2.7684e+188
+step  1500  max|T| = 5.0764e+202  residual = 8.7121e+202
+step  1600  max|T| = 1.5976e+217  residual = 2.7417e+217
+step  1700  max|T| = 5.0276e+231  residual = 8.6282e+231
+step  1800  max|T| = 1.5822e+246  residual = 2.7153e+246
+step  1900  max|T| = 4.9791e+260  residual = 8.5451e+260
+step  2000  max|T| = 1.5669e+275  residual = 2.6892e+275
+step  2100  max|T| = 4.9312e+289  residual = 8.4628e+289
+step  2200  max|T| = 1.5519e+304  residual = 2.6633e+304
+step  2223  max|T| = inf  residual = inf
+ERROR: non-finite temperature at step 2223, stopping

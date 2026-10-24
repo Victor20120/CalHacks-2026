@@ -26,3 +26,18 @@ A collaborative AI research assistant for research groups that build custom nume
 2. Install the Python packages: `python -m pip install -r backend/requirements.txt`
 3. Run the tests from the repo root (no network, no credits): `python -m pytest`
 4. Check that CREAO works (this starts a real run and uses credits): `cd backend` then `python testcreo.py`
+
+## Try a diagnosis
+
+From the repo root, in two terminals. The diagnosis starts a real CREAO run and uses credits.
+
+```
+# Terminal 1: start the backend
+python -m uvicorn backend.api.app:app --port 8000
+
+# Terminal 2: allow SimGuard to read the sample project, then diagnose it
+python -m local_connector grant tests/fixtures/sample_project
+python -m local_connector diagnose tests/fixtures/sample_project --symptom "max|T| reaches inf at step 2223" --file run.log --file config.json --file heat2d.py:16-23
+```
+
+The connector shows exactly what will be sent and asks before sending. Granted folders are remembered in `~/.simguard/grants.json`; take access back with `python -m local_connector revoke <folder>`.

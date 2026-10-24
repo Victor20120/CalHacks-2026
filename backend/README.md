@@ -40,6 +40,29 @@ An issue's `status` is the agent's own label (`confirmed` or `suspected`), not r
 
 Errors are subclasses of `CreaoError`: `CreaoInputError` (nothing sent), `CreaoRequestError` (network, bad key, rate limit), `CreaoRunFailed`, `CreaoTimeout` (has the `run_id` to check later).
 
+## Running the backend
+
+```
+python -m uvicorn backend.api.app:app --port 8000
+```
+
+It listens on this computer only (`127.0.0.1`). There is no sign-in yet; workspace and project permissions come in build step 3.
+
+| Endpoint | What it does |
+|---|---|
+| `GET /health` | Returns `{"status": "ok"}` |
+| `POST /diagnose` | Body: `project` (a name, not a path), `symptom`, optional `focus_areas`, `evidence` (list of `path`, `kind`, `excerpt`, `truncated`). Checks the evidence, starts a CREAO run and returns `202` with `job_id`, `evidence_sent` and `redactions` |
+| `GET /diagnose/{job_id}` | `status` is `running`, `completed` (with `diagnosis`: `reply`, `issues`, `summary`, `run_id`) or `failed` (with `error`: `type`, `message`, sometimes `run_id`) |
+
+## Evidence rules
+
+`backend/orchestration/evidence_policy.py` is shared by the local connector and the backend, and the backend re-checks everything it receives:
+
+- At most 10 excerpts, 4,000 characters each, 12,000 in total.
+- Paths must be relative to the project folder, so local paths (which can contain the user name) never leave the computer.
+- Sensitive files are never sent: `.env`, `.env.*`, private keys (`id_rsa`, `*.pem`, `*.key`, …), credential files, and anything inside `.git`, `.ssh`, `.aws` and similar folders.
+- Secrets inside files (private key blocks, CREAO, AWS and GitHub keys, `password = …`-style values) are blanked out before sending.
+
 ## CREAO API: verified so far
 
 Base URL `https://agent.creao.ai/api/v1`, header `Authorization: Bearer <capi_ key>`.
