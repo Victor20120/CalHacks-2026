@@ -91,7 +91,7 @@ SHARED_TABLES = (
     "context_artifacts", "context_links", "context_events",
 )
 PRIVATE_TABLES = ("runs", "private_episodes", "share_drafts", "settings", "alerts", "project_context", "visualizations",
-                  "visualization_history", "context_artifacts", "context_links", "context_events")
+                  "visualization_history", "lessons", "context_artifacts", "context_links", "context_events")
 
 SHARED_SCHEMA = """
 CREATE TABLE IF NOT EXISTS workspaces (
@@ -420,6 +420,22 @@ CREATE TABLE IF NOT EXISTS visualization_history (
     spec              TEXT NOT NULL,          -- JSON, after these operations
     creao_run_id      TEXT
 );
+
+-- Onboarding lessons (backend/onboarding/): a researcher asked the Super Brain about part of
+-- their project's code. Private to them: the code it was about, and the checked lesson.
+CREATE TABLE IF NOT EXISTS lessons (
+    id            TEXT PRIMARY KEY,
+    project_id    TEXT NOT NULL,
+    question      TEXT NOT NULL,
+    folder        TEXT NOT NULL,              -- the granted folder's name, never a path
+    path          TEXT NOT NULL,              -- relative to that folder
+    lines         TEXT NOT NULL,              -- the lines sent, e.g. "1-120"
+    code          TEXT NOT NULL,              -- the numbered excerpt sent, secrets blanked
+    paper         TEXT NOT NULL DEFAULT '{}', -- JSON: the paper given (folder, path, kind, pages); its text isn't kept
+    lesson        TEXT NOT NULL,              -- JSON (backend/onboarding/lessons.py)
+    creao_run_id  TEXT,
+    created_at    TEXT NOT NULL
+);
 """
 
 PRIVATE_SCHEMA += CONTEXT_SCHEMA + """
@@ -427,4 +443,5 @@ CREATE INDEX IF NOT EXISTS context_episodes_by_project ON private_episodes(proje
 CREATE INDEX IF NOT EXISTS context_drafts_by_episode ON share_drafts(episode_id);
 CREATE INDEX IF NOT EXISTS context_drafts_by_finding ON share_drafts(finding_id);
 CREATE INDEX IF NOT EXISTS context_graphs_by_project ON visualizations(project_id);
+CREATE INDEX IF NOT EXISTS lessons_by_project ON lessons(project_id);
 """

@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from backend.creao import CreaoConfigError, CreaoInputError, CreaoRequestError, CreaoRunFailed, CreaoTimeout
+from backend.onboarding.lessons import LessonUnreadable
 from backend.orchestration.simulation_setup import InvalidSetup
 
 log = logging.getLogger(__name__)
@@ -87,6 +88,8 @@ def run_job(
         store.fail(job_id, {"type": "input", "message": str(exc)})
     except InvalidSetup as exc:
         store.fail(job_id, {"type": "setup", "message": str(exc)})
+    except LessonUnreadable as exc:
+        store.fail(job_id, {"type": "lesson", "message": str(exc)})
     except CreaoConfigError as exc:
         store.fail(job_id, {"type": "config", "message": str(exc)})
     except CreaoRequestError as exc:

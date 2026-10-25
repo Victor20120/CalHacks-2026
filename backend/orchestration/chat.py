@@ -145,5 +145,9 @@ def _answer(client: Any, inputs: dict[str, str], prompt_chars: int) -> dict:
     reply, _ = redact_secrets(result.reply.strip())
     if not reply:
         raise ValueError("CREAO returned an empty reply.")
-    return {"reply": reply[:12000], "run_id": result.run_id, "reply_kind": "creao",
-            "provider_ms": provider_ms, "prompt_chars": prompt_chars}
+    answer = {"reply": reply[:12000], "run_id": result.run_id, "reply_kind": "creao",
+              "provider_ms": provider_ms, "prompt_chars": prompt_chars}
+    timings = getattr(result, "timings", None)
+    if isinstance(timings, dict) and timings:
+        answer["latency"] = timings
+    return answer

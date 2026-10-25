@@ -151,6 +151,27 @@ def test_new_versions_and_repeats_do_not_overwrite_old_code_inputs_or_results(la
     assert len(reopened.list("researcher_a", "heat-diffusion")) == 3
 
 
+def test_a_saved_version_can_be_deleted_but_not_while_it_runs_or_by_someone_else(lab):
+    before = hashes(lab.root)
+    first = ready(lab)
+    second = inspect(lab)["simulation"]["id"]
+    assert lab.local.delete(f"/simulations/{first}", headers=lab.headers["researcher_b"]).status_code == 404
+    with lab.manager.lock:
+        lab.manager.records[second]["status"] = "running"  # as if it were running
+    refused = lab.local.delete(f"/simulations/{second}", headers=lab.headers["researcher_a"])
+    assert refused.status_code == 409 and "Stop this run" in refused.json()["detail"]
+    with lab.manager.lock:
+        lab.manager.records[second]["status"] = "awaiting_setup"
+
+    deleted = lab.local.delete(f"/simulations/{first}", headers=lab.headers["researcher_a"])
+    assert deleted.status_code == 200 and deleted.json() == {"status": "deleted"}
+    assert not (lab.manager.home / first).exists()
+    assert [v["id"] for v in lab.local.get("/simulations?project_id=heat-diffusion", headers=lab.headers["researcher_a"]).json()] == [second]
+    assert lab.local.get(f"/simulations/{first}", headers=lab.headers["researcher_a"]).status_code == 404
+    assert [v["id"] for v in SimulationManager(lab.manager.home).list("researcher_a", "heat-diffusion")] == [second]  # gone after a restart too
+    assert hashes(lab.root) == before  # the project folder itself is never touched
+
+
 def test_setup_and_execution_enforce_identity_project_access_and_completed_setup(lab):
     body = {"root": str(lab.root), "project_id": "heat-diffusion"}
     assert lab.local.post("/simulations/inspect", json=body).status_code == 401
@@ -173,6 +194,18 @@ def test_setup_and_execution_enforce_identity_project_access_and_completed_setup
 def test_unsafe_or_ungrounded_plans_are_not_runnable(change):
     with pytest.raises(InvalidSetup):
         clean_plan({**python_plan(), **change}, ["README.md", "main.py", "input.json"])
+
+
+def test_a_real_project_can_cite_many_source_files():
+    files = [f"src/module_{i:02d}.f90" for i in range(19)] + ["makefile"]  # a Fortran solver with 19 modules
+    plan = {**python_plan(), "language": "Fortran", "source_files": [f.replace("/", "\\") for f in files],  # Windows paths
+            "build_commands": [["make"]], "run_command": ["./swimmer.exe"],
+            "questions": [f"question {i}" for i in range(20)], "environment_notes": ["gfortran 13", 7]}
+    checked = clean_plan(plan, files)
+    assert checked["source_files"] == files and len(checked["questions"]) == 12
+    assert checked["environment_notes"] == ["gfortran 13"]  # a stray non-text entry is dropped, not fatal
+    with pytest.raises(InvalidSetup, match="not found in this project: src/imaginary.f90"):
+        clean_plan({**plan, "source_files": [*files, "src/imaginary.f90"]}, files)
 
 
 def test_windows_compiler_and_executable_names_are_supported():

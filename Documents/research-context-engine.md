@@ -2,7 +2,7 @@
 
 Implemented in ExpandRG 0.15.0. The [approved design](research-context-engine-proposal.md) records the assessment and boundaries. CREAO remains the only reasoning provider. This component performs deterministic storage, retrieval and validation; it makes no model calls.
 
-The first connected workflow is **saved code and inputs → simulation run → anomaly → private investigation → selected evidence → approved finding**. Existing experiment and graph identities are reused. Worksheet references expose task status and the findings being taught, without human answers or comments. Papers, equations and onboarding remain future adapters.
+The first connected workflow is **saved code and inputs → simulation run → anomaly → private investigation → selected evidence → approved finding**. Existing experiment and graph identities are reused. Worksheet references expose task status and the findings being taught, without human answers or comments. Onboarding lessons (a paper and its code, taught with equations and pictures) are built separately in `backend/onboarding/` and kept in the researcher's private `lessons` table; they don't yet register context artifacts, so paper, equation and lesson adapters remain future work.
 
 ## Stores and identity
 

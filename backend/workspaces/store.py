@@ -38,6 +38,19 @@ def create_project(conn: sqlite3.Connection, workspace_id: str, project_id: str,
             "members": members}
 
 
+def rename_project(conn: sqlite3.Connection, project_id: str, name: str) -> dict:
+    """A project's new name, for everyone in the group; its ID (and so everything filed under it) stays.
+    Returns {"id", "name", "members"}, as create_project does."""
+    name = " ".join(name.split())[:100]
+    if not name:
+        raise InvalidProject("A project needs a name.")
+    with conn:
+        if conn.execute("UPDATE projects SET name = ? WHERE id = ?", (name, project_id)).rowcount != 1:
+            raise InvalidProject(f"There is no project {project_id}.")
+    members = [r[0] for r in conn.execute("SELECT member_id FROM project_members WHERE project_id = ? ORDER BY rowid", (project_id,))]
+    return {"id": project_id, "name": name, "members": members}
+
+
 def list_members(conn: sqlite3.Connection, active_only: bool = True) -> list[dict]:
     query = "SELECT id, workspace_id, display_name, role, status FROM members"
     if active_only:

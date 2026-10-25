@@ -1,8 +1,8 @@
 # Build Plan — First Milestone
 
-**Status:** v0.5 — ExpandRG 0.15.0
+**Status:** v0.6 — ExpandRG 0.16.0
 **Milestone:** a single local simulation diagnosis reaches CREAO, is shown in the dashboard, and can become one researcher-approved group finding; a second researcher can retrieve that finding.
-**Next:** Research Context Engine's first connected workflow is implemented (step 11). Papers, equations, onboarding and advanced visualization adapters remain future work. Visualization Studio phases 1 and 2 (steps 9–10) are built; phase 3 remains proposed.
+**Next:** Research Context Engine's first connected workflow is implemented (step 11), and onboarding lessons (step 12) teach a paper and its code with equations and pictures. Linking lessons, papers and equations into the Context Engine, and advanced visualization adapters, remain future work. Visualization Studio phases 1 and 2 (steps 9–10) are built; phase 3 remains proposed.
 
 ## How to use this plan
 
@@ -30,6 +30,7 @@
 | 9 | Visualization Studio, phase 1: graphs, overlays, Edit with Agent, saving | `backend/visualization/`, `backend/api/`, `frontend/` | Done |
 | 10 | Visualization Studio, phase 2: baselines, differences, diagnostic graphs, publication export | `backend/visualization/`, `backend/orchestration/`, `local_connector/` | Done |
 | 11 | Research Context Engine: run → anomaly → investigation → evidence → finding | `backend/context_engine/`, existing SQLite stores, connector | Done |
+| 12 | Onboarding lessons: a paper and its code, taught with words, equations and pictures | `backend/onboarding/`, `local_connector/references.py`, `frontend/` | Done |
 
 ---
 
@@ -293,3 +294,23 @@ Architecture: [approved proposal](research-context-engine-proposal.md). Contract
 **Checkpoint:** start one run, record its anomaly, diagnose with selected evidence, approve the draft, reopen the backend and retrieve the same run's connected context. Another member may see the finding while the investigation and private evidence remain inaccessible. Tests use mocked CREAO and temporary stores.
 
 **Deferred:** papers/equations, onboarding, expanded visualization, autonomous test orchestration, process resumption and new cloud infrastructure. Existing projects without captured provenance keep explicit unknowns.
+
+---
+
+## Step 12 — Onboarding lessons
+
+A researcher new to a project gives the Super Brain the paper and the code that implements it; the Super Brain writes the lesson. Private to that researcher. Code: `backend/onboarding/` (lessons, papers, pictures), `local_connector/references.py`, `frontend/src/views/LessonsView.jsx`.
+
+- [x] Connector: read the paper (PDF page by page with the optional `expandrg[papers]` extra, or `.tex`, `.md`, `.txt`) and the whole code file (`read_code`, about 1,200 lines), list the papers in a granted folder, and find the papers the project cites (DOIs and arXiv IDs in the code, README and CITATION.cff; BibTeX entries)
+- [x] One Super Brain run writes the whole lesson (a focus is optional): the idea in plain words, the paper's equations in LaTeX with where each is in the paper, every term with its meaning, units and the names in the code, how the code does it, a walkthrough, caveats, self-check questions, and 2–4 pictures
+- [x] Pictures are descriptions ExpandRG checks and draws: a flow of the code's steps, a grid (stencil), and plots whose formulas are evaluated by a restricted evaluator (arithmetic, a few functions, x, pi, e); never agent SVG, HTML or code
+- [x] Checks: cited lines must be lines that were sent; names must be in that code (otherwise struck through); unsafe or oversized LaTeX is dropped; findings only from those offered
+- [x] Papers checked on Crossref (titles and DOIs only): the paper given, cited in the project, found, DOI of another paper, not found, or not checked; requests are spaced and retried on 429
+- [x] Private table `lessons` (the paper's text isn't kept); `/lessons` API; Super Brain → **Lessons** tab for researchers; KaTeX (0.18.11) and the code pane load only there
+
+**Checkpoint 12** (`tests/test_lessons.py`, 8 tests, CREAO and Crossref faked)
+- [x] The real connector reads `.tex` and PDF papers, refuses code, sensitive files and bad pages, and says what to install without pypdf
+- [x] LaTeX with single backslashes survives JSON; lines, names, findings and pictures are checked; a formula can't reach anything but arithmetic
+- [x] Each paper gets the right status, including Crossref being down or rate-limited
+- [x] A lesson is written from the paper and code, kept private (not the leader, not other researchers, not the shared database), and refused requests use no credits
+- [x] Manual with real CREAO **(uses credits)** — 2026-10-25, through the dashboard on a scratch copy: a short LaTeX methods note and `heat2d.py` lines 13–52 gave a lesson in 72 s with 6 equations (each placed in the paper, all drawn), term tables, a flow, two stencil grids and an amplification-factor plot, an 8-step walkthrough and caveats. It led to two fixes: names written as expressions (`cfg["dt"]`, `T[i][j]`) count as in the code, and Crossref's rate limit no longer marks every later paper "not checked"; after the fix all four books and papers it named were found on Crossref

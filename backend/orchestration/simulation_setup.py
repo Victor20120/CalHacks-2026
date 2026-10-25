@@ -16,6 +16,8 @@ PROGRAMS = frozenset({
     "{fortran}", "{cc}", "{cxx}",
 })
 PYTHONS = frozenset({"python", "python3", "py", "python.exe", "python3.exe", "{python}"})
+MAX_NOTES = 12  # questions and environment notes: more are cut, not refused
+MAX_SOURCE_FILES = 80  # the files a plan cites: a real solver has dozens (a Fortran project here has 19)
 
 
 class InvalidSetup(ValueError):
@@ -65,11 +67,12 @@ def clean_plan(value: Any, known_files: list[str]) -> dict:
         raise InvalidSetup("The agent did not return a simulation setup. Try again with the entry point or build instructions.")
     def text(name: str, limit: int = 1500) -> str:
         return redact_secrets(str(value.get(name) or "")[:limit])[0]
-    def texts(name: str) -> list[str]:
-        raw = value.get(name, [])
-        if not isinstance(raw, list) or len(raw) > 12 or any(not isinstance(x, str) for x in raw):
-            raise InvalidSetup(f"{name} must be a short list of text.")
-        return [redact_secrets(x[:1000])[0] for x in raw if x.strip()]
+    def texts(name: str, limit: int = MAX_NOTES) -> list[str]:
+        """A list of text, cut to its first `limit` entries (a long list isn't a reason to lose the plan)."""
+        raw = value.get(name) or []
+        if not isinstance(raw, list):
+            raise InvalidSetup(f"{name} must be a list of text.")
+        return [redact_secrets(x[:1000])[0] for x in raw if isinstance(x, str) and x.strip()][:limit]
     builds = value.get("build_commands", [])
     if not isinstance(builds, list) or len(builds) > 8:
         raise InvalidSetup("Use at most eight build steps.")
@@ -78,9 +81,10 @@ def clean_plan(value: Any, known_files: list[str]) -> dict:
     run = command_words(raw_run) if raw_run else []
     if not run and not questions:
         raise InvalidSetup("The setup needs a run command or a question about what to run.")
-    sources = texts("source_files")
-    if any(p not in known_files for p in sources):
-        raise InvalidSetup("The setup cites a file that was not found in this project.")
+    sources = [p.replace("\\", "/").removeprefix("./") for p in texts("source_files", MAX_SOURCE_FILES)]
+    missing = [p for p in sources if p not in known_files]
+    if missing:
+        raise InvalidSetup(f"The setup cites a file that was not found in this project: {missing[0]}.")
     if run and not sources:
         raise InvalidSetup("A runnable setup must cite the project files it used.")
     return {"title": text("title", 120) or "Simulation", "language": text("language", 60),

@@ -3,6 +3,7 @@ import { backend } from "../api.js";
 import AgentChat from "../AgentChat.jsx";
 import { RunCharts } from "../charts.jsx";
 import { ErrorNote, Markdown, VerificationBadge } from "../components.jsx";
+import LessonsView from "./LessonsView.jsx";
 import WorksheetsView from "./WorksheetsView.jsx";
 
 const CATEGORY_LABELS = {
@@ -18,8 +19,12 @@ const NOTE_KINDS = {
 };
 
 // Shared updates grouped by researcher, with private CREAO chat beside them. The tab is
-// "updates" or "worksheets" (the Super Brain as a teacher); the sidebar switches it too.
-export default function SuperBrainView({ session, project, projects, tab, onTab }) {
+// "updates", "worksheets" (the Super Brain as a teacher) or, for researchers, "lessons" (it
+// explains a paper and the code that implements it); the sidebar switches it too.
+export default function SuperBrainView({ session, project, projects, tab: asked, onTab }) {
+  const researcher = session.member.role !== "leader";
+  const tab = asked === "lessons" && !researcher ? "updates" : asked;
+  const tabs = [["updates", "Updates"], ["worksheets", "Worksheets"], ...(researcher ? [["lessons", "Lessons"]] : [])];
   const [findings, setFindings] = useState(null);
   const [loading, setLoading] = useState(true);
   const [openId, setOpenId] = useState(null);
@@ -38,13 +43,13 @@ export default function SuperBrainView({ session, project, projects, tab, onTab 
   }, [project.id]);
 
   const projectName = (id) => projects.find((p) => p.id === id)?.name || id;
-  const withChat = tab !== "worksheets" || openId;
+  const withChat = tab === "updates" || openId;
   return (
     <div className={`super-brain ${withChat ? "with-chat" : ""}`}>
       <div className="sb-content">
         <div className="sb-inner">
           <div className="sb-tabs" role="tablist" aria-label="Super Brain">
-            {[["updates", "Updates"], ["worksheets", "Worksheets"]].map(([id, label]) => (
+            {tabs.map(([id, label]) => (
               <button key={id} role="tab" aria-selected={tab === id && !openId} className={tab === id && !openId ? "active" : ""}
                 onClick={() => setTab(id)}>
                 {label}
@@ -55,6 +60,8 @@ export default function SuperBrainView({ session, project, projects, tab, onTab 
             <FindingDetail session={session} id={openId} projectName={projectName} onOpen={setOpenId} onBack={() => setOpenId(null)} />
           ) : tab === "worksheets" ? (
             <WorksheetsView session={session} project={project} onOpenFinding={setOpenId} />
+          ) : tab === "lessons" ? (
+            <LessonsView session={session} project={project} onOpenFinding={setOpenId} />
           ) : (
             <Overview
               session={session}

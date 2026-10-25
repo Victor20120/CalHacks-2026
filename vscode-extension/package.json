@@ -2,7 +2,7 @@
   "name": "expandrg",
   "displayName": "ExpandRG",
   "description": "Talk to ExpandRG AI, powered by CREAO, understand your project, and monitor simulations in VS Code.",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "publisher": "expandrg",
   "private": true,
   "license": "UNLICENSED",

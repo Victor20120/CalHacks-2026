@@ -112,11 +112,11 @@ def test_sends_the_verified_request_shape():
 
     start, poll = session.calls[0], session.calls[1]
     assert start["method"] == "POST"
-    assert start["url"] == "https://agent.creao.ai/api/v1/runs"
-    assert start["json"] == {"appId": "app-test", "inputs": GOOD_INPUTS}
+    assert start["url"] == "https://agent.creao.ai/api/v1/apps/app-test/runs"
+    assert start["json"] == {"inputs": GOOD_INPUTS}
     assert start["headers"]["Authorization"] == f"Bearer {FAKE_KEY}"
     assert poll["method"] == "GET"
-    assert poll["url"] == f"https://agent.creao.ai/api/v1/runs/{RUN_ID}"
+    assert poll["url"] == f"https://agent.creao.ai/api/v1/apps/app-test/runs/{RUN_ID}"
 
 
 def test_model_override_is_a_run_option_not_an_agent_input():

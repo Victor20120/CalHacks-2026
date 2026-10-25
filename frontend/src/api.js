@@ -35,21 +35,29 @@ export const CATEGORIES = ["error_diagnosis", "research_result", "code_change"];
 
 export const CONNECTOR_HELP = "Start the local connector on this computer: python -m local_connector serve";
 
-// Per-viewer convenience only; the page works without it.
+// Per-viewer convenience only; the page works without it. This tab's value comes first (so two
+// windows can be two people side by side), then what this browser remembers from last time, so
+// who you are, your project and your folder survive closing the browser.
 export const remember = {
   get(key) {
-    try {
-      return sessionStorage.getItem(key);
-    } catch {
-      return null;
+    for (const store of ["sessionStorage", "localStorage"]) {
+      try {
+        const value = window[store].getItem(key);
+        if (value !== null) return value;
+      } catch {
+        // storage unavailable
+      }
     }
+    return null;
   },
   set(key, value) {
-    try {
-      if (value === null) sessionStorage.removeItem(key);
-      else sessionStorage.setItem(key, value);
-    } catch {
-      // storage unavailable
+    for (const store of ["sessionStorage", "localStorage"]) {
+      try {
+        if (value === null) window[store].removeItem(key);
+        else window[store].setItem(key, value);
+      } catch {
+        // storage unavailable
+      }
     }
   },
 };

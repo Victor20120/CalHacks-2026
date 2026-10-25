@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 
 from backend.orchestration.evidence_policy import MAX_ITEMS, redact_secrets
 from local_connector.agent_tools import list_project_files, read_project_file
+from local_connector.references import PaperUnreadable, list_papers, project_references, read_code, read_paper
 from local_connector.evidence.extract import extract_evidence, file_kind
 from local_connector.evidence.project_map import build_project_map
 from local_connector.experiments.manager import ExperimentManager, ExperimentNotFound, summarize
@@ -72,6 +73,15 @@ class ListIn(FolderIn):
 class ReadIn(FolderIn):
     path: str = Field(min_length=1, max_length=500)
     lines: str | None = Field(default=None, max_length=20)
+
+
+class ReferencesIn(FolderIn):
+    path: str = Field(min_length=1, max_length=500)  # the file a lesson is about
+
+
+class PaperIn(FolderIn):
+    path: str = Field(min_length=1, max_length=500)  # the paper: PDF, .tex, .md or .txt
+    pages: str | None = Field(default=None, max_length=20)  # a PDF's pages, "3-7"
 
 
 class WatchIn(BaseModel):
@@ -427,6 +437,37 @@ def create_service(
         except (AccessDenied, ValueError) as exc:
             raise HTTPException(status_code=403 if isinstance(exc, AccessDenied) else 422, detail=str(exc)) from None
 
+    @app.post("/tools/project_references")
+    def tool_references(body: ReferencesIn) -> dict:
+        """The papers the project cites (DOIs, arXiv IDs, BibTeX entries), for a lesson (read-only)."""
+        try:
+            return project_references(registry, named(body.folder), body.path)
+        except AccessDenied as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from None
+
+    @app.post("/tools/read_code")
+    def tool_read_code(body: ReferencesIn) -> dict:
+        """The whole code file a lesson is about, numbered, up to about 1,200 lines (read-only)."""
+        try:
+            return read_code(registry, named(body.folder), body.path)
+        except AccessDenied as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from None
+
+    @app.post("/tools/list_papers")
+    def tool_list_papers(body: FolderIn) -> dict:
+        """The files in a granted folder that can be a lesson's paper (read-only)."""
+        return list_papers(named(body.folder))
+
+    @app.post("/tools/read_paper")
+    def tool_read_paper(body: PaperIn) -> dict:
+        """A lesson's paper as text: a PDF page by page (needs pypdf), or a .tex, .md or .txt file (read-only)."""
+        try:
+            return read_paper(registry, named(body.folder), body.path, body.pages)
+        except AccessDenied as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from None
+        except PaperUnreadable as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+
     @app.post("/project-map")
     def project_map(body: RootIn) -> dict:
         """A map of the whole granted folder for a project overview: the tree and the start of key files."""
@@ -631,6 +672,16 @@ def create_service(
     def stop_simulation(identifier: str, authorization: str | None = Header(default=None)) -> dict:
         owned_simulation(identifier, authorization)
         return simulation_store.stop(identifier)
+
+    @app.delete("/simulations/{identifier}")
+    def delete_simulation(identifier: str, authorization: str | None = Header(default=None)) -> dict:
+        """Delete one of your saved versions from this computer (not while it runs). Its results in Monitor stay."""
+        owned_simulation(identifier, authorization)
+        try:
+            simulation_store.delete(identifier)
+        except InvalidSetup as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        return {"status": "deleted"}
 
     @app.post("/simulations/{identifier}/repeat", status_code=201)
     def repeat_simulation(identifier: str, authorization: str | None = Header(default=None)) -> dict:

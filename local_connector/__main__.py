@@ -75,6 +75,8 @@ def main(argv: list[str] | None = None) -> int:
             return _overview(registry, args)
         elif args.command == "watch":
             return _watch(registry, args)
+        elif args.command == "import-runs":
+            return _import_runs(registry, args)
         elif args.command == "serve":
             import uvicorn
 
@@ -308,6 +310,49 @@ def _watch(registry: GrantRegistry, args: argparse.Namespace) -> int:
     return 0
 
 
+def _import_runs(registry: GrantRegistry, args: argparse.Namespace) -> int:
+    """Put finished runs on the dashboard (Monitor, Visualize) from their folders. Only reads them."""
+    import hashlib
+    import json
+
+    from local_connector.context import atomic_save
+    from local_connector.service import BackendPoster
+    from local_connector.simulation_monitor.old_runs import find_runs, read_run
+
+    if not args.member:
+        raise BackendError("Say who you are: --as <member id> (or set EXPANDRG_MEMBER).")
+    grant = registry.grant_for_root(args.folder)
+    session = requests.Session()
+    imported = skipped = 0
+    for run_dir in find_runs(grant.root):
+        label = run_dir.relative_to(grant.root).as_posix()
+        label = grant.name if label == "." else f"{grant.name}/{label}"
+        identity = "\0".join((args.backend, args.member, args.project, str(run_dir)))
+        marker = registry.state_file.parent / "run-imports" / (hashlib.sha256(identity.encode("utf-8")).hexdigest() + ".json")
+        if marker.exists():
+            skipped += 1
+            continue
+        run = read_run(run_dir, label)
+        if not run.samples:
+            print(f"  {run.label}: no numbers to graph, left out")
+            continue
+        poster = BackendPoster(args.backend, args.member, args.project, run.label, session)
+        poster.start()
+        if run.alerts:
+            poster(run.alerts[:50])
+        poster.samples(run.samples)
+        poster.stopped()
+        if not poster.run_id or poster.undelivered:
+            print(f"  {run.label}: could not reach the backend; run this again to retry")
+            continue
+        atomic_save(marker, {"run_id": poster.run_id, "folder": str(run_dir)})
+        imported += 1
+        print(f"  {run.label}: {len(run.samples)} points of {', '.join(run.metrics)}", flush=True)
+    print(f"Imported {imported} run(s)" + (f"; {skipped} were already imported" if skipped else "")
+          + ". They're in Monitor and Visualize. Nothing in the folders was changed.")
+    return 0
+
+
 def _sign_in(args: argparse.Namespace) -> dict[str, str]:
     if not args.member:
         raise BackendError("Say who you are: --as <member id> (or set EXPANDRG_MEMBER).")
@@ -378,6 +423,9 @@ def _parser() -> argparse.ArgumentParser:
     w.add_argument("folder", help="a granted project folder")
     w.add_argument("--file", required=True, help="the log to watch, e.g. run.log")
     w.add_argument("--project", required=True, help="ExpandRG project ID")
+    i = sub.add_parser("import-runs", parents=[backend], help="put finished runs on the dashboard from their folders (read-only)")
+    i.add_argument("folder", help="a granted folder of run folders, e.g. your runs/ folder")
+    i.add_argument("--project", required=True, help="ExpandRG project ID")
     s = sub.add_parser("serve", parents=[backend], help="run the local service the dashboard talks to")
     s.add_argument("--port", type=int, default=8001)
     return parser

@@ -23,8 +23,10 @@ class WalkStats:
     skipped: Counter = field(default_factory=Counter)  # reason -> count
 
 
-def iter_project_files(grant: Grant, stats: WalkStats | None = None) -> Iterator[tuple[str, Path]]:
-    """Yield (path relative to the project, full path) for every file that may be offered."""
+def iter_project_files(grant: Grant, stats: WalkStats | None = None,
+                       binary_ok: frozenset[str] = frozenset()) -> Iterator[tuple[str, Path]]:
+    """Yield (path relative to the project, full path) for every file that may be offered.
+    binary_ok: suffixes offered even though they look binary (".pdf" for a lesson's paper)."""
     stats = stats or WalkStats()
     for dirpath, dirnames, filenames in os.walk(grant.root):
         rel_dir = Path(dirpath).relative_to(grant.root)
@@ -50,7 +52,7 @@ def iter_project_files(grant: Grant, stats: WalkStats | None = None) -> Iterator
                 stats.skipped["sensitive files"] += 1
             elif not inside(grant.root, full):
                 stats.skipped["links outside the folder"] += 1
-            elif looks_binary(full):
+            elif full.suffix.lower() not in binary_ok and looks_binary(full):
                 stats.skipped["binary files"] += 1
             else:
                 yield relative, full

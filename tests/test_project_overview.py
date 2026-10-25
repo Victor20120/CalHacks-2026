@@ -224,6 +224,14 @@ def test_an_overview_is_made_and_saved_privately(lab, payload):
     assert saved["overview"]["key_parameters"][0]["name"] == "dt"
     assert saved["creao_run_id"] == "run-overview-1"
     assert "```json" not in saved["reply"]
+    assert saved["map_stats"]["folder"] == "diffusion_study"  # the mapped folder's name: the Project page's heading
+
+    # the project is now named after its folder, for everyone in the group; the overview stays private
+    names = lambda member: {p["id"]: p["name"] for p in lab.client.get("/me", headers=lab.headers(member)).json()["projects"]}  # noqa: E731
+    assert names("researcher_a")["heat-diffusion"] == names("researcher_b")["heat-diffusion"] == names("leader")["heat-diffusion"] \
+        == "diffusion_study"
+    assert names("researcher_a")["wave-propagation"] != "diffusion_study"
+    assert lab.saved(member="researcher_b").status_code == 404
 
 
 def test_paths_the_agent_invented_are_marked(lab, payload):

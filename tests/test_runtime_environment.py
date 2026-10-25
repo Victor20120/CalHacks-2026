@@ -283,6 +283,20 @@ def test_existing_makefile_compilers_outside_path_are_reused(tmp_path):
         assert command[1:] == [flag, "source"]
 
 
+def test_makefile_comment_is_not_part_of_the_compiler(tmp_path):
+    project = tmp_path / "research"
+    project.mkdir()
+    compiler = executable(tmp_path / "toolchain" / "gfortran.exe")
+    (project / "makefile").write_text(f'FC = "{compiler}"   # compiler\n')
+
+    runtime = discover_runtime(project, environ={"PATH": ""}, find_program=no_program)
+    command = resolve_runtime_command(["{fortran}", "solver.f90"], project, project, runtime,
+                                      find_program=no_program)
+
+    assert Path(command[0]).resolve() == compiler
+    assert command[1:] == ["solver.f90"]
+
+
 def test_relative_makefile_compiler_uses_project_root_when_connector_cwd_differs(tmp_path, monkeypatch):
     project = tmp_path / "research"
     project.mkdir()

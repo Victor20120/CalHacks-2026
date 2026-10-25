@@ -6,6 +6,15 @@ A collaborative AI research assistant for research groups that build custom nume
 
 **Status:** prototype. The dashboard is built for laptops and desktop computers.
 
+## CREAO agents
+
+The core work is done by CREAO agents built on [agent.creao.ai](https://agent.creao.ai):
+
+| Agent | What it does | Agent ID |
+|---|---|---|
+| **Super Brain** | The group's shared agent: answers from the group's approved findings, writes worksheets and onboarding lessons (a paper and its code, with equations and diagrams) | `0bb3ca8b-e123-401f-aa10-c291f1f55885` |
+| **Personal agents** | One per researcher, private to them: project overviews, diagnoses, simulation setup, and the ExpandRG AI chat in VS Code | one per researcher |
+
 ## Docs
 
 - [Build plan](Documents/build-plan.md): ordered steps for the first milestone, with a checkpoint test after each
@@ -14,6 +23,7 @@ A collaborative AI research assistant for research groups that build custom nume
 - [Personal agent toolkit](Documents/agent-toolkit.md): what an agent can look at (your files, runs and the group's findings), the CREAO check, and setup in VS Code
 - [Visualization Studio design](Documents/visualization-design.md): the **Visualize** page's graphs for comparing runs, edited by hand or by your own CREAO agent (phases 1 and 2 built)
 - [Research Context Engine](Documents/research-context-engine.md): permission-checked run, anomaly, investigation, evidence and finding history, backed by existing local stores
+- [Devpost write-up](Documents/devpost.md): the project in short, and what it's built with
 - [Changelog](CHANGELOG.md): what each commit changed
 
 ## Folder map
@@ -33,7 +43,7 @@ A collaborative AI research assistant for research groups that build custom nume
 ExpandRG installs as one package: no copy of this folder, and no Node. It needs Python 3.10 or newer.
 
 **With VS Code:**
-1. Install the extension: `code --install-extension expandrg-0.15.0.vsix --force`, or in VS Code: Extensions → **…** → **Install from VSIX…**.
+1. Install the extension: `code --install-extension expandrg-0.16.0.vsix --force`, or in VS Code: Extensions → **…** → **Install from VSIX…**.
 2. Open your project folder and click **ExpandRG: Set up** in the bottom bar. If no Python on the computer has ExpandRG yet, it offers to install it (the extension carries it) into the first Python 3.10+ it finds, or one you pick. It needs the internet once, for ExpandRG's own packages.
 3. The group leader sets up the group once: **Set up a new group…** in the same list. Everyone then picks the group, who they are and the folder's project.
 
@@ -41,7 +51,7 @@ To keep ExpandRG's packages apart from your project's, give it its own virtual e
 
 **Without VS Code:**
 ```
-python -m pip install expandrg-0.15.0-py3-none-any.whl
+python -m pip install expandrg-0.16.0-py3-none-any.whl
 expandrg setup                      # the group leader, once: the group and its CREAO agents
 expandrg start --group <group-id>   # the dashboard is at http://127.0.0.1:5173
 expandrg add-project                # another project for the group
@@ -139,7 +149,7 @@ For publication PDF/SVG/PNG with physical sizes, DPI, and font controls, install
 ```
 python -m pip install "expandrg[export]"
 # From a local wheel:
-python -m pip install "expandrg-0.15.0-py3-none-any.whl[export]"
+python -m pip install "expandrg-0.16.0-py3-none-any.whl[export]"
 ```
 
 Browser PNG/SVG export remains available without this extra. CREAO provides graph instructions; all measurements, calculations, and rendering stay in ExpandRG.
@@ -161,7 +171,7 @@ The researcher's **Simulations** page prepares and runs projects directly:
 1. In **Set up & run**, choose an existing simulation project and click **Detect & prepare**. ExpandRG checks its `.venv`, `venv`, or `env`, then an active virtual/Conda environment, then its current Python. Your existing personal CREAO agent reads a redacted project map and prepares the project’s build steps, inputs, and run command. No `expandrg.json` or log file selection is required.
 2. Review the saved setup and click **Run simulation**. The project uses its existing interpreter and installed dependencies; compiled languages such as Fortran build locally before execution. A failed build stops there. ExpandRG prepares existing simulations, without creating a new solver or environment by default. Unresolved tools or inputs block Run.
 3. **Monitor** opens automatically with live metrics and alerts. The group leader sees it on their **Run results** page: the run's log and data drawn as graphs, with its problems marked. Other researchers cannot read your run details.
-4. **Saved versions** keeps each version's code, inputs, setup, output, and results. **Prepare from this version** creates another copy for a new run. Editing the source project or preparing a new version never overwrites an earlier version. Your original project is only read.
+4. **Saved versions** keeps each version's code, inputs, setup, output, and results. In a version, **Tell your agent more about this version** (for example, answer its question, or say which make or how many threads), then **Update setup**. A version that already ran keeps its setup, and the update goes to a copy, the next version. **Prepare from this version** creates another copy for a new run, and **Delete this version** removes it from this computer (not while it runs; its results stay in Monitor). Editing the source project or preparing a new version never overwrites an earlier version. Your original project is only read.
 
 For a custom location, open **Existing environment** before preparing, or **Environment details & connection** on a saved version. Enter an existing environment folder/Python executable or Fortran compiler path. **Use environment & update setup** asks CREAO to revise the plan; **Recheck existing tools** refreshes detection without another agent request. Compiler settings in `FC`, `CC`, `CXX`, Makefiles, and CMake presets/cache are reused. SDKs that need activation scripts should be activated in the terminal used to start ExpandRG. Discovery uses that execution environment; Windows and WSL are separate.
 
@@ -169,11 +179,11 @@ Versions live locally under `~/.expandrg/simulations/<group>/<id>/` (or `$EXPAND
 
 In VS Code, the ExpandRG extension ([vscode-extension/](vscode-extension/README.md)) adds **Set up simulation** to the bottom bar. It opens a request in your personal agent chat: click **Send** for the agent to inspect permitted project files and help prepare the environment, build steps, input files, and run commands. Python and compiled languages such as Fortran use their existing project workflow. You review and run the proposed commands in your normal terminal; ExpandRG monitors the output, with pop-ups for problems and a dashboard link. Commands in `expandrg.json` are watched automatically, other recognized runs after one click, when VS Code's terminal command reporting is on. You can also watch a log file. The extension starts ExpandRG in the background if it isn't running (`run_demo.py --no-browser`).
 
-The extension also has **ExpandRG AI**, a private chat powered by your own CREAO research agent. Use **Understand project** to map the folder, review what will be sent, then **Send to my agent**. The saved overview lets you discuss and refine the build and simulation setup, including Fortran compilation, input files, and runtime parameters. The settings icon opens **Agent instructions** to customize how your agent helps. Chat proposes commands; it does not execute them or edit your project. Install extension version **0.15.0** to see the updated panel (see [extension setup](vscode-extension/README.md)).
+The extension also has **ExpandRG AI**, a private chat powered by your own CREAO research agent. Use **Understand project** to map the folder, review what will be sent, then **Send to my agent**. The saved overview lets you discuss and refine the build and simulation setup, including Fortran compilation, input files, and runtime parameters. The settings icon opens **Agent instructions** to customize how your agent helps. Chat proposes commands; it does not execute them or edit your project. Install extension version **0.16.0** to see the updated panel (see [extension setup](vscode-extension/README.md)).
 
-To try a change without touching your project, open **Experiments**. A project needs an `expandrg.json` run manifest saying which commands experiments may run, which config keys they may change, and their time, memory and output limits (the sample projects have one). Pick the folder, change a parameter (for example `dt`) for up to three experiments, and click **Prepare**: that only makes copies under `~/.expandrg/experiments/`. Nothing runs until you click **Run** or **Run all**. Each run is stopped if it passes its limits, and the results are compared with the original run (`run.log`) in charts and a table. Experiments stay on your computer.
+Runs made before ExpandRG, or outside it, can be added to **Monitor** and **Visualize** without running anything again: grant the run's folder, then `python -m local_connector import-runs <folder> --project <id> --as <member>`. It only reads the folder. The group's Fortran swimmer runs (`fort.10` positions, `fort.80` energy per beat, `setup.txt`) get distance from start, velocity (the centre's distance per beat) and efficiency (velocity² / power), as the group's `compare_v3` works them out; other runs get the numbers in their log and one-number-per-line output files. The dashboard no longer has an Experiments page: try a change as a new version under **Simulations → Set up & run**.
 
-To compare runs on one graph, open **Visualize** (or **Open in Visualize** on a run or an experiment comparison). Tick the runs and experiments, then pick measures, the x axis, line or scatter, runs together or in separate panels, a log scale, a range of steps, a title and units. Under the graph are notes on anything it can't show, the largest difference between runs, and a table of the same numbers. **Save** keeps the graph (privately) and saves each later change, with **Undo**; PNG and SVG export are light on white. Researchers can also ask their own agent in the **Edit with Agent** panel ("use steps 400 to 900", "show residual instead", "these results look wrong"). The agent sees summaries and statistics, never the full data, and changes the graph only through operations ExpandRG checks; it never changes the runs, and only you set units. Each message uses CREAO credits. The group leader graphs the runs shared with them by hand.
+To compare runs on one graph, open **Visualize** (or **Open in Visualize** on a run). Tick the runs, then pick measures, the x axis, line or scatter, runs together or in separate panels, a log scale, a range of steps, a title and units. Under the graph are notes on anything it can't show, the largest difference between runs, and a table of the same numbers. **Save** keeps the graph (privately) and saves each later change, with **Undo**; PNG and SVG export are light on white. Researchers can also ask their own agent in the **Edit with Agent** panel ("use steps 400 to 900", "show residual instead", "these results look wrong"). The agent sees summaries and statistics, never the full data, and changes the graph only through operations ExpandRG checks; it never changes the runs, and only you set units. Each message uses CREAO credits. The group leader graphs the runs shared with them by hand.
 
 To show offboarding, first run `python -m backend.workspaces.demo` once (it adds Researcher C's sample work history), then sign in as the Group Leader and use the Offboarding view on Researcher C. The handed-off work appears in the Super Brain marked "handed off at offboarding". Offboarding can't be undone except with `python -m backend.workspaces.demo --reset`, which starts the demo over.
 
@@ -198,6 +208,16 @@ Then **Send to CREAO**. One run (about a minute) writes one worksheet for each p
 Each person's worksheets are numbered **Worksheet 1, 2, 3**. By default a worksheet teaches only what's new to that person: findings shared, or corrected with a note, since their last worksheet, building on the topics they covered before. Untick "Only findings that are new" to cover everything again.
 
 Any worksheet can be cancelled and restored later. A cancelled worksheet disappears for the researcher, its lessons come back in their next one, and that one takes its number.
+
+**Lessons: learning a new project's code.** On **Super Brain → Lessons**, a researcher picks the paper and the code file built from it, both from folders they granted. The paper can be a PDF, its LaTeX source (`.tex`, which keeps the equations exact), or a Markdown or text copy; reading PDFs needs `python -m pip install "expandrg[papers]"`. The whole code file is read (up to about 1,200 lines), and a focus question is optional. What will be sent loads by itself (**See exactly what's sent**), then **Write the lesson** starts one Super Brain run (one to three minutes). The lesson has:
+- the idea in plain words;
+- the paper's equations, drawn, each with where it is in the paper;
+- every term with its meaning, units and the variable that holds it;
+- how the code does it, with the code beside the lesson (click any line reference to highlight it);
+- pictures: a flow of the code's steps, stencil grids, and plots ExpandRG computes from the lesson's formulas;
+- caveats and a few questions to check yourself.
+
+ExpandRG checks the lesson before showing it. Cited lines must be lines that were sent, and names not in the code are struck through. The pictures are descriptions ExpandRG draws itself, never images or code from the agent. Every paper is checked on Crossref (only titles and DOIs are sent there): the paper you gave, papers the project cites itself, papers found, and papers that may be wrong. Lessons are private: the leader and other researchers can't see them, and no one is told.
 
 Super Brain chat is tuned for speed. It asks CREAO for a fast model (`gemini-3-flash`), and asks the hub to answer directly, without its audit workflow, tools or skills: that workflow made replies take 20 to 60 seconds, even for "hello". Set `CREAO_CHAT_MODEL_ID=saved` in `backend/.env` to keep the agent's own model. For the fastest replies, make the dedicated chat agent in CREAO ([setup](Documents/super-brain-chat-agent.md)); it uses an ordinary `capi_` app key.
 

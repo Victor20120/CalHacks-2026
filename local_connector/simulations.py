@@ -9,6 +9,8 @@ import copy
 import json
 import os
 import shutil
+import stat
+import sys
 import threading
 import time
 import uuid
@@ -268,6 +270,20 @@ class SimulationManager:
                     self.cancels.pop(identifier, None)
                     self._save(record)
 
+    def delete(self, identifier: str) -> None:
+        """Delete a saved version from this computer: its saved code and inputs, its working copy and its
+        output. A queued or running version is stopped first by the researcher. Results already sent to
+        Monitor stay there. If Windows still has a file open, the version is kept, so it can be retried."""
+        with self.lock:
+            record = self._get(identifier)
+            if record["status"] in ACTIVE:
+                raise InvalidSetup("Stop this run before deleting its version.")
+            folder = self.home / identifier
+            shutil.rmtree(folder, **{"onexc" if sys.version_info >= (3, 12) else "onerror": _writable_then_retry})
+            if folder.exists():
+                raise InvalidSetup("Some of this version's files are still open in another program. Close it and try again.")
+            self.records.pop(identifier)
+
     def get(self, identifier: str) -> dict:
         with self.lock:
             return dict(self._get(identifier))
@@ -325,6 +341,15 @@ def _tail(stage: Path, combined: Path, monitor, done: threading.Event) -> None:
             if waiting:
                 monitor.feed([waiting.decode("utf-8", errors="replace")])
             return
+
+
+def _writable_then_retry(remove, path, _error) -> None:
+    """Windows keeps read-only files (a copied .git, say) from being deleted: clear the flag and retry."""
+    try:
+        os.chmod(path, stat.S_IWRITE)
+        remove(path)
+    except OSError:
+        pass  # still in use: delete() reports it
 
 
 def _now():

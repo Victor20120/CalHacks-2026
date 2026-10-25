@@ -264,7 +264,7 @@ export default function VisualizeView({ session, project, seed }) {
         <div className="visualize-top">
         <section className="card run-picker">
           <h3>Runs</h3>
-          {!catalog.length && <p className="muted small">No runs or experiments in {project.name} yet. Watch a run or try an experiment first.</p>}
+          {!catalog.length && <p className="muted small">No runs in {project.name} yet. Run a simulation, or import an old run first.</p>}
           {catalogNotes.map((n) => <p key={n} className="muted small">{n}</p>)}
           <ul className="run-choices">
             {catalog.map((item) => {
@@ -753,7 +753,7 @@ function GraphAgent({ session, spec, current, focus, ensureSaved, onResult, onBu
       try {
         const job = await backend(`/jobs/${pending.jobId}`, { token: session.token });
         if (stopped) return;
-        if (job.status === "running") { timer = setTimeout(poll, 1500); return; }
+        if (job.status === "running") { timer = setTimeout(poll, 750); return; }
         if (job.status === "failed") setError(job.error?.message || "Your agent couldn't reply. Try again.");
         else onResult(job.diagnosis);
         setPending(null);

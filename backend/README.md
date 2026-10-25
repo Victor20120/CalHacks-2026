@@ -133,6 +133,14 @@ Chat speed is set by CREAO's run, not by the app: the app prepares a question in
 
 Diagnoses and project overviews still use each researcher's own agent with its saved model and workflow. The [speed benchmark](../Documents/benchmarks/hub-chat-speed-2026-10-24.md) records the earlier comparison of these settings.
 
+**Checking for the answer** (`backend/creao/client.py`). CREAO answers a key's 30th request within a minute with HTTP 429 and `Retry-After` (33 s when measured), so checking every second made the third chat in a row wait out an answer that was ready: 34.5 s instead of 13. Now:
+- the clients of one agent share a pace of at most 28 requests a minute (`Pace`, `shared_pace`), and a 429's `Retry-After` holds that agent's other requests too;
+- a new run's first status check waits for 75% of that agent's usual run time (learned from CREAO's own `startedAt`/`completedAt`; 12 s before it has answered once), between 2 and 12 s, then checks every second. A resumed run is checked at once;
+- a 429 without `Retry-After` is retried after at most 2 s, never by doubling waits (they once hid a finished run for 22 s). A run start is never retried, since each costs credits;
+- runs go to CREAO's app-scoped routes (`POST /apps/{appId}/runs`, `GET /apps/{appId}/runs/{id}`), and each result carries `timings` (submit, status checks, sleeps, pacing, CREAO's queue and execution, and our own overhead), returned with chat replies as `latency`.
+
+Measured on four Super Brain chats in a row: 13.3, 13.7, 12.9 and 13.7 s, with 4 or 5 status checks each and no 429; what's left is CREAO's own run time, 12 to 13 s. The dashboard and VS Code check the backend for a finished job every 0.75 s. Personal agents' file and finding lookups in one round run at the same time.
+
 ### Personal CREAO agent chat
 
 | Endpoint | Purpose |
@@ -173,6 +181,20 @@ Personal agents are numbered within their workspace by registration/activation o
 - finding IDs from what that researcher may learn from.
 
 Text is bounded and secrets are blanked everywhere. A worksheet is seen only by its researcher and the leader, while both are active members of its project. "Try it" steps tell the researcher to use a copy; nothing runs by itself. Tables: `worksheets` and `worksheet_items`, created on start.
+
+Building a Project overview names the project after the folder that was mapped (`rename_project` in `backend/workspaces/store.py`, and `group.json` in a group), for everyone: the project's ID, and everything filed under it, stay. The overview itself stays private; its `map_stats.folder` keeps the folder's name.
+
+### Onboarding lessons: a paper and its code, explained
+
+`backend/onboarding/`: a researcher gives the paper and the part of the code that implements it, and one Super Brain run (the dedicated chat agent, or the hub) writes the lesson. Private to them, in their private database.
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /lessons` | Researchers only (`403` for the leader). Body: `project_id`, `folder` (a granted folder's name) and `path` of the code, optional `lines` (`"13-52"`; default the whole file, up to 60,000 characters with line numbers, about 1,200 lines; the dashboard always sends the whole file), optional `paper_folder` (default `folder`), `paper_path` (PDF, `.tex`, `.md`, `.txt`) and `paper_pages` (a PDF's, `"3-7"`), optional `question` (a focus). Reads the code, the paper and the project's own citations through the local connector (`/tools/read_code`, or `/tools/read_project_file` for lines; `/tools/read_paper`, `/tools/project_references`) before starting, so a file it can't read is a `422` and costs nothing. Adds up to 3 matching findings. Returns `202` with `job_id`; the job's result has `lesson_id`. One at a time per project (`409`) |
+| `GET /lessons?project_id=` | Your lessons, newest first (title, question, paper and code paths) |
+| `GET /lessons/{id}`, `DELETE /lessons/{id}` | One of yours: the lesson, the numbered code that was sent, which paper was given (its text isn't kept) and the CREAO run ID |
+
+The Super Brain answers with one `{"lesson": {...}}` block (`lessons.py`: `LESSON_BRIEF`), checked before saving. Single LaTeX backslashes, which JSON reads as escapes or rejects, are repaired. Line ranges must be lines that were sent. Names in the code must appear in it (an identifier as a whole word, an expression exactly), or they're marked `found: false`. LaTeX that could load or define anything (`\href`, `\def`, …) is dropped with a note. Findings must be ones that were offered. Pictures (`pictures.py`) are descriptions ExpandRG draws: `flow` (steps with lines, an optional loop), `grid` (up to 9 by 9 cells with tones and arrows) and `plot` (formulas in x evaluated here by a restricted evaluator, at 121 points, with gaps where a formula has no value). Anything else is left out with a note. Papers (`papers.py`) are checked on Crossref's public API, sending only titles, first authors, years and DOIs, with requests spaced and retried on `429`. Each gets `status`: `provided`, `project` (with its file and line), `crossref` (with a DOI link), `doi_mismatch`, `not_found` or `unchecked`. Table: `lessons`, created on start.
 
 ### Visualization Studio: graphs of runs and experiments
 

@@ -91,14 +91,16 @@ from backend.orchestration.diagnosis import (
     record_diagnosis,
     run_diagnosis,
 )
+from backend.onboarding.lessons import MAX_FINDINGS as MAX_LESSON_FINDINGS, MAX_QUESTION_CHARS, LessonNotFound, Lessons, write_lesson
+from backend.onboarding.papers import CrossrefLookup, check_sources
 from backend.orchestration.evidence_policy import MAX_ITEMS, redact_secrets
 from backend.orchestration.jobs import JobStore, run_job
 from backend.orchestration.personal_chat import run_personal_chat
-from backend.orchestration.toolkit import ConnectorClient, Toolkit
+from backend.orchestration.toolkit import ConnectorClient, ToolError, Toolkit
 from backend.orchestration.chat import (
     DEFAULT_AGENT_RULES, MAX_RULE_CHARS, knowledge_context, rule_command, run_chat,
 )
-from backend.orchestration.overview import context_text, prepare_overview, run_overview
+from backend.orchestration.overview import context_text, prepare_overview, root_name, run_overview
 from backend.orchestration.simulation_setup import run_simulation_setup
 from backend.visualization.agent import INSTRUCTIONS as GRAPH_INSTRUCTIONS, check_claims, graph_context
 from backend.visualization.figure import build as build_figure
@@ -109,7 +111,7 @@ from backend.visualization.store import SavedGraphConflict, SavedGraphNotFound, 
 from backend.workspaces.demo import seed_demo
 from backend.workspaces.groups import note_project, project_id_for
 from backend.workspaces.store import (
-    InvalidProject, create_project, get_member, list_members, personal_agent_for_member, projects_for_member,
+    InvalidProject, create_project, get_member, list_members, personal_agent_for_member, projects_for_member, rename_project,
 )
 
 
@@ -249,6 +251,18 @@ class GraphMessageIn(BaseModel):
     folder: str | None = Field(default=None, max_length=200)  # the researcher's granted folder, for the agent's file tools
 
 
+class LessonIn(BaseModel):
+    model_config = {"extra": "forbid"}
+    project_id: str = Field(min_length=1, max_length=64)
+    folder: str = Field(min_length=1, max_length=255, pattern=FOLDER_NAME)  # a granted folder's name
+    path: str = Field(min_length=1, max_length=500)  # the code, relative to it
+    lines: str | None = Field(default=None, pattern=r"^\d{1,6}(-\d{1,6})?$")  # default: the whole file
+    paper_folder: str | None = Field(default=None, min_length=1, max_length=255, pattern=FOLDER_NAME)  # default: folder
+    paper_path: str | None = Field(default=None, min_length=1, max_length=500)  # the paper: PDF, .tex, .md or .txt
+    paper_pages: str | None = Field(default=None, pattern=r"^\d{1,5}(-\d{1,5})?$")  # a PDF's pages
+    question: str = Field(default="", max_length=MAX_QUESTION_CHARS)  # optional: what to focus on
+
+
 class AnswersIn(BaseModel):
     answers: dict[str, str] = Field(default_factory=dict, max_length=MAX_WORKSHEET_ITEMS)
     submit: bool = False
@@ -328,13 +342,15 @@ def create_app(
     alerts: AlertStore | None = None,
     chat_setup: Callable[[], ChatSettings] | None = None,
     connector: ConnectorClient | None = None,
+    papers: Any = None,
 ) -> FastAPI:
     """client_factory(agent_env_prefix) builds the CREAO client for a member's
     personal agent; tests pass a fake one. The databases are created (with the
     demo workspace) on first use. Alerts are kept in memory only.
     chat_setup() says which agent and model answer Super Brain chat: from
     backend/.env with real CREAO, the hub with its saved model with a fake one.
-    connector reaches the researcher's local connector for the agents' file tools."""
+    connector reaches the researcher's local connector for the agents' file tools.
+    papers looks up a lesson's papers (Crossref; tests pass a fake one)."""
     app = FastAPI(title="ExpandRG backend", version="0.1.0")
     factory = client_factory or (lambda prefix: CreaoClient(hub_agent() if prefix == "HUB" else personal_agent(prefix)))
     chat_choice = chat_setup or (chat_settings if client_factory is None else (lambda: ChatSettings("HUB", None)))
@@ -344,6 +360,7 @@ def create_app(
     db = Database(data_dir, seed=seed_demo)
     sessions = Sessions()
     files = connector or ConnectorClient()
+    paper_lookup = papers or CrossrefLookup()
 
     def scoped_connector(authorization: str | None):
         return files.scoped(authorization) if hasattr(files, "scoped") else files
@@ -525,8 +542,15 @@ def create_app(
         prepared.agent_rules = PrivateMemory(db, member["id"]).agent_rules(request.project_id)
 
         def save(result: dict[str, Any]) -> None:
-            PrivateMemory(db, member["id"]).save_project_context(
-                request.project_id, result["overview"], result["reply"], prepared.stats, result["run_id"])
+            folder = root_name(prepared.tree)
+            PrivateMemory(db, member["id"]).save_project_context(  # with the mapped folder's name, the page's heading
+                request.project_id, result["overview"], result["reply"], {**prepared.stats, "folder": folder},
+                result["run_id"])
+            if folder:  # the project is named after the main folder its code is in, for everyone in the group
+                with closing(db.shared()) as conn:
+                    renamed = rename_project(conn, request.project_id, folder)
+                if os.environ.get("EXPANDRG_GROUP"):
+                    note_project(os.environ["EXPANDRG_GROUP"], renamed)
 
         job = store.create(member["id"], request.project_id, kind="overview")
         background.add_task(run_job, store, job.job_id, lambda: run_overview(factory(prefix), prepared), save)
@@ -584,6 +608,14 @@ def create_app(
             return client_factory(settings.slot)
         config = chat_agent() if settings.slot == "CHAT" else hub_agent()
         return CreaoClient(config, poll_interval=1.0, chat_model_id=settings.model_id)
+
+    def personal_conversation_client(prefix: str) -> Any:
+        if client_factory:
+            return factory(prefix)
+        # Apply the existing conversational model preference to the same personal
+        # CREAO app. Diagnosis, setup and graph workflows keep their saved model.
+        settings = chat_choice()
+        return CreaoClient(personal_agent(prefix), poll_interval=1.0, chat_model_id=settings.model_id)
 
     @app.post("/superbrain/chat", status_code=202)
     @app.post("/agent/chat", status_code=202)
@@ -712,7 +744,7 @@ def create_app(
             job = store.create(member["id"], body.project_id, prior, kind="personal_chat", scope="personal")
 
         def task() -> dict:
-            client = factory(prefix) if client_factory else CreaoClient(personal_agent(prefix), poll_interval=1.0)
+            client = personal_conversation_client(prefix)
             tools = Toolkit(db, member, body.project_id, body.folder, scoped_connector(authorization))
             result = run_personal_chat(client, project_name, message, rules, history, overview, knowledge, action,
                                        agent_name=agent["name"], tools=tools)
@@ -727,6 +759,7 @@ def create_app(
             if shared:
                 result["reply"] += f"\n\nShared with your group in the Super Brain as a hypothesis: \"{shared['title']}\"."
             return {**result, "agent": agent, "agent_slot": prefix, "used_project_overview": bool(overview),
+                    "model": getattr(client, "chat_model_id", None) or "saved",
                     "shared_finding": {"id": shared["id"], "title": shared["title"]} if shared else None}
 
         def save(result: dict) -> None:
@@ -938,6 +971,92 @@ def create_app(
 
         background.add_task(run_job, store, job.job_id, task)
         return {"job_id": job.job_id, "status": job.status, "agent": agent}
+
+    # --- Onboarding lessons: the Super Brain explains part of the code. Private to the researcher. ---
+
+    def lesson_reader(member: dict[str, Any]) -> Lessons:
+        if member["role"] == "leader":
+            raise HTTPException(status_code=403, detail="Lessons are for researchers learning a project's code.")
+        return Lessons(db, member["id"])
+
+    def own_lesson(member: dict[str, Any], lesson_id: str) -> dict[str, Any]:
+        try:
+            lesson = lesson_reader(member).get(lesson_id)
+        except LessonNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+        with closing(db.shared()) as conn:
+            require_member_of(conn, member["id"], lesson["project_id"])
+        return lesson
+
+    @app.post("/lessons", status_code=202)
+    def make_lesson(body: LessonIn, background: BackgroundTasks, member: dict[str, Any] = Depends(current_member),
+                    authorization: str | None = Header(default=None)) -> dict[str, Any]:
+        """A lesson from the Super Brain on part of your project's code (researchers): give the paper it
+        implements and the code; a question is optional. ExpandRG reads both through your local connector
+        (secrets blanked), finds the papers the project cites, and adds up to 3 matching findings; one Super
+        Brain run writes the whole lesson, and its papers are then checked on Crossref. Only you can see
+        it, and no one is told. Poll /jobs/{job_id}; the result has lesson_id."""
+        lessons = lesson_reader(member)
+        question, _ = redact_secrets(body.question.strip())
+        with closing(db.shared()) as conn:
+            require_member_of(conn, member["id"], body.project_id)
+            project_name = conn.execute("SELECT name FROM projects WHERE id = ?", (body.project_id,)).fetchone()[0]
+            findings = search_findings(conn, member["id"], f"{question} {body.path} {body.paper_path or ''}",
+                                       [body.project_id], limit=MAX_LESSON_FINDINGS)
+        local = scoped_connector(authorization)
+        try:
+            excerpt = (local.post("/tools/read_project_file", {"folder": body.folder, "path": body.path, "lines": body.lines})
+                       if body.lines else local.post("/tools/read_code", {"folder": body.folder, "path": body.path}))
+            references = local.post("/tools/project_references", {"folder": body.folder, "path": body.path})["references"]
+            paper = local.post("/tools/read_paper", {"folder": body.paper_folder or body.folder, "path": body.paper_path,
+                                                     "pages": body.paper_pages}) if body.paper_path else None
+        except ToolError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        if not excerpt.get("text", "").strip():
+            raise HTTPException(status_code=422, detail="Those lines are empty. Pick lines with code in them.")
+        with chat_lock:
+            if store.running_chat(member["id"], body.project_id, kind="lesson"):
+                raise HTTPException(status_code=409, detail="The Super Brain is still writing your last lesson in this project.")
+            job = store.create(member["id"], body.project_id, kind="lesson")
+        settings = chat_choice()
+
+        def task() -> dict:
+            written = write_lesson(super_brain_client(settings), project_name, question, excerpt, references, findings,
+                                   settings.slot == "CHAT", paper)
+            lesson = written["lesson"]
+            given = [{"provided": True, "file": paper["path"], "ref": "", "doi": "", "why": "The paper this lesson teaches.",
+                      **(lesson["paper"] or {"title": paper["path"].rsplit("/", 1)[-1]})}] if paper else []
+            lesson["sources"] = check_sources(given + lesson["sources"], references, paper_lookup)
+            for equation in lesson["equations"]:  # they number the agent's own sources, now after the paper
+                equation["sources"] = [i + len(given) for i in equation["sources"]]
+            lesson["references"] = references
+            lesson["findings"] = [{k: f[k] for k in ("id", "title", "verification_status")}
+                                  for f in findings if f["id"] in lesson["finding_ids"]]
+            lesson_id = lessons.create(body.project_id, question, excerpt, lesson, written["run_id"], paper)
+            return {"lesson_id": lesson_id, "run_id": written["run_id"], "provider_ms": written["provider_ms"],
+                    "prompt_chars": written["prompt_chars"], "agent_slot": settings.slot}
+
+        background.add_task(run_job, store, job.job_id, task)
+        return {"job_id": job.job_id, "status": job.status, "lines": excerpt["lines"], "references": len(references),
+                "findings": len(findings), "paper": {k: paper[k] for k in ("path", "kind", "pages", "truncated")} if paper else None}
+
+    @app.get("/lessons")
+    def my_lessons(project_id: str, member: dict[str, Any] = Depends(current_member)) -> list[dict[str, Any]]:
+        """Your lessons in this project, newest first. Only you can see them."""
+        lessons = lesson_reader(member)
+        with closing(db.shared()) as conn:
+            require_member_of(conn, member["id"], project_id)
+        return lessons.list(project_id)
+
+    @app.get("/lessons/{lesson_id}")
+    def one_lesson(lesson_id: str, member: dict[str, Any] = Depends(current_member)) -> dict[str, Any]:
+        return own_lesson(member, lesson_id)
+
+    @app.delete("/lessons/{lesson_id}")
+    def delete_lesson(lesson_id: str, member: dict[str, Any] = Depends(current_member)) -> dict[str, str]:
+        own_lesson(member, lesson_id)
+        lesson_reader(member).delete(lesson_id)
+        return {"status": "deleted"}
 
     @app.get("/projects/{project_id}/overview")
     def project_overview(project_id: str, member: dict[str, Any] = Depends(current_member)) -> dict[str, Any]:

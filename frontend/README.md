@@ -1,6 +1,6 @@
 # frontend
 
-React dashboard (Vite), built for laptop and desktop browsers. A researcher has Project, Diagnose, Drafts, Super Brain, Simulations, Visualize and Experiments; the group leader has Super Brain, Run results, Visualize, Projects and Offboarding. Design notes are in [dashboard-design.md](../Documents/dashboard-design.md).
+React dashboard (Vite), built for laptop and desktop browsers. A researcher has Project, Diagnose, Drafts, Super Brain, Simulations and Visualize; the group leader has Super Brain, Run results, Visualize, Projects and Offboarding. Design notes are in [dashboard-design.md](../Documents/dashboard-design.md).
 
 ```
 npm install
@@ -25,7 +25,7 @@ The browser never reads local files itself: it asks the local connector, which a
 | `src/api.js` | Calls to the backend and the connector |
 | `src/components.jsx` | Badges, the agent-reply renderer, the folder picker, avatars, menus, resize handles and the theme toggle |
 | `src/charts.jsx` | Line charts of a run (one per measure, log scale for blow-ups, alert markers, hover, replay) and the same numbers as a table |
-| `src/views/` | One file per view. `VisualizeView.jsx` is the Visualization Studio: it loads Plotly (`plotly.js-dist-min`, its own file) only when opened, draws the figure the backend built in the page's theme, and sends every change as operations to `/visualize/ops` |
+| `src/views/` | One file per view. `LessonsView.jsx` is Super Brain → Lessons: it loads KaTeX (its own file) only when opened to draw the lessons' equations, and draws their pictures (flows, grids, computed plots) itself. `VisualizeView.jsx` is the Visualization Studio: it loads Plotly (`plotly.js-dist-min`, its own file) only when opened, draws the figure the backend built in the page's theme, and sends every change as operations to `/visualize/ops` |
 | `src/styles.css` | The design: colour tokens for light and dark (including `--slot-0` to `--slot-7`, the graph palette), the shell, cards, buttons, badges, tables, charts; severity and verification styles |
 
 Icons are Lucide (`lucide-react`); text is Inter and numbers and paths JetBrains Mono, loaded from Google Fonts in `index.html` (system fonts when offline).

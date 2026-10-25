@@ -207,7 +207,7 @@ export class PersonalAgentPanel implements vscode.Disposable {
       if (!this.current(generation)) return;
       if (job.kind !== pending.kind) throw new Error("The response belongs to a different workflow. Refresh to reconnect.");
       if (job.status === "running") {
-        this.timer = setTimeout(() => { void this.poll(session, generation); }, 1200);
+        this.timer = setTimeout(() => { void this.poll(session, generation); }, 750); // local backend: checking often is free
         return;
       }
       if (job.status === "failed") {

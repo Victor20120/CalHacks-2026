@@ -18,6 +18,7 @@ export default function DiagnoseView({ session, project, onOpenDrafts, seed, onO
   const [busy, setBusy] = useState(false);
   const poller = useRef(null);
   const fromAlert = Boolean(seed?.run_id && seed?.alert_id);
+  const folderName = root.split(/[\\/]/).filter(Boolean).pop() || ""; // the heading names the folder, not the group's project
 
   useEffect(() => {
     setFiles([]);
@@ -82,7 +83,7 @@ export default function DiagnoseView({ session, project, onOpenDrafts, seed, onO
           setError(e.message);
           setBusy(false);
         }
-      }, 3000);
+      }, 750); // the backend is on this computer: checking often costs nothing
     } catch (e) {
       setError(e.message);
       setBusy(false);
@@ -91,7 +92,7 @@ export default function DiagnoseView({ session, project, onOpenDrafts, seed, onO
 
   return (
     <div className="view">
-      <h2>Diagnose a problem in {project.name}</h2>
+      <h2>Diagnose a problem in {folderName || project.name}</h2>
       <p className="muted">
         {fromAlert
           ? "Your own agent analyzes the selected alert and its run. Review the problem below and add file excerpts if needed."
@@ -104,6 +105,11 @@ export default function DiagnoseView({ session, project, onOpenDrafts, seed, onO
           <p className="muted small">Your agent will receive this alert and a summary of its run. You can add file excerpts below. Nothing is sent until you choose Send to my agent.</p></div>}
         <FolderPicker root={root} onChange={setRoot} />
         {files.length > 0 && (
+          <>
+          <p className="muted small file-count">
+            {files.length} files · {Object.keys(selected).length} selected
+          </p>
+          <div className="file-scroll">
           <table className="file-table">
             <thead>
               <tr>
@@ -141,6 +147,13 @@ export default function DiagnoseView({ session, project, onOpenDrafts, seed, onO
               ))}
             </tbody>
           </table>
+          </div>
+          {Object.keys(selected).length > 0 && (
+            <p className="small file-picked">
+              Selected: {Object.entries(selected).map(([path, lines]) => (lines ? `${path} (${lines})` : path)).join(", ")}
+            </p>
+          )}
+          </>
         )}
       </section>
 

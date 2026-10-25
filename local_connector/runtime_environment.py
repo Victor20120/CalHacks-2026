@@ -83,8 +83,10 @@ def _project_compilers(root: Path) -> dict[str, str]:
         except OSError:
             return ""
     for name in ("Makefile", "makefile", "GNUmakefile"):
-        for key, value in re.findall(r"^\s*(FC|CC|CXX)\s*(?:[:?+]?=)\s*(.*?)\s*$", read(name), re.M):
-            candidates[key].append(value.strip())
+        # A trailing "# comment" is make's, not part of the compiler (FC = gfortran  # compiler).
+        for key, value in re.findall(r"^\s*(FC|CC|CXX)\s*(?:[:?+]?=)\s*([^#\n]*?)\s*(?:#.*)?$", read(name), re.M):
+            if value.strip():
+                candidates[key].append(value.strip())
     cmake_keys = {"CMAKE_Fortran_COMPILER": "FC", "CMAKE_C_COMPILER": "CC", "CMAKE_CXX_COMPILER": "CXX"}
     for name in ("CMakePresets.json", "CMakeUserPresets.json"):
         try:

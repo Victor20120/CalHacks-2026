@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  BrainCircuit, ChartSpline, Check, ChevronsUpDown, Crown, FilePenLine, FlaskConical, FolderKanban, GitCompare, LayoutDashboard,
+  BrainCircuit, ChartSpline, Check, ChevronsUpDown, Crown, FilePenLine, FlaskConical, FolderKanban, LayoutDashboard,
   LineChart, LogOut, Microscope, Moon, Network, PanelLeft, PlayCircle, Plus, Stethoscope, Sun, UserMinus,
 } from "lucide-react";
 import { backend, remember } from "./api.js";
 import DiagnoseView from "./views/DiagnoseView.jsx";
 import DraftsView from "./views/DraftsView.jsx";
-import ExperimentsView from "./views/ExperimentsView.jsx";
 import ProjectView from "./views/ProjectView.jsx";
 import ProjectsView from "./views/ProjectsView.jsx";
 import OffboardingView from "./views/OffboardingView.jsx";
@@ -28,12 +27,12 @@ const NAV = [
     { id: "drafts", label: "Drafts", icon: FilePenLine },
   ] },
   { group: "Knowledge", items: [
-    { id: "superbrain", label: "Super Brain", icon: BrainCircuit, sub: [["updates", "Updates"], ["worksheets", "Worksheets"]] },
+    { id: "superbrain", label: "Super Brain", icon: BrainCircuit,
+      sub: [["updates", "Updates"], ["worksheets", "Worksheets"], ["lessons", "Lessons", "researcher"]] },
   ] },
   { group: "Simulation", role: "researcher", items: [
     { id: "alerts", label: "Simulations", icon: PlayCircle, sub: [["setup", "Set up & run"], ["monitor", "Monitor"]] },
     { id: "visualize", label: "Visualize", icon: ChartSpline },
-    { id: "experiments", label: "Experiments", icon: GitCompare },
   ] },
   { group: "Group", role: "leader", items: [
     { id: "alerts", label: "Run results", icon: LineChart },
@@ -42,7 +41,7 @@ const NAV = [
     { id: "offboarding", label: "Offboarding", icon: UserMinus },
   ] },
 ];
-const VIEWS = ["project", "diagnose", "drafts", "superbrain", "alerts", "visualize", "experiments", "projects", "offboarding"];
+const VIEWS = ["project", "diagnose", "drafts", "superbrain", "alerts", "visualize", "projects", "offboarding"];
 const WITHOUT_PROJECT = ["projects", "offboarding"]; // pages that don't need a project chosen
 
 // ?as=researcher_b&view=alerts&project=heat-diffusion opens the dashboard as a demo
@@ -55,7 +54,8 @@ export default function App() {
   const [projects, setProjects] = useState([]);
   const [projectId, setProjectId] = useState(START.get("project") || remember.get("expandrg.project"));
   const [view, setView] = useState(START_VIEW);
-  const [tabs, setTabs] = useState({ superbrain: START.get("tab") === "worksheets" ? "worksheets" : "updates", alerts: "setup" });
+  const [tabs, setTabs] = useState({ superbrain: ["worksheets", "lessons"].includes(START.get("tab")) ? START.get("tab") : "updates",
+                                     alerts: "setup" });
   const [liveCritical, setLiveCritical] = useState(0);
   const [draftCount, setDraftCount] = useState(0);
   const [diagnosticSeed, setDiagnosticSeed] = useState(null);
@@ -78,6 +78,12 @@ export default function App() {
     const me = await backend("/me", { token: session.token });
     setProjects(me.projects);
     setProjectId(id);
+  }
+
+  // After an overview is built, the project is named after its folder (for everyone): show the new name.
+  async function refreshProjects() {
+    const me = await backend("/me", { token: session.token });
+    setProjects(me.projects);
   }
 
   function signOut() {
@@ -178,7 +184,7 @@ export default function App() {
                     </button>
                     {item.sub && active && (
                       <div className="nav-sub">
-                        {item.sub.map(([tab, label]) => (
+                        {item.sub.filter(([, , only]) => !only || only === role).map(([tab, label]) => (
                           <button key={tab} className={`nav-item ${tabs[item.id] === tab ? "active" : ""}`} onClick={() => openTab(item.id, tab)}>
                             {label}
                           </button>
@@ -228,7 +234,7 @@ export default function App() {
         <main className={`content ${current === "superbrain" || current === "visualize" ? "wide" : ""}`}>
           <div className="narrow-notice">ExpandRG is built for laptop and desktop screens. Widen the window for the best view.</div>
           {!project && !WITHOUT_PROJECT.includes(current) && <p>You are not a member of any project yet.</p>}
-          {project && current === "project" && <ProjectView {...shared} />}
+          {project && current === "project" && <ProjectView {...shared} onFolder={() => refreshProjects().catch(() => {})} />}
           {project && current === "diagnose" && <DiagnoseView key={`${session.member.id}:${project.id}:${diagnosticSeed?.at || ""}`} {...shared}
             seed={diagnosticSeed?.project_id === project.id ? diagnosticSeed : null} onOpenDrafts={() => open("drafts")} onOpenDiagnostic={openDiagnostic} />}
           {project && current === "drafts" && <DraftsView {...shared} onOpenDiagnostic={openDiagnostic} />}
@@ -242,7 +248,6 @@ export default function App() {
           {project && current === "visualize" && (
             <VisualizeView key={`${session.member.id}:${project.id}`} {...shared} seed={graphSeed} />
           )}
-          {project && current === "experiments" && <ExperimentsView {...shared} onVisualize={visualize} />}
           {current === "projects" && <ProjectsView {...shared} onCreated={projectCreated} />}
           {current === "offboarding" && <OffboardingView {...shared} />}
         </main>

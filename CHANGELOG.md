@@ -4,7 +4,92 @@ One entry per commit, newest first. Each commit adds its own entry with the hash
 
 ---
 
-## 2026-10-25 · `pending` · ExpandRG 0.15.0: Research Context Engine
+## 2026-10-25 · `pending` · ExpandRG 0.16.0: onboarding lessons, the Super Brain teaching a paper and its code
+
+**Why:** someone new to a project has to learn its code and the paper behind it, mostly by asking colleagues. Now they give the Super Brain the paper and the code, and it writes the lesson.
+
+- **Faster CREAO replies.** Most of a reply's time is CREAO's own run, 12 to 26 s, which the app can't change. What the app added on top is now about 1 s:
+  - **Checking for the answer** (started in a separate session, finished here). The app checked every 5 s, so a finished answer could wait up to 5 s; now every 1 s. It also no longer doubles its wait after "too many requests": that once hid a finished run for 22 s, and a real personal-agent reply went from 39.1 s to 16.5 s.
+  - **CREAO's rate limit.** CREAO refuses a key's 30th request within a minute (HTTP 429, "Retry-After: 33"). With a check every second, the third chat in a row waited out the penalty while its answer was ready: 34.5 s instead of 13. Now each agent's clients share a pace of 28 requests a minute, a 429 holds them all, and a run's first check waits for 75% of that agent's usual run time, learned from CREAO's own timestamps. That's 4 or 5 checks per answer instead of 13 to 25.
+  - Measured on four Super Brain chats in a row: 13.3, 13.7, 12.9 and 13.7 s, with no 429.
+  - **Tried and not kept** (12 live runs): the fast model `gemini-3-flash` for personal agents (20 to 26 s, against 17 to 21 s with their own model) and the "triage" analysis depth for the Super Brain (14 s, within the 12 to 20 s spread). The only big remaining saving is streaming the answer as it's written, which needs CREAO's paid developer key (`cr_sk_`).
+  - **Fewer agent rounds.** Personal agents are told to ask for all their lookups at once, and not to search again for findings already given. Lookups in one round run at the same time: four 120 ms reads took 0.48 s, now 0.12 s.
+  - **Other changes:** runs use CREAO's app-scoped routes. Every reply carries a timing breakdown (`latency`). The dashboard and VS Code check the backend for a finished job every 0.75 s (it was 1.2 to 3 s).
+  - Checks: new `tests/test_creao_latency.py`, covering the timing breakdown, bounded retries, `Retry-After`, the shared pace and its hold, the timed first check and what it learns, and parallel but ordered lookups. `python -m pytest`: 613 passed, 2 skipped.
+- **Super Brain → Lessons** (researchers; private to them, and no one is told). Pick the code (a file and lines) and the paper it implements, both from granted folders; a focus question is optional. **Preview what's sent**, then **Write the lesson**: one Super Brain run, about a minute. The lesson has:
+  - the idea in plain words;
+  - the paper's equations, drawn with KaTeX, each tagged with where it is in the paper;
+  - a table of every term: meaning, units, the names in the code, and lines;
+  - how the code does it, with the code beside the lesson: hovering or clicking a line chip highlights those lines;
+  - **See it:** pictures ExpandRG draws from the Super Brain's descriptions: a flow of the code's steps (with its loop), stencil grids, and plots of the lesson's formulas;
+  - a walkthrough, caveats, questions to check yourself, and matching group findings.
+- **Checked before it's shown.**
+  - Cited lines must be lines that were sent.
+  - Names must be in the code (a name like `cfg["dt"]` is matched as written); otherwise they're struck through.
+  - LaTeX that could load or define anything is dropped.
+  - A plot's formulas are evaluated by ExpandRG with a restricted evaluator (arithmetic, a few functions, x, pi, e), so its curves are computed, never invented.
+  - The agent never sends SVG, HTML or code.
+- **Papers checked on Crossref**, sending only titles, first authors, years and DOIs. Each paper is tagged: the paper you gave, cited in the project (with its file and line), found on Crossref (DOI link), a DOI that belongs to another paper, not found (may be wrong), or not checked. The project's own citations are found on your computer: DOIs and arXiv IDs in the code, README and CITATION.cff, and BibTeX entries.
+- **Connector:** `/tools/list_papers`, `/tools/read_paper` (a PDF page by page, or `.tex`, `.md`, `.txt`; about 10 pages, or the pages you pick) and `/tools/project_references`. PDFs need the new optional extra, `pip install "expandrg[papers]"` (pypdf); without it a PDF says what to install. The folder walker can now offer PDFs when asked to.
+- **Backend:** `backend/onboarding/` (lessons, papers, pictures); `POST /lessons` (a job), `GET /lessons`, `GET`/`DELETE /lessons/{id}`. New private table `lessons` (the paper's text isn't kept), added on start with no reset. A lesson the Super Brain left empty fails with a readable reason.
+- **Dashboard:** `LessonsView.jsx`; KaTeX 0.18.11 (0.16.11 and 0.16.47 have published advisories), loaded only on Lessons. Worksheets and Lessons use the full width.
+- Docs: README (Lessons), `backend/README.md`, `Documents/dashboard-design.md`, `frontend/README.md`, build plan step 12, and the Context Engine guide (lessons don't register context artifacts yet).
+- Checks:
+  - New `tests/test_lessons.py` (8 tests; the real connector, CREAO and Crossref faked). It covers reading `.tex` and PDF papers, pages, and refusals; the project's citations; LaTeX surviving JSON; line, name and finding checks; pictures and the formula evaluator refusing anything but arithmetic; every paper status, including Crossref down or rate-limited; the whole flow, kept private; refusals that use no credits.
+  - `python -m pytest`: 592 passed, 2 skipped, at the time. `npm run build` succeeds.
+  - **With real CREAO**, through the dashboard on a scratch copy of the demo data: a short LaTeX methods note and `heat2d.py` lines 13–52 gave a lesson in 72 s, with:
+    - 6 equations, each placed in the paper and drawn without errors, with term tables;
+    - a flow, two stencil grids and an amplification-factor plot;
+    - an 8-step walkthrough and caveats.
+
+    Clicking a line chip highlighted lines 23–24, and there were no page errors. The run caught two problems, both fixed: names written as expressions were struck through, and Crossref's rate limit (HTTP 429) marked every later paper "not checked". Rechecked on the real Crossref, all four books and papers the Super Brain named were found, with DOIs. Plots now take the full row so their axis numbers stay readable, and labels on arrows between neighbouring grid cells are listed under the grid.
+  - On a real Fortran project, a PDF saved into the project while Lessons was open didn't show in the paper list, and it was the last of 18 files behind the project's notes. The list now reloads whenever it's opened, and shows PDFs and `.tex` first, under **Papers**, with notes and text files below. The connector read that PDF (Cortez 2001, pages 1–16 of 22).
+  - **A clearer New lesson form**, from the team's review:
+    - The paper and the code are two cards side by side. Each shows what's read: a PDF's pages, a file's lines.
+    - **The whole code file is read** (new connector tool `/tools/read_code`, up to 60,000 characters with line numbers, about 1,200 lines), so the From line / To line boxes are gone. The API still takes `lines`.
+    - Code files are listed first, then other files.
+    - The paper's folder picker appears only on "Paper in another folder?".
+    - The exact text sent is under **See exactly what's sent**.
+    - The intro now just says what happens, without "New to <project>?", and the credits line under the form is gone.
+    - Checked in Chrome, light and dark, on the Fortran project: the paper card read 22 pages (1–16 sent) and the code card read all 932 lines of `main.f90`. No page errors. One new test reads a whole file and a 3,000-line one, which is cut at whole lines.
+  - **The Project page's heading is the project folder's name**, not the group's project name: in the demo it read "Heat diffusion solver" over another codebase's overview. The overview now saves the mapped folder's name (`map_stats.folder`; no table change). While building, the heading is the folder picked. An overview saved before this shows "Project overview" until **Refresh overview**. A test checks the name is saved.
+  - **Saved versions: delete, and an update box on each.**
+    - **Delete this version** removes its saved code, inputs, working copy and output from this computer. It's refused while the version runs; the project folder is never touched, and its results in Monitor stay. New connector route: `DELETE /simulations/{id}`. Read-only files left by a copied `.git` are cleared first, and if Windows still holds a file, the version is kept so it can be retried.
+    - **Tell your agent more about this version:** a box in the version's card, sent with **Update setup** for that version. Before, the only box was the one for preparing a new version, at the top of the page.
+    - A version that already ran keeps its setup as the record of that run, so **Update as a new version** updates a copy.
+    - The agent's questions now say to answer in the box below.
+    - New test: delete refused for another researcher (404) and while running (409); deleted for good, even after a restart; the project folder unchanged.
+  - **Set up & run refused real projects** with "source_files must be a short list of text." The agent's plan for a Fortran project cited its 19 source files, and a plan could cite at most 12. Now:
+    - a plan can cite up to 80 files;
+    - questions and environment notes are cut to 12 instead of failing;
+    - non-text entries are dropped;
+    - Windows paths (`src\main.f90`) are matched like `src/main.f90`.
+
+    A cited file that isn't in the project still refuses the plan, and the message now names it. New test: a 19-module Fortran plan.
+  - **Old runs in Monitor and Visualize.** Those tabs only showed runs ExpandRG started or watched, and only numbers written `step 200  residual = 0.004`. A Fortran run's folder (a `run.log` printing `z-drift/beat  -2.077E-02   steadiness  0.002` per beat, and `fort.N` files) showed nothing. New command, read-only: `python -m local_connector import-runs <granted folder> --project <id> --as <member>`. It finds run folders under the granted folder and reads:
+    - log lines made only of names and numbers, numbered in order;
+    - one-number-per-line `fort.N` files, named from the run's own source (`! fort.90 : body-only power`, else the variable written). Multi-column files are left out, and so are big unnamed ones (values per node).
+
+    Up to 6 numbers per run (the backend's limit): the log's repeated ones first. NaN or Inf gives a critical alert. A folder already imported is skipped. New module `local_connector/simulation_monitor/old_runs.py`, new test `tests/test_old_runs.py`.
+  - **The group's swimmer runs get their usual graphs:** distance from start, velocity and efficiency per beat, and nothing else. They're worked out as the group's `compare_v3` does with its original "chord" velocity:
+    - velocity is the distance the rod's centre (`fort.10`, `np` points a frame) moves in a beat;
+    - power is `fort.80`'s energy per beat divided by the beat period (1/omFac);
+    - efficiency = velocity² / power;
+    - the first beat starts from rest, so it only has a distance.
+
+    Frames per beat come from `dt`, `omFac` (`parameters.f90`) and `nw` (`setup.txt`). Checked against the group's own numbers: `bare_sine_2w` beat 10 gives velocity 0.02076, as `compare_bare_2waves.txt` says. Two old runs (`bare_sine_2w`, 10 beats; `g044`, 20 beats) were imported into the demo. They show in Monitor and Visualize, and the first import of them, with the log's numbers, was removed.
+  - **Devpost:** the README has a **CREAO agents** section (what the Super Brain and personal agents do, and the Super Brain's agent ID), and the write-up is in `Documents/devpost.md`.
+  - **No Experiments page.** The team tries changes as new versions under Simulations → Set up & run, so the page and its sidebar item are gone (`ExperimentsView.jsx` deleted). The connector's `/experiments` API is unchanged. Worksheets' "Try it" step and Visualize's empty message now point to Set up & run. The README and the dashboard docs say so.
+  - **A makefile comment broke the build.** On the Fortran project, `FC = gfortran  # compiler` became the compiler `gfortran # compiler`, so `{fortran}` builds failed with "linker input file not found". A trailing `# comment` on a makefile's `FC`, `CC` or `CXX` line is now left out. New test in `tests/test_runtime_environment.py`. Versions prepared before this keep the compiler they saved; prepare a new one.
+  - **A project is named after its main folder, for everyone.** The sidebar, top bar and pages showed the demo's "Heat diffusion solver" over another codebase. Building a Project overview now renames the project to the folder that was mapped (`rename_project`; its ID and everything filed under it stay), and updates `group.json` in a group, so every member sees the same name. The overview itself stays private. Tested: after Researcher A's overview, A, B and the leader all see the folder's name, and B still can't open A's overview. In the installed demo, the project was renamed to the folder Researcher B's overview had already mapped.
+  - **Remembered after closing the browser:** who's signed in, the project, the last graph and the last folder picked were kept only for the open tab, so after a restart you could come back as another researcher and not see your own (private) lessons and overview. They're now also kept in the browser. The open tab's own choice still wins, so two windows can be two people. Folder pickers pick the last folder again.
+  - **Diagnose names the folder too:** "Diagnose a problem in <folder>", or "Diagnose a problem" before one is picked. Its file list is a 320 px box that scrolls, with the column names kept in view; above it the number of files and how many are selected, and under it the files selected. Checked on the Fortran project: 44 files in the box, two ticked and listed.
+  - **Write the lesson** was greyed out until **Preview what's sent** had been clicked, and nothing said so. The preview now loads by itself once a code file is picked, and after any change (the button is now **Reload what's sent**). While **Write the lesson** is off, a line says why ("Pick a code file in step 1."). Checked on that project in the installed 0.16.0: off with that line, then on after picking `main.f90` and the PDF.
+  - **Version 0.16.0** in the package, the extension, its lockfile and the install examples. `python build_package.py --vsix`: the wheel (155 files, 2.7 MB with the KaTeX chunk, no keys or databases) and `expandrg-0.16.0.vsix` (15 files, 2.6 MB, carrying it); 34 extension tests passed. Installed with `[papers]` into a new virtual environment outside the repo, it ran from that environment, had pypdf and the Lessons page, and answered `/lessons`.
+
+---
+
+## 2026-10-25 · `bc225e7` · ExpandRG 0.15.0: Research Context Engine
 
 - Connect existing simulation runs, anomalies, private investigations, selected evidence, graph specs, worksheet teaching references and findings through typed references. Use additive artifact, relationship and receipt tables in the existing shared/private SQLite files; schema version 2 and existing data remain intact.
 - Capture exact prepared code/input fingerprints, declared effective parameters, optional Git HEAD, repeat parents and diagnostic origins. Experiments now execute in a separate working copy so a solver cannot rewrite its retained evidence. Legacy metadata stays explicitly unknown.

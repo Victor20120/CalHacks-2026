@@ -183,7 +183,7 @@ function NewWorksheet({ session, project, onMade, onClose }) {
         const state = await backend(`/jobs/${job.id}`, { token: session.token });
         if (stopped) return;
         if (state.status === "running") {
-          timer = setTimeout(poll, 1500);
+          timer = setTimeout(poll, 750);
           return;
         }
         if (state.status === "failed") setError(state.error?.message || "CREAO couldn't write the worksheet. Try again.");
@@ -427,7 +427,7 @@ function Worksheet({ session, id, role, onOpenFinding, onBack }) {
                   </p>
                 )}
                 {item.kind === "try" && answering && (
-                  <p className="small muted">Try it in a copy on the Experiments page: your real project isn't changed, and it only runs when you click Run.</p>
+                  <p className="small muted">Try it as a new version under Simulations → Set up &amp; run: it runs in a saved copy, your real project isn't changed, and it only runs when you click Run.</p>
                 )}
                 {answering ? (
                   <textarea rows={3} maxLength={4000} value={answers[item.id] || ""} disabled={busy}

@@ -14,6 +14,7 @@ export default function SimulationsView({ session, project, tab, onTab: setTab, 
   const [selectedEnvironment, setSelectedEnvironment] = useState("");
   const [selectedCompiler, setSelectedCompiler] = useState("");
   const [request, setRequest] = useState("");
+  const [versionNote, setVersionNote] = useState(""); // more about the version on screen, for its update
   const [versions, setVersions] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [detail, setDetail] = useState(null);
@@ -25,6 +26,7 @@ export default function SimulationsView({ session, project, tab, onTab: setTab, 
   useEffect(() => {
     setSelectedEnvironment("");
     setSelectedCompiler("");
+    setVersionNote("");
   }, [selectedId]);
 
   useEffect(() => {
@@ -57,7 +59,7 @@ export default function SimulationsView({ session, project, tab, onTab: setTab, 
       try {
         const job = await backend(`/jobs/${jobId}`, { token });
         if (closed) return;
-        if (job.status === "running") { timer = setTimeout(poll, 1500); return; }
+        if (job.status === "running") { timer = setTimeout(poll, 750); return; }
         if (job.status === "failed") throw new Error(job.error?.message || "Your agent could not prepare this setup.");
         const saved = await connector(`/simulations/${id}/plan`, {
           method: "POST", token, body: { plan: job.diagnosis.plan },
@@ -77,9 +79,9 @@ export default function SimulationsView({ session, project, tab, onTab: setTab, 
     return () => { closed = true; clearTimeout(timer); };
   }, [detail?.id, detail?.setup_job_id, detail?.status, token]);
 
-  async function askAgent(record, context) {
+  async function askAgent(record, context, note = request) {
     const started = await backend("/simulation-setup", { method: "POST", token,
-      body: { project_id: project.id, ...context, request } });
+      body: { project_id: project.id, ...context, request: note } });
     const saved = await connector(`/simulations/${record.id}/planning`, {
       method: "POST", token, body: { job_id: started.job_id },
     });
@@ -97,11 +99,30 @@ export default function SimulationsView({ session, project, tab, onTab: setTab, 
     finally { setBusy(false); }
   }
 
+  // Update the version on screen with what you tell your agent about it. A version that already ran
+  // keeps its setup as it was (it's the record of that run): the update goes to a copy, the next version.
   async function updateSetup() {
     setBusy(true); setError("");
     try {
-      const context = await connector(`/simulations/${detail.id}/context`, { token });
-      await askAgent(detail, context);
+      let target = detail;
+      if (!editable) {
+        target = await connector(`/simulations/${detail.id}/repeat`, { method: "POST", token });
+        setSelectedId(target.id); setDetail(target);
+      }
+      const context = await connector(`/simulations/${target.id}/context`, { token });
+      await askAgent(target, context, versionNote.trim());
+      setVersionNote("");
+    } catch (e) { setError(e.message); }
+    finally { setBusy(false); }
+  }
+
+  async function deleteVersion() {
+    if (!window.confirm(`Delete Version ${detail.version}? Its saved code, inputs and output are removed from this computer. `
+      + "Your project folder isn't touched, and results already in Monitor stay.")) return;
+    setBusy(true); setError("");
+    try {
+      await connector(`/simulations/${detail.id}`, { method: "DELETE", token });
+      setDetail(null); setSelectedId(null);
     } catch (e) { setError(e.message); }
     finally { setBusy(false); }
   }
@@ -213,7 +234,7 @@ export default function SimulationsView({ session, project, tab, onTab: setTab, 
             {detail.status === "awaiting_setup" && !planning && <p className="muted">This version is saved. Use Update setup to ask your agent how to run it.</p>}
             {plan && <><p className="simulation-language">{plan.language}</p><Markdown text={plan.summary} />
               {plan.environment_notes.length > 0 && <ul>{plan.environment_notes.map((n, i) => <li key={i}>{n}</li>)}</ul>}
-              {plan.questions.length > 0 && <div className="notice"><strong>Your agent needs a detail</strong><ul>{plan.questions.map((q, i) => <li key={i}>{q}</li>)}</ul><p>Answer in the box above, then choose Update setup.</p></div>}
+              {plan.questions.length > 0 && <div className="notice"><strong>Your agent needs a detail</strong><ul>{plan.questions.map((q, i) => <li key={i}>{q}</li>)}</ul><p>Answer in the box below, then choose Update setup.</p></div>}
               {detail.missing_tools.length > 0 && <div className="notice"><strong>Tools not found in selected environment</strong><p>{detail.missing_tools.join(", ")}</p><p>Connect the environment or compiler your project already uses in Environment details &amp; connection. If you activate it in a terminal, restart ExpandRG from that terminal, then recheck existing tools.</p></div>}
               <details className="simulation-commands" open><summary>Build &amp; run steps</summary>
                 {plan.build_commands.map((c, i) => <div key={i}><span className="label">Build {i + 1}</span><pre>{displayCommand(c)}</pre></div>)}
@@ -223,11 +244,26 @@ export default function SimulationsView({ session, project, tab, onTab: setTab, 
               <p className="muted small">Based on {plan.source_files.join(", ")}. Run limit: {detail.limits.wall_seconds / 60} minutes, {detail.limits.memory_mb / 1024} GB memory.</p>
             </>}
             {detail.reason && <p className="notice">{detail.reason}</p>}
+            {!active && (
+              <div className="simulation-update">
+                <label htmlFor="version-note">Tell your agent more about this version <span className="muted">Optional</span></label>
+                <textarea id="version-note" rows="3" maxLength={2000} value={versionNote} onChange={(e) => setVersionNote(e.target.value)}
+                  disabled={busy || planning}
+                  placeholder="For example: build with mingw32-make, run swimmer.exe with 4 threads, or answer your agent's question." />
+                <div className="simulation-update-actions">
+                  <button className="primary" disabled={busy || planning} onClick={updateSetup}>
+                    {editable ? "Update setup" : "Update as a new version"}</button>
+                  <span className="muted small">{editable
+                    ? "Your agent reads this version again with your note and updates its build and run steps. Nothing runs yet."
+                    : `This version already ran, so its setup stays as it was. Your note updates a copy, Version ${Math.max(...shownVersions.map((v) => v.version)) + 1}.`}</span>
+                </div>
+              </div>
+            )}
             <div className="actions simulation-run-actions">
-              {editable && <button disabled={busy || planning} onClick={updateSetup}>Update setup</button>}
               {editable && plan && <button disabled={busy || planning} onClick={recheck}>Recheck existing tools</button>}
               {!active && plan && !planning && <button disabled={busy} onClick={() => act("repeat")}>Prepare from this version</button>}
               {detail.backend_run_id && <button onClick={() => { setMonitorId(detail.backend_run_id); setTab("monitor"); }}>Open in Monitor</button>}
+              {!active && <button className="link danger-link" disabled={busy || planning} onClick={deleteVersion}>Delete this version</button>}
             </div>
             {detail.stage && <p className="muted small">{active ? detail.stage : `Last phase: ${detail.stage}`}{detail.seconds != null && ` · ${detail.seconds}s`}</p>}
             {detail.output && <details className="simulation-output" open={active}><summary>Output</summary><pre>{detail.output}</pre></details>}

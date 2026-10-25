@@ -21,6 +21,7 @@ dependencies = [
 [project.optional-dependencies]
 test = ["pytest>=8.0"]
 export = ["matplotlib>=3.8"]
+papers = ["pypdf>=6.19"]  # reads a PDF paper for an onboarding lesson; .tex, .md and .txt papers need nothing
 
 [project.scripts]
 expandrg = "expandrg.__main__:main"

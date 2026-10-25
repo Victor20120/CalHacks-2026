@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { CONNECTOR_HELP, connector } from "./api.js";
+import { CONNECTOR_HELP, connector, remember } from "./api.js";
 
 // Light or dark: the system's choice until the viewer picks one with the toggle, which this
 // browser remembers (a convenience; without storage it lasts until the page reloads).
@@ -204,19 +204,21 @@ function inline(text) {
 }
 
 // Pick (or grant) a project folder through the local connector. Folders are shown by
-// name; the full path is in the tooltip.
+// name; the full path is in the tooltip. The last folder picked is picked again next time.
 export function FolderPicker({ root, onChange }) {
   const [grants, setGrants] = useState([]);
   const [newFolder, setNewFolder] = useState("");
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState("");
+  const choose = (folder) => { remember.set("expandrg.folder", folder); onChange(folder); };
 
   async function load() {
     try {
       const list = await connector("/grants");
       setGrants(list);
       setError("");
-      if (!root && list.length) onChange(list[0].root);
+      const last = remember.get("expandrg.folder");
+      if (!root && list.length) onChange(list.some((g) => g.root === last) ? last : list[0].root);
     } catch {
       setError(CONNECTOR_HELP);
     }
@@ -233,7 +235,7 @@ export function FolderPicker({ root, onChange }) {
       setNewFolder("");
       setAdding(false);
       await load();
-      onChange(granted.root);
+      choose(granted.root);
     } catch (e) {
       setError(e.message);
     }
@@ -247,7 +249,7 @@ export function FolderPicker({ root, onChange }) {
       <div className="folder-row">
         <label>
           Project folder
-          <select value={root || ""} onChange={(e) => onChange(e.target.value)} title={root || ""}>
+          <select value={root || ""} onChange={(e) => choose(e.target.value)} title={root || ""}>
             {!grants.length && <option value="">No folders yet</option>}
             {grants.map((g) => (
               <option key={g.root} value={g.root} title={g.root}>

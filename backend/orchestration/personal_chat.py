@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from typing import Any
 
 from backend.creao.client import extract_json_block
@@ -41,10 +42,13 @@ NO_CLOUD_RUNS = (
 # The agent follows output_format most closely, so the choice to look first is made there.
 LOOK_FIRST = (
     "Choose one of two outputs. (1) If the answer depends on the researcher's own files, configs, logs or runs, "
-    "or on group findings, that tool_results don't contain yet: output only the ```json {\"tool_requests\": [...]} "
-    "``` block from your toolkit, with no answer, and ExpandRG calls you again with the results. Always choose (1) "
-    "when the researcher asks you to check, read or look at their files, runs or the group's findings. Don't answer "
-    "first and offer to look later. (2) Otherwise: "
+    "or on group findings, first check supplied group knowledge, project_overview and tool_results. If needed "
+    "facts are still missing, output only the ```json {\"tool_requests\": [...]} ``` block from your toolkit, "
+    "with no answer, and ExpandRG calls you again with the results. Batch independent lookups together. "
+    "Always inspect files or run data when the researcher explicitly asks for a fresh check and their contents "
+    "aren't supplied. The supplied group findings were just retrieved with permission checks: "
+    "use their complete evidence and labels directly when sufficient; do not repeat the same search. "
+    "Don't answer from guesses and offer to look later. (2) Otherwise: "
 )
 
 
@@ -158,17 +162,23 @@ def run_personal_chat(client: Any, project: str, message: str, rules: str,
 
     result = ask(toolkit_instructions(tools.available, MAX_TOOL_ROUNDS, folder) if tools else "")
     calls, runs = [], 1
+    timings = [result["latency"]] if result.get("latency") else []
+    tool_ms = 0.0
     for round_number in range(1, MAX_TOOL_ROUNDS + 1 if tools else 1):
         _, requested = extract_json_block(result["reply"], "tool_requests")
         requested = parse_requests(requested)
         if not requested:
             break
+        tool_started = time.perf_counter()
         done = tools.run(requested)
+        tool_ms += (time.perf_counter() - tool_started) * 1000
         calls += done
         payload["tool_results"] = payload.get("tool_results", []) + [
             {k: c[k] for k in ("tool", "request", "ok", "result", "error") if k in c} for c in done]
         provider_ms, prompt_chars = result["provider_ms"], result["prompt_chars"]
         result = ask(toolkit_instructions(tools.available, MAX_TOOL_ROUNDS - round_number, folder))
+        if result.get("latency"):
+            timings.append(result["latency"])
         result["provider_ms"] += provider_ms
         result["prompt_chars"] += prompt_chars
         runs += 1
@@ -180,5 +190,8 @@ def run_personal_chat(client: Any, project: str, message: str, rules: str,
     reply = clean_personal_reply(reply)
     if calls:  # say what the agent looked at; the file contents themselves aren't kept in history
         reply += "\n\n" + describe_calls(calls)
+    if timings:
+        result["latency"] = {"runs": timings, "run_count": runs, "tool_ms": round(tool_ms, 2),
+                             "provider_ms": result["provider_ms"]}
     return {**result, "reply": reply, "share": None if graph else block, **({"graph_ops": block, "numeric_claims": numeric_claims} if graph else {}),
             "creao_runs": runs, "tool_calls": [{k: c[k] for k in ("tool", "request", "ok", "summary")} for c in calls]}

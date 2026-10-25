@@ -47,7 +47,6 @@ Dashboard
 ├── Diagnosis                    (agent conversation, evidence, proposed fix)
 ├── Runs                         (watched runs, live and earlier, with graphs and alerts)
 ├── Visualize                    (runs and experiments on one graph, changed by hand or by your own agent)
-├── Experiments                  (changes tried in copies, run on the researcher's click, compared with the original)
 ├── Approvals                    (knowledge contributions, proposed code edits)
 ├── Super Brain                  (shared updates by researcher, "Ask Super Brain" box at the bottom)
 ├── Settings                     (automatic Super Brain search)
@@ -55,7 +54,7 @@ Dashboard
 └── Offboarding                  (leader only, optional)
 ```
 
-Built so far: researchers get Project, Diagnose, Drafts, Super Brain, Simulations (with Runs as its Monitor tab), Visualize and Experiments; the group leader (who has no personal agent) gets Super Brain, Run results, Visualize, Projects and Offboarding. Every page except Projects and Offboarding works on the project chosen in the top bar. "Give my agent relevant findings from the Super Brain" lives in Diagnose.
+Built so far: researchers get Project, Diagnose, Drafts, Super Brain, Simulations (with Runs as its Monitor tab) and Visualize; the group leader (who has no personal agent) gets Super Brain, Run results, Visualize, Projects and Offboarding. Every page except Projects and Offboarding works on the project chosen in the top bar. "Give my agent relevant findings from the Super Brain" lives in Diagnose.
 
 > Template for each view: **Purpose · Shows · Actions · Rules**
 
@@ -86,7 +85,8 @@ Built so far: researchers get Project, Diagnose, Drafts, Super Brain, Simulation
 - In progress means new data arrived in the last 5 minutes. A run whose watch ended without saying so (ExpandRG restarted, say) counts as finished after that, for researchers too, and in the menu badge.
 - Rules: ExpandRG only reads the log and never pauses or stops a simulation. The log file never leaves the researcher's computer, only the numbers and alerts. A run is seen by the researcher and the group leader, never by other researchers. The Runs tab shows a count of Critical alerts in runs being watched right now.
 
-### 4.3b Experiments (researchers)
+### 4.3b Experiments (researchers; removed from the dashboard)
+- The page was taken out of the sidebar: the team tries changes as new versions under Simulations → Set up & run. The connector's `/experiments` API is unchanged. What the page did:
 - Purpose: try a change in a copy of the project and compare it with the original run, without touching the project.
 - Shows: the project folder, then the run manifest's entry point, "Compare with" (a log in the project, e.g. `run.log`), and up to three experiments as rows of parameter values (values that differ from the config are highlighted). Below, one card per comparison: each experiment with its status (prepared, queued, running, finished, failed, stopped) and time limit; one line chart per measure with the original in gray and the experiments in blue, orange and green, a shared legend and a hover readout of every run at that step; and a table with each run's result, last step, final values and first Warning and Critical steps.
 - Actions: **Prepare** (copies only), **Run**, **Run all** (one at a time, up to the sum of their time limits), **Stop**, **Delete**; on a comparison with numbers, **Open in Visualize** and **Edit with Agent** (the original and the experiments on one graph).
@@ -127,14 +127,21 @@ Built so far: researchers get Project, Diagnose, Drafts, Super Brain, Simulation
 - Every update's page has "Added by the group": the notes members added, each labelled More detail, My own guess or Correction, with who and when. Below it, a form to add one (choose the kind, write up to 2,000 characters, **Add to this finding**). When the agent missed something, the empty list says so and points to the form.
 - Drafts: when sharing, **Attach a run** lists the researcher's runs in that project. A run started up to a day before the draft is already selected.
 - Actions: open an update for the full finding, its links, notes and comments; add a note or a comment; ask a question in the "Ask Super Brain" panel to the right of the updates (below them on narrower screens). Your messages are on the right, its answers on the left, newest at the bottom, from the chosen project. Each shows the question and the answer, labelled "Super Brain · CREAO": no timing line and no list of the findings used (while it works: "Super Brain is thinking… Ns"). The panel's header holds the Knowledge scope, Instructions and Clear chat.
-- Tabs at the top, also under Super Brain in the sidebar: **Updates** (all of the above) and **Worksheets**, the Super Brain as a teacher. Worksheets use the full width, without the talk panel. `?tab=worksheets&worksheet=<id>` opens one directly.
+- Tabs at the top, also under Super Brain in the sidebar: **Updates** (all of the above), **Worksheets**, the Super Brain as a teacher, and (researchers only) **Lessons**. Worksheets and Lessons use the full width, without the talk panel. `?tab=worksheets&worksheet=<id>` opens a worksheet directly; `?tab=lessons` opens Lessons.
   - Leader, top right: **New worksheet** opens a panel.
     - **For:** a checkbox per researcher with how many findings from the others they'd learn from (or "nothing new since their last worksheet").
     - Two tabs. **Ask the Super Brain**: "What should it cover?" (optional; empty teaches what the others found) and an "Only findings that are new to each person" checkbox, on by default. **Write it myself**: an optional title, numbered items (Question or Try it, the text, an optional model answer, remove ×), **Add a question** (up to 8), and "Anything CREAO should know?".
     - Asking with nothing in "What should it cover?" skips anyone with nothing new, and says who.
     - **Send to CREAO (k)** starts one run that writes one worksheet for each person picked, showing who it's writing for and the seconds passing; then "Ready: Worksheet 2 for Researcher B, …".
   - Leader, below: **All worksheets**, newest first: researcher, "Worksheet N · title", the date made, status (Waiting for answers, Ready to check, Checked, or Cancelled), how many items are answered, and **Cancel** or **Restore**. A cancelled row is greyed; its number is taken by that person's next worksheet. A worksheet shows each item with the researcher's answer, the model answer, and a comment box; **Send comments** (or **Update comments**) and **Delete** are at the end, with a comment on the whole worksheet.
-  - Researcher: their own worksheets (To do, Sent to the leader, Checked by the leader). Items are grouped by topic and numbered: **Question** or **Try it**, with the findings they come from (links). Each has an answer box, and a "try it" step says to use a copy on the Experiments page. **Save** and **Send to the leader**; answers can change until the leader has checked them. Model answers and the leader's comments appear once it's checked.
+  - Researcher: their own worksheets (To do, Sent to the leader, Checked by the leader). Items are grouped by topic and numbered: **Question** or **Try it**, with the findings they come from (links). Each has an answer box, and a "try it" step says to try it as a new version under Simulations → Set up & run. **Save** and **Send to the leader**; answers can change until the leader has checked them. Model answers and the leader's comments appear once it's checked.
+  - **Lessons** (researchers): onboarding to the project's code, private to the researcher.
+    - The list of their lessons (title and focus, paper, code file and lines, date). It opens on **New lesson** when there are none.
+    - **New lesson:** the project folder (with **Add a folder**), then two cards side by side (stacked below 1180 px): **The paper** (a PDF, `.tex`, `.md` or `.txt`, with PDFs and LaTeX first, under Papers; a PDF's pages; "No paper: explain the code alone"; "Paper in another folder?" when more than one folder is granted) and **The code** (subfolder when the folder is large, the file, with code files first; the whole file is read). A card is dashed and grey while empty, and fills with the accent colour, its icon solid, once picked. Under each, what's read: "22 pages: pages 1–16 are read…", "932 lines, all read". Then "Anything to focus on? (optional)".
+    - What will be sent loads by itself after any change, and **Write the lesson** is enabled once it has; beside it a line says what's missing ("Pick the code file."). **See exactly what's sent** opens the paper's text and the numbered code. While CREAO works: "The Super Brain is writing your lesson… Ns". Both lists are read again when opened, so a file saved meanwhile shows up.
+    - A lesson: the title, paper, code and focus; **Another lesson on this** and **Delete**. Two columns: the lesson, and beside it the numbered code that was sent (sticky; above the lesson below 1180 px), where hovering or clicking any line chip highlights those lines.
+    - The lesson's sections: the summary; **See it** (flows, stencil grids and computed plots); **Where it comes from** (each paper with a status tag: You gave this paper and Cited in the project in green, Found on Crossref in blue, DOI is another paper's and Not found in amber, Not checked in grey); **The equations** (KaTeX, a tag with where it is in the paper, plain text, meaning, a term table with a struck-through name when it isn't in the code, and how the code does it); **Through the code**; **Watch out for**; **Check yourself**; **What the group found**; then a line saying what was checked and that the explanation itself isn't verified.
+    - The plot colours are graph palette slots 0–2; the grid's tones use the accent (focus), soft accent (uses) and surface-3 (boundary).
 - Rules: results respect project access; hypotheses never look like verified facts. The chart uses one colour; every number in it is also written in the researcher sections, so the tooltip is never the only way to read it.
 
 ### 4.6 Settings
@@ -179,7 +186,9 @@ Built so far: researchers get Project, Diagnose, Drafts, Super Brain, Simulation
 ```
 
 - **Sidebar** (fixed): the ExpandRG mark, the **project switcher** (the leader also gets **New project…**, which opens Projects), the navigation in groups, and the signed-in member at the bottom.
-  - Researcher groups: Research (Project, Diagnose, Drafts), Knowledge (Super Brain), Simulation (Simulations, Visualize, Experiments).
+  - A project is named after the main folder last mapped for its Project overview, for everyone in the group (building the overview renames it). The Project and Diagnose headings name the folder being used.
+  - Who's signed in, the project, the last graph and the last folder are remembered per tab and, for next time, in the browser.
+  - Researcher groups: Research (Project, Diagnose, Drafts), Knowledge (Super Brain), Simulation (Simulations, Visualize).
   - Leader groups: Knowledge (Super Brain), Group (Run results, Visualize, Projects, Offboarding).
   - Super Brain and Simulations show their tabs under them when open: Updates and Worksheets; Set up & run and Monitor.
   - Counts: pending drafts on Drafts; Critical problems in a researcher's live run on Simulations (red).

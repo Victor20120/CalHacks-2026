@@ -1,8 +1,8 @@
 """CREAO API adapter: the only module in ExpandRG that talks to CREAO.
 
 Uses the API Trigger contract verified in backend/README.md:
-    POST {base}/runs        {"appId": ..., "inputs": {...}}  -> {"id": ...}
-    GET  {base}/runs/{id}   poll until status is completed, failed or cancelled
+    POST {base}/apps/{appId}/runs        {"inputs": {...}} -> {"id": ...}
+    GET  {base}/apps/{appId}/runs/{id}   poll until terminal
 
 The API key is never logged, never included in error messages and never shown
 in repr() output.
@@ -13,10 +13,13 @@ import json
 import logging
 import os
 import re
+import threading
 import time
+from datetime import datetime
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import quote
 
 import requests
 from dotenv import load_dotenv
@@ -96,9 +99,10 @@ class CreaoInputError(CreaoError):
 class CreaoRequestError(CreaoError):
     """CREAO could not be reached or answered with an HTTP error."""
 
-    def __init__(self, message: str, status_code: int | None = None):
+    def __init__(self, message: str, status_code: int | None = None, retry_after: float | None = None):
         super().__init__(message)
         self.status_code = status_code
+        self.retry_after = retry_after
 
 
 class CreaoRunFailed(CreaoError):
@@ -220,6 +224,7 @@ class RunResult:
     # not researcher verification. Empty if the reply had no valid block.
     issues: list[dict[str, Any]]
     raw: dict[str, Any] = field(repr=False)
+    timings: dict[str, Any] = field(default_factory=dict)
 
 
 def parse_run(raw: dict[str, Any]) -> RunResult:
@@ -301,19 +306,73 @@ def _extract_issues(reply: str) -> tuple[str, list[dict[str, Any]]]:
     return cleaned, issues
 
 
+# CREAO limits how often each agent's key may be asked: on 2026-10-25 it answered the 30th request
+# within a minute with HTTP 429 and "Retry-After: 33" (three chats in a row, each checked every second),
+# and that wait hid an answer that was already ready for 18 seconds. So the clients of each agent in
+# this process share one pace under that limit, and a run's first status check waits until it could
+# be done: about 5 checks per answer instead of 13 to 25.
+REQUESTS_PER_MINUTE = 28
+FIRST_CHECK_SHARE = 0.75  # first status check at 75% of the agent's usual run time...
+FIRST_CHECK_RANGE = (2.0, 12.0)  # ...but between 2 and 12 seconds
+USUAL_RUN_SECONDS = 12.0  # before an agent has answered once (no CREAO run has taken under 11 s so far)
+
+
+class Pace:
+    """CREAO requests from this process, at most per_minute in any 60 seconds. After a 429, nothing
+    is sent until the server's Retry-After has passed. Thread-safe: chats run in background jobs."""
+
+    def __init__(self, per_minute: int = REQUESTS_PER_MINUTE):
+        self.per_minute, self.sent, self.held_until = per_minute, [], 0.0
+        self.lock = threading.Lock()
+
+    def wait(self, clock: Callable[[], float], sleep: Callable[[float], None]) -> float:
+        """Wait for a slot, then take it. Returns the seconds waited."""
+        waited = 0.0
+        while True:
+            with self.lock:
+                now = clock()
+                self.sent = [t for t in self.sent if now - t < 60]
+                delay = max(self.held_until - now, (self.sent[0] + 60 - now) if len(self.sent) >= self.per_minute else 0)
+                if delay <= 0:
+                    self.sent.append(now)
+                    return waited
+            sleep(delay)
+            waited += delay
+
+    def hold(self, seconds: float, clock: Callable[[], float]) -> None:
+        with self.lock:
+            self.held_until = max(self.held_until, clock() + seconds)
+
+
+_paces: dict[str, Pace] = {}  # app ID -> the pace every client of that agent shares
+_paces_lock = threading.Lock()
+_usual_seconds: dict[str, float] = {}  # app ID -> how long its runs usually take, from CREAO's own times
+
+
+def shared_pace(app_id: str) -> Pace:
+    with _paces_lock:
+        return _paces.setdefault(app_id, Pace())
+
+
 class CreaoClient:
-    """Starts runs for one agent and waits for their results."""
+    """Starts runs for one agent and waits for their results.
+
+    With the real clock, the clients of one agent share its pace (shared_pace) and wait before a run's
+    first status check (first_check: seconds, or None for 75% of the agent's usual run time). Tests that
+    inject a clock get the plain loop: a private pace and no first wait, unless they pass pace and first_check."""
 
     def __init__(
         self,
         agent: AgentConfig,
         session: requests.Session | None = None,
-        poll_interval: float = 5.0,
+        poll_interval: float = 1.0,
         wait_timeout: float = 300.0,
         request_timeout: float = 30.0,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
         chat_model_id: str | None = None,
+        pace: Pace | None = None,
+        first_check: float | None = None,
     ):
         if chat_model_id is not None and not re.fullmatch(r"[A-Za-z0-9_.:/-]{1,120}", chat_model_id):
             raise CreaoConfigError("CREAO_HUB_CHAT_MODEL_ID must be a valid model identifier.")
@@ -325,6 +384,12 @@ class CreaoClient:
         self._sleep = sleep
         self._clock = clock
         self.chat_model_id = chat_model_id
+        real = clock is time.monotonic
+        self._pace = pace or (shared_pace(agent.app_id) if real else Pace())
+        self._first_check = first_check if first_check is not None or real else 0.0
+        self._timings: dict[str, Any] = {}
+        self._run_started: float | None = None
+        self._timed_run_id: str | None = None
 
     def run(self, inputs: dict[str, Any]) -> RunResult:
         """Start a run and wait for it to finish."""
@@ -342,52 +407,132 @@ class CreaoClient:
         if missing or invalid:
             raise CreaoInputError(missing, invalid)
 
+        self._reset_timings()
         payload = {**self.agent.extra_inputs, **inputs}  # the caller's inputs win
-        body = {"appId": self.agent.app_id, "inputs": payload}
+        body = {"inputs": payload}
         if self.chat_model_id:
             body["chatModelId"] = self.chat_model_id
-        data = self._request("POST", "/runs", json=body)
+        data = self._request("POST", self._runs_path(), json=body)
         run_id = data.get("id")
         if not run_id:
             raise CreaoRequestError("CREAO accepted the run but returned no run ID.")
+        self._timed_run_id = run_id
         log.info("CREAO run %s started for agent '%s'", run_id, self.agent.name)
         return run_id
 
     def get_run(self, run_id: str) -> dict[str, Any]:
         """Fetch a run's current state. Free: checking status uses no credits."""
-        return self._request("GET", f"/runs/{run_id}")
+        return self._request("GET", self._runs_path() + "/" + quote(run_id, safe=""))
+
+    def _runs_path(self) -> str:
+        return "/apps/" + quote(self.agent.app_id, safe="") + "/runs"
+
+    def _reset_timings(self) -> None:
+        self._run_started = self._clock()
+        self._timed_run_id = None
+        self._timings = {"submit_ms": 0.0, "status_http_ms": 0.0, "poll_sleep_ms": 0.0,
+                         "status_requests": 0, "rate_limited_polls": 0}
+
+    def _first_wait(self) -> float:
+        """Seconds before a new run's first status check: it can't be done sooner, and every check
+        counts against CREAO's limit."""
+        if self._first_check is not None:
+            return self._first_check
+        usual = _usual_seconds.get(self.agent.app_id, USUAL_RUN_SECONDS)
+        low, high = FIRST_CHECK_RANGE
+        return min(high, max(low, FIRST_CHECK_SHARE * usual))
 
     def wait_for_result(self, run_id: str) -> RunResult:
         """Poll until the run finishes. Raises CreaoRunFailed or CreaoTimeout."""
+        fresh = self._timed_run_id == run_id  # started by this client just now, not resumed
+        if not fresh:
+            self._reset_timings()
+            self._timed_run_id = run_id
         started = self._clock()
+        retry_delay = self.poll_interval
+        if fresh:
+            first = min(max(0.0, self._first_wait() - (started - self._run_started)), self.wait_timeout)
+            if first > 0:
+                self._sleep(first)
+                self._timings["poll_sleep_ms"] += first * 1000
         while True:
+            waited = self._clock() - started
+            if waited >= self.wait_timeout:
+                raise CreaoTimeout(run_id, waited)
             try:
                 raw = self.get_run(run_id)
             except CreaoRequestError as exc:
                 if exc.status_code != 429:  # rate limited: keep waiting, anything else is fatal
                     raise
                 raw = {}
+                self._timings["rate_limited_polls"] += 1
+                # Respect an explicit server hint. Without one, keep retries
+                # bounded: exponential 2/4/8/16s waits hid already-finished runs
+                # for 22 seconds in the live check.
+                retry_delay = exc.retry_after if exc.retry_after is not None else min(max(self.poll_interval * 2, 1.0), 2.0)
+                if exc.retry_after:
+                    self._pace.hold(exc.retry_after, self._clock)  # this agent's other chats wait too, rather than add to it
+            else:
+                retry_delay = self.poll_interval
             status = raw.get("status")
             if status in TERMINAL_STATUSES:
                 break
             waited = self._clock() - started
             if waited >= self.wait_timeout:
                 raise CreaoTimeout(run_id, waited)
-            self._sleep(self.poll_interval)
+            # Normal polls stay responsive; throttling increases the wait instead
+            # of hammering the API. A deadline never causes another paid POST.
+            delay = min(max(0.1, retry_delay), self.wait_timeout - waited)
+            self._sleep(delay)
+            self._timings["poll_sleep_ms"] += delay * 1000
 
         result = parse_run(raw)
+        result.timings = self._finish_timings(raw)
+        execution = result.timings.get("vendor_execution_ms")
+        if execution and self._first_check is None:  # learn how long this agent's runs take
+            seconds = execution / 1000
+            _usual_seconds[self.agent.app_id] = seconds if self.agent.app_id not in _usual_seconds \
+                else 0.5 * _usual_seconds[self.agent.app_id] + 0.5 * seconds
         log.info("CREAO run %s finished with status '%s'", run_id, result.status)
         if result.status != "completed":
             raise CreaoRunFailed(run_id, result.status, raw.get("errorCode"))
         return result
 
+    def _finish_timings(self, raw: dict[str, Any]) -> dict[str, Any]:
+        def interval(first, last):
+            try:
+                before = datetime.fromisoformat(raw[first].replace("Z", "+00:00"))
+                after = datetime.fromisoformat(raw[last].replace("Z", "+00:00"))
+                value = (after - before).total_seconds() * 1000
+                return round(value, 2) if value >= 0 else None
+            except (KeyError, TypeError, ValueError, AttributeError):
+                return None
+        total = (self._clock() - self._run_started) * 1000 if self._run_started is not None else None
+        queue, execution = interval("createdAt", "startedAt"), interval("startedAt", "completedAt")
+        overhead = max(0.0, total - queue - execution) if total is not None and queue is not None and execution is not None else None
+        return {**{key: round(value, 2) for key, value in self._timings.items()},
+                "total_ms": round(total, 2) if total is not None else None,
+                "vendor_queue_ms": queue, "vendor_execution_ms": execution,
+                "observation_overhead_ms": round(overhead, 2) if overhead is not None else None,
+                "poll_wait_overlaps_execution": True}
+
     def _request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
-        url = f"{self.agent.base_url}{path}"
+        url = f"{self.agent.base_url.rstrip('/')}{path}"
         headers = {"Authorization": f"Bearer {self.agent.api_key}", "Content-Type": "application/json"}
+        paced = self._pace.wait(self._clock, self._sleep)
+        if self._timings and paced:
+            self._timings["paced_ms"] = self._timings.get("paced_ms", 0.0) + paced * 1000
+        requested_at = self._clock()
         try:
             response = self.session.request(method, url, headers=headers, timeout=self.request_timeout, **kwargs)
         except requests.RequestException as exc:
             raise CreaoRequestError(self._scrub(f"Could not reach CREAO: {exc}")) from None
+        finally:
+            if self._timings:
+                field_name = "submit_ms" if method == "POST" else "status_http_ms"
+                self._timings[field_name] += (self._clock() - requested_at) * 1000
+                if method == "GET":
+                    self._timings["status_requests"] += 1
 
         if response.status_code in (401, 403):
             raise CreaoRequestError(
@@ -396,7 +541,13 @@ class CreaoClient:
                 response.status_code,
             )
         if response.status_code == 429:
-            raise CreaoRequestError("CREAO rate limit reached (HTTP 429).", 429)
+            try:
+                retry_after = float(getattr(response, "headers", {}).get("Retry-After", ""))
+                if not 0 <= retry_after <= 3600:
+                    retry_after = None
+            except (TypeError, ValueError):
+                retry_after = None
+            raise CreaoRequestError("CREAO rate limit reached (HTTP 429).", 429, retry_after=retry_after)
         if not 200 <= response.status_code < 300:
             raise CreaoRequestError(
                 self._scrub(f"CREAO returned HTTP {response.status_code}: {response.text[:200]}"),

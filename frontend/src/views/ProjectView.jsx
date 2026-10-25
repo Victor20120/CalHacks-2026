@@ -3,10 +3,13 @@ import { backend, connector } from "../api.js";
 import { ErrorNote, FolderPicker, Markdown } from "../components.jsx";
 
 // "What is this project?": your agent's overview, built from a map of the folder you approved. Private to you.
-export default function ProjectView({ session, project }) {
+// The heading is that folder's name (the one being mapped while building). Building it also names the
+// project after the folder, for everyone in the group.
+export default function ProjectView({ session, project, onFolder }) {
   const [saved, setSaved] = useState(null);
   const [loading, setLoading] = useState(true);
   const [building, setBuilding] = useState(false);
+  const [picked, setPicked] = useState(""); // the folder chosen while building
   const [error, setError] = useState("");
 
   async function load() {
@@ -26,10 +29,11 @@ export default function ProjectView({ session, project }) {
     load();
   }, [project.id]);
 
+  const heading = (building && picked) || saved?.map_stats?.folder || project.name;
   return (
     <div className="view">
       <div className="card-header plain">
-        <h2>{project.name}</h2>
+        <h2>{heading}</h2>
         {!building && (
           <button className="primary" onClick={() => setBuilding(true)}>
             {saved ? "Refresh overview" : "Build overview"}
@@ -45,9 +49,11 @@ export default function ProjectView({ session, project }) {
         <BuildOverview
           session={session}
           project={project}
+          onPick={setPicked}
           onDone={() => {
             setBuilding(false);
             load();
+            onFolder?.(); // the project is now shown by this folder's name
           }}
           onCancel={() => setBuilding(false)}
         />
@@ -149,7 +155,7 @@ function Overview({ context }) {
   );
 }
 
-function BuildOverview({ session, project, onDone, onCancel }) {
+function BuildOverview({ session, project, onPick, onDone, onCancel }) {
   const [root, setRoot] = useState("");
   const [map, setMap] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -157,6 +163,7 @@ function BuildOverview({ session, project, onDone, onCancel }) {
   const poller = useRef(null);
 
   useEffect(() => () => clearInterval(poller.current), []);
+  useEffect(() => onPick(root.split(/[\\/]/).filter(Boolean).pop() || ""), [root]); // its name, for the heading
 
   async function makeMap() {
     setError("");
@@ -187,7 +194,7 @@ function BuildOverview({ session, project, onDone, onCancel }) {
           setBusy(false);
           setError(e.message);
         }
-      }, 3000);
+      }, 750); // the backend is on this computer: checking often costs nothing
     } catch (e) {
       setBusy(false);
       setError(e.message);
