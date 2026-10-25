@@ -99,7 +99,7 @@ Open the command box (the search box at the top middle of VS Code, or Ctrl+Shift
 ## Install it
 
 ```
-code --install-extension expandrg-0.14.0.vsix --force
+code --install-extension expandrg-0.14.1.vsix --force
 ```
 
 To build it, from the ExpandRG folder (`npm install` done in `frontend/` and `vscode-extension/`):

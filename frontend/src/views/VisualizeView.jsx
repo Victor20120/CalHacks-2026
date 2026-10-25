@@ -22,6 +22,9 @@ export default function VisualizeView({ session, project, seed }) {
   const [busy, setBusy] = useState(false);
   const [agentBusy, setAgentBusy] = useState(false);
   const [error, setError] = useState("");
+  const [initializing, setInitializing] = useState(true);
+  const [initialError, setInitialError] = useState("");
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const plot = useRef(null); // { plotly, node }, for export
   const token = session.token;
   const isLeader = session.member.role === "leader";
@@ -34,7 +37,13 @@ export default function VisualizeView({ session, project, seed }) {
 
   useEffect(() => {
     let stopped = false;
+    let loadingCatalog = true;
+    setInitializing(true);
+    setInitialError("");
+    setError("");
     setCatalog(null);
+    setCatalogNotes([]);
+    setSaved([]);
     setSpec(null);
     setView(null);
     setCurrent(null);
@@ -44,36 +53,53 @@ export default function VisualizeView({ session, project, seed }) {
       try {
         const start = await backend(`/visualize/datasets?project_id=${encodeURIComponent(project.id)}`, { token });
         if (stopped) return;
+        loadingCatalog = false;
         setCatalog(start.datasets);
         setCatalogNotes(start.notes);
-        loadSaved().catch(() => {});
+        backend(`/visualizations?project_id=${encodeURIComponent(project.id)}`, { token })
+          .then((list) => { if (!stopped) setSaved(list); }).catch(() => {});
         if (seed?.graph_id) {
-          const graph = await backend(`/visualizations/${encodeURIComponent(seed.graph_id)}`, { token });
-          if (!stopped) show(graph);
-          return;
+          try {
+            const graph = await backend(`/visualizations/${encodeURIComponent(seed.graph_id)}`, { token });
+            if (!stopped) show(graph);
+            return;
+          } catch (e) {
+            if (e.status !== 404) throw e;
+            if (!stopped) setError("That saved graph is no longer available. You can start a new graph from your runs below.");
+          }
         }
         const wanted = seed?.datasets?.filter((d) => start.datasets.some((x) => x.id === d)) || [];
         if (wanted.length) {
-          await change([{ op: "create_graph", datasets: wanted, ...(seed.metrics?.length ? { metrics: seed.metrics } : {}) }], start.spec);
+          // Initializing another run must not edit the graph previously open in this panel.
+          const drawn = await backend("/visualize/ops", { method: "POST", token,
+            body: { spec: start.spec, ops: [{ op: "create_graph", datasets: wanted,
+              ...(seed.metrics?.length ? { metrics: seed.metrics } : {}) }] } });
+          if (!stopped) { setSpec(drawn.spec); setView(drawn); setRefused(drawn.refused); }
           return;
         }
-        if (remember.get(lastGraph)) {
+        const remembered = remember.get(lastGraph);
+        if (remembered && !seed?.graph_id) {
           try {
-            const graph = await backend(`/visualizations/${remember.get(lastGraph)}`, { token });
+            const graph = await backend(`/visualizations/${encodeURIComponent(remembered)}`, { token });
             if (!stopped) show(graph);
             return;
-          } catch {
-            remember.set(lastGraph, null); // deleted since
+          } catch (e) {
+            if (e.status !== 404) throw e;
+            remember.set(lastGraph, null); // A deleted graph must not prevent opening Visualize.
           }
         }
-        setSpec(start.spec);
-        setView(await backend("/visualize/figure", { method: "POST", token, body: { spec: start.spec } }));
+        const drawn = await backend("/visualize/figure", { method: "POST", token, body: { spec: start.spec } });
+        if (!stopped) { setSpec(drawn.spec); setView(drawn); }
       } catch (e) {
-        if (!stopped) setError(e.message);
+        if (!stopped) setInitialError(loadingCatalog && e.status === 404
+          ? "The running ExpandRG backend does not include Visualize yet. Stop and restart ExpandRG to load the update, then try again. If you installed ExpandRG, update its package first."
+          : e.message || "Visualize could not load your runs. Please try again.");
+      } finally {
+        if (!stopped) setInitializing(false);
       }
     })();
     return () => { stopped = true; };
-  }, [project.id, seed?.at]);
+  }, [project.id, seed?.at, token, loadAttempt]);
 
   // Every change: checked operations, then the redrawn figure. A saved graph keeps its history.
   async function change(ops, from = spec) {
@@ -185,8 +211,14 @@ export default function VisualizeView({ session, project, seed }) {
     return change([{ op: "add_run", dataset: item.id }]);
   }
 
-  if (!catalog || !spec) {
-    return <div className="view"><h2>Visualize</h2><p className="muted">Loading your runs…</p><ErrorNote error={error} /></div>;
+  if (initializing) {
+    return <div className="view"><h2>Visualize</h2><p className="muted" role="status">Loading your runs…</p></div>;
+  }
+  if (initialError || !catalog || !spec) {
+    return <div className="view"><h2>Visualize</h2>
+      <ErrorNote error={initialError || "Visualize could not load your runs. Please try again."} />
+      <button onClick={() => setLoadAttempt((attempt) => attempt + 1)}>Try again</button>
+    </div>;
   }
   const shown = catalog.filter((d) => spec.datasets.includes(d.id));
   const measures = [...new Set(shown.flatMap((d) => d.metrics))];

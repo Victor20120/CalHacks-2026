@@ -32,7 +32,7 @@ A collaborative AI research assistant for research groups that build custom nume
 ExpandRG installs as one package: no copy of this folder, and no Node. It needs Python 3.10 or newer.
 
 **With VS Code:**
-1. Install the extension: `code --install-extension expandrg-0.14.0.vsix --force`, or in VS Code: Extensions → **…** → **Install from VSIX…**.
+1. Install the extension: `code --install-extension expandrg-0.14.1.vsix --force`, or in VS Code: Extensions → **…** → **Install from VSIX…**.
 2. Open your project folder and click **ExpandRG: Set up** in the bottom bar. If no Python on the computer has ExpandRG yet, it offers to install it (the extension carries it) into the first Python 3.10+ it finds, or one you pick. It needs the internet once, for ExpandRG's own packages.
 3. The group leader sets up the group once: **Set up a new group…** in the same list. Everyone then picks the group, who they are and the folder's project.
 
@@ -40,7 +40,7 @@ To keep ExpandRG's packages apart from your project's, give it its own virtual e
 
 **Without VS Code:**
 ```
-python -m pip install expandrg-0.14.0-py3-none-any.whl
+python -m pip install expandrg-0.14.1-py3-none-any.whl
 expandrg setup                      # the group leader, once: the group and its CREAO agents
 expandrg start --group <group-id>   # the dashboard is at http://127.0.0.1:5173
 expandrg add-project                # another project for the group
@@ -138,7 +138,7 @@ For publication PDF/SVG/PNG with physical sizes, DPI, and font controls, install
 ```
 python -m pip install "expandrg[export]"
 # From a local wheel:
-python -m pip install "expandrg-0.14.0-py3-none-any.whl[export]"
+python -m pip install "expandrg-0.14.1-py3-none-any.whl[export]"
 ```
 
 Browser PNG/SVG export remains available without this extra. CREAO provides graph instructions; all measurements, calculations, and rendering stay in ExpandRG.
@@ -168,7 +168,7 @@ Versions live locally under `~/.expandrg/simulations/<group>/<id>/` (or `$EXPAND
 
 In VS Code, the ExpandRG extension ([vscode-extension/](vscode-extension/README.md)) adds **Set up simulation** to the bottom bar. It opens a request in your personal agent chat: click **Send** for the agent to inspect permitted project files and help prepare the environment, build steps, input files, and run commands. Python and compiled languages such as Fortran use their existing project workflow. You review and run the proposed commands in your normal terminal; ExpandRG monitors the output, with pop-ups for problems and a dashboard link. Commands in `expandrg.json` are watched automatically, other recognized runs after one click, when VS Code's terminal command reporting is on. You can also watch a log file. The extension starts ExpandRG in the background if it isn't running (`run_demo.py --no-browser`).
 
-The extension also has **ExpandRG AI**, a private chat powered by your own CREAO research agent. Use **Understand project** to map the folder, review what will be sent, then **Send to my agent**. The saved overview lets you discuss and refine the build and simulation setup, including Fortran compilation, input files, and runtime parameters. The settings icon opens **Agent instructions** to customize how your agent helps. Chat proposes commands; it does not execute them or edit your project. Install extension version **0.14.0** to see the updated panel (see [extension setup](vscode-extension/README.md)).
+The extension also has **ExpandRG AI**, a private chat powered by your own CREAO research agent. Use **Understand project** to map the folder, review what will be sent, then **Send to my agent**. The saved overview lets you discuss and refine the build and simulation setup, including Fortran compilation, input files, and runtime parameters. The settings icon opens **Agent instructions** to customize how your agent helps. Chat proposes commands; it does not execute them or edit your project. Install extension version **0.14.1** to see the updated panel (see [extension setup](vscode-extension/README.md)).
 
 To try a change without touching your project, open **Experiments**. A project needs an `expandrg.json` run manifest saying which commands experiments may run, which config keys they may change, and their time, memory and output limits (the sample projects have one). Pick the folder, change a parameter (for example `dt`) for up to three experiments, and click **Prepare**: that only makes copies under `~/.expandrg/experiments/`. Nothing runs until you click **Run** or **Run all**. Each run is stopped if it passes its limits, and the results are compared with the original run (`run.log`) in charts and a table. Experiments stay on your computer.
 

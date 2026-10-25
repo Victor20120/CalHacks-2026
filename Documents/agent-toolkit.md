@@ -65,7 +65,7 @@ If CREAO adds custom tools for API runs, or Device Connect proves to work on Win
 
 ## Setup on Windows with VS Code
 
-1. Install the extension: `code --install-extension vscode-extension/expandrg-0.14.0.vsix --force`, then run **Developer: Reload Window**. **ExpandRG: Set up** installs ExpandRG itself if needed and starts it (or run `expandrg start`, or `python run_demo.py` in the ExpandRG folder). The backend reaches your local connector at `http://127.0.0.1:8001`; set `EXPANDRG_CONNECTOR` to change that.
+1. Install the extension: `code --install-extension vscode-extension/expandrg-0.14.1.vsix --force`, then run **Developer: Reload Window**. **ExpandRG: Set up** installs ExpandRG itself if needed and starts it (or run `expandrg start`, or `python run_demo.py` in the ExpandRG folder). The backend reaches your local connector at `http://127.0.0.1:8001`; set `EXPANDRG_CONNECTOR` to change that.
 2. Pick your group, who you are and the folder's project when Set up asks.
 3. Open your project folder in VS Code and click **ExpandRG AI** in the bottom bar.
 4. On your first message, if the folder isn't allowed yet, VS Code asks **Allow ExpandRG to read "<folder>"?** Click **Allow**. The panel header then says `… · can read <folder>`. If you click away, the agent works without files and says so.

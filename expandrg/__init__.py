@@ -2,4 +2,4 @@
 
 The backend and the local connector are the `backend` and `local_connector` packages next to this one.
 """
-__version__ = "0.14.0"
+__version__ = "0.14.1"
