@@ -4,7 +4,161 @@ One entry per commit, newest first. Each commit adds its own entry with the hash
 
 ---
 
-## 2026-10-24 · `pending` · Guided first-time setup in VS Code, a resizable sidebar and talk box, Run results for the leader, clean agent replies, and weekly worksheets
+## 2026-10-25 · `pending` · ExpandRG 0.14.0: dashboard redesign, Visualization Studio phases 1 and 2, worksheet creation, and installable packages
+
+**Why:** ExpandRG only ran from a copy of this folder, and a group could only have the project it was set up with, so it couldn't be used on another project or another computer. The dashboard also gets the research-console design the team chose, and researchers can now compare runs on one graph.
+
+- **Visualization Studio phase 2:**
+  - Baseline absolute/relative differences on overlapping data, with explicit near-zero thresholds and gap counts; derived series are dashed. Shared-bin histograms and parameter sweeps use actual experiment parameters and final or interpolated values, with no extrapolation.
+  - `expandrg.json` units are read from granted project folders for watched runs and experiments; researcher-set units win. **Read full log** explicitly rereads available originals, checks their saved samples still match, and keeps recorded data when a log moved, changed, or exceeds the limits.
+  - **Diagnose this problem** on a run alert prepares an explicit diagnosis request. Private graphs show the affected measure around the alert and an earlier clean run when available. Checked graph operations from the personal CREAO agent are attached to the diagnosis and its draft; they open in Visualize.
+  - Optional `expandrg[export]` installs Matplotlib for PDF, SVG, and PNG at specified physical sizes, DPI, and fonts. Exports render the same checked traces, bin widths, gaps, derived markers, and labels as the browser, on white.
+  - Agent numeric claims with statistic references are checked against supplied data. Mismatches and unreferenced numeric answers are marked; general statements are not presented as verified observations.
+  - Fixed sequential Undo, stale agent edits overwriting changes in another window, tiny scientific values not changing saved-data fingerprints, missing-data line bridging, malformed style errors, and overflow in comparisons.
+  - Version 0.14.0 aligns the Python package, extension manifest, lockfile, and install examples so 0.13.0 installations can update.
+
+- **Visualize: compare runs on interactive graphs, by hand or with your own agent** (build plan step 9; design in `Documents/visualization-design.md`).
+  - **Where:** a new **Visualize** page (researchers: Simulation group; the leader: Group). **Open in Visualize** on a run (Monitor, Run results) and on an experiment comparison opens it with those runs. **Edit with Agent** there also puts the cursor in the agent box.
+  - **By hand:** tick runs and experiments (each shows its changed parameters and alert counts), then pick:
+    - measures (up to 3), the x axis (step, or a logged measure that increases with step), line or scatter;
+    - runs together or in separate panels, a linear or log scale, a range of steps;
+    - a title, a style (screen, paper, poster), units per measure, and notes at an x value.
+
+    Each change is an operation ExpandRG checks before applying it. A refused one says why under the graph.
+  - **The graph:** Plotly, loaded only on this page (its own 4.7 MB file, 1.4 MB compressed).
+    - One panel per measure, never a second y axis.
+    - Each run keeps its colour when others are added or removed. The 8 colours are checked for colour blindness on the light and dark backgrounds.
+    - A legend for two or more runs, and labels at the line ends for up to four.
+    - Red and amber lines mark each run's first Critical and Warning alert. With several runs in a panel, the notes say whose they are.
+    - Under the graph: notes on what it can't show (a measure a run lacks, values a log scale can't show, a range that hides an alert, thinned points); the largest difference between runs where they overlap; a table of each line's points, lowest, highest, last value and first NaN/Inf, from every point.
+  - **Accuracy:**
+    - NaN and Inf stay gaps.
+    - Comparisons use only the overlap. Values between measured points are straight-line estimates, never across a gap or beyond the data.
+    - Long series are thinned for drawing only, keeping each bucket's lowest and highest value. Statistics use all points.
+    - Nothing writes to runs, alerts or experiments.
+  - **Saved graphs:**
+    - **Save** names a graph. After that every change is saved as it's made.
+    - **Undo** goes back one change, or one agent reply.
+    - Saved graphs are private. They reopen from the current data and say if it changed since. The page reopens the last one you had open.
+    - PNG and SVG export, always light on white so they print, whatever the page's theme.
+  - **Edit with Agent** (researchers only; the leader has no personal agent): ask in plain words. The graph is saved first.
+    - Your own CREAO agent gets the graph's settings, the runs you may use, and each line's statistics with a 40-point summary, never the full data. It may use its toolkit first.
+    - It answers with a `graph_ops` block. ExpandRG checks each operation; refused ones go back to it once, with the reasons.
+    - Applied ones are saved as the agent's, with the CREAO run ID.
+    - Only you set units or request full-resolution reads. Baselines, differences, histograms, sweeps and optional PDF export are now available in Phase 2.
+  - API: `GET /visualize/datasets`, `POST /visualize/figure`, `POST /visualize/ops`, `GET`/`POST /visualizations`, `GET`/`PUT`/`DELETE /visualizations/{id}`, `POST /visualizations/{id}/undo`, and `POST /visualizations/{id}/agent` (a job; poll `/jobs/{id}`). New private tables `visualizations` and `visualization_history`. New `backend/visualization/` (spec, sources, transforms, figure, ops, agent, store).
+  - Also: the existing run charts' grid lines are solid instead of dashed. The dashboard adds `plotly.js-dist-min` 2.35.2.
+  - Checks:
+    - New `tests/test_visualization.py`, 13 tests: who can graph what; colours that stay with a run; alert lines and a range that hides one; log scales counting what they can't show; refused operations changing nothing; units set only by the researcher; scatter limited to 3 runs; alignment inside the overlap; thinning that keeps spikes; save, reopen, changed data and undo; Edit with Agent with one corrected retry; no writes to run data; the leader without an agent.
+    - In Chrome, on a scratch copy of the demo data:
+      - built a graph of both heat runs by clicking (measures, log scale, separate panels, range, title), saved, undid, and reopened it;
+      - checked dark mode, **Open in Visualize** from Monitor, the leader's page (no agent panel) and a 900 px window;
+      - PNG and SVG downloaded, and a PNG exported in dark mode is light on white.
+
+      This caught six problems, all fixed: a squeezed graph (runs and controls now sit above a full-width graph); alert labels piling up; the table running past its card; one remembered graph shared by everyone on the computer; runs without numbers in the list; a Plotly error from line-end labels at values near 1e304 (those are now left to the legend).
+    - **With real CREAO** (Researcher A's agent, through the page):
+      - "Zoom in on steps 400 to 900 and use a log scale. Which one diverges first?" (62 s): both operations applied, its numbers matched the statistics, and it said the range hid alerts. One Undo restored the graph.
+      - "Show residual instead" (20 s): applied.
+      - "These results look wrong: residual goes past 1e290" (42 s): it said the run diverges, not the graph, from the statistics, and changed only the scale, to log, which keeps every value.
+
+      Its first reply named a run by an internal ID, so it's now told to use the run's label.
+    - Not tried: an experiment on the graph through the page (this project's connector had none), and zooming by hand.
+- **Worksheets: no more weeks, and a New worksheet button.**
+  - **New worksheet** (leader) opens a panel. Tick who it's for, then choose:
+    - **Ask the Super Brain:** optionally say what it should cover. Left empty, it teaches what the others found, as before. With a request, people with nothing new are included too.
+    - **Write it myself:** your own questions and "try it" steps, optional model answers and title, and a note for CREAO. CREAO writes the missing model answers, gives each item a topic and links the findings it relies on. Your title replaces CREAO's.
+      - The saved worksheet is exactly your items, in your order, kinds and words. In a real run CREAO added 5 items of its own despite being told not to, so the app now matches CREAO's work to each of your items by the closest wording, keeps its topic, model answer (yours wins) and finding links, and drops anything it added. To have CREAO add questions, use Ask the Super Brain.
+
+    Then **Send to CREAO**: one run writes one worksheet for each person picked.
+  - **Numbered, not weekly:** each researcher's worksheets are Worksheet 1, 2, 3 in the order made. A cancelled one keeps its number on the leader's list, and that person's next worksheet takes the same number (the rule weeks had).
+  - The week panel, week cards and **Cancel week** / **Restore week** are gone. One table lists all worksheets, newest first, each with Cancel or Restore.
+  - Weeks cancelled before this become individually cancelled worksheets the next time the list loads, so each can be restored on its own.
+  - The Super Brain is no longer told about weeks; it builds on "earlier worksheets".
+  - **Model answers:** up to 2,500 characters (was 1,500). Longer text is now cut at the end of a sentence, or a word, with "…", never mid-word. A real model answer had ended "…a demonstrated one - th".
+  - API:
+    - `POST /worksheets` takes `request`, `title` and `questions`.
+    - Worksheets carry `number` and a true/false `cancelled`.
+    - `week` and `week_id` are gone from responses, and the `/worksheets/weeks/…` endpoints are removed.
+    - No table change: the week tables now just hold each run's batch.
+  - Checks:
+    - New `tests/test_worksheet_making.py` replaces the weeks tests, covering: numbering and a cancelled number used again; asking with a request, even with nothing new; secrets removed from it; the leader's questions and title; bad questions refused; only-what's-new and correction notes; restoring one worksheet from an older cancelled week; week endpoints gone; worksheets older than batches numbered.
+    - In Chrome, on a scratch backend running a copy of the demo data:
+      - your 8 worksheets from cancelled weeks showed as cancelled, each with Restore;
+      - **New worksheet** opened and both tabs filled in, without sending, so no credits were used;
+      - a worksheet's page read "Worksheet 1 · For Researcher C";
+      - there were no page errors.
+
+      This caught the "Optional" hint dropping under its label, and an empty "For" list while it loaded. Both are fixed.
+    - **With real CREAO** (the Super Brain hub agent), through the page, on a scratch copy of the demo data:
+      - **Ask the Super Brain** for Researcher B, asking for the stability limit, about five items and two hands-on steps: 62 s, 5 items with 2 "try it" steps, topics, model answers and finding links.
+      - **Write it myself** for Researcher A, two items: 59 s. Its title, items, order and model answer were kept, but CREAO added 5 more, which led to the fix above.
+      - **After the fix**, three items for Researcher C (one no finding covers): 28 s, exactly the 3 items as written, the leader's model answer kept, CREAO's answers for the others, the uncovered one answered from general knowledge. No page errors.
+    - New tests: a reply that adds items, puts its own first and rewords the leader's still saves exactly the leader's items, with the matching answers, topics and links; long text is cut at a sentence.
+- **New dashboard design**, from the team's console mock-up, with ExpandRG's name, real data and existing features. The mock-up's sample content (made-up GPU hours, conflicts, an Agents tab) isn't copied, because nothing real is behind it.
+  - **Sidebar:** the ExpandRG mark, a **project switcher** (the leader also gets **New project…**), navigation in groups, and the signed-in member at the bottom.
+    - Researcher groups: Research (Project, Diagnose, Drafts), Knowledge (Super Brain), Simulation (Simulations, Visualize, Experiments). Leader groups: Knowledge (Super Brain), Group (Run results, Visualize, Projects, Offboarding).
+    - Super Brain's tabs (Updates, Worksheets) and Simulations' tabs (Set up & run, Monitor) also show under them in the sidebar.
+    - The drafts count and the red count of Critical problems in a live run stay.
+  - **Top bar:** project / page breadcrumbs, the member chip and a **light/dark toggle**. The theme follows the system until you pick one, which this browser remembers.
+  - **Member menu:** switch to another member in one click (prototype sign-in), or sign out. It replaces the old **Switch**, which went back to the sign-in page.
+  - **Look:** soft surfaces, 1px borders, rounded cards with a header bar, segmented tabs, stat tiles, softer tables and badges. One indigo accent, Inter and JetBrains Mono (Google Fonts, system fonts offline), and Lucide icons (`lucide-react` 0.441.0, the dashboard's one new dependency).
+    - Kept on purpose: a hypothesis is still dashed and muted, never green, and the agent's own labels still never look like a researcher's verification.
+  - **Super Brain:** the "Ask Super Brain" chat is now a panel to the right of the updates, not docked at the bottom.
+    - Your messages are on the right, its answers on the left. Instructions and Clear chat are buttons in its header, and the send button is an arrow.
+    - Its left edge resizes its width. The old top-edge height handle is gone.
+    - Worksheets use the full width, without the panel.
+  - **Narrow windows:** below 1180 px the panel goes under the updates. Below 860 px the sidebar becomes a drawer behind a menu button, with the "built for laptops" notice.
+  - **Sign-in** and the favicon match the new look.
+  - Links like `?as=…&view=…&project=…&tab=worksheets` work as before. `view=alerts` is still Simulations for a researcher and Run results for the leader.
+  - Docs: `Documents/dashboard-design.md` (shell, breakpoints, colours, decisions), `frontend/README.md` (its chat paragraph had drifted from the code and now matches it), and `Documents/demo-script.md` (the project switcher and the chat panel).
+  - Checks: `npm run build` succeeds. Screenshots of the running dashboard in headless Chrome, at 1440 × 900 unless noted:
+    - Researcher A: Super Brain in dark mode, then Diagnose, Simulations, Project, Drafts and Experiments in light mode;
+    - the leader: Run results, Worksheets, Offboarding and Projects (dark mode);
+    - sign-in, and the Super Brain at 820 px wide.
+
+    The screenshots caught three problems, all fixed: the notice under the Offboarding title had turned grey, the sign-in list had an uneven bottom edge, and narrow screens would have hidden the member avatar.
+
+- **ExpandRG installs as a package.** Using it meant a copy of this folder on each computer, with Node for the dashboard, and the extension pointed at that folder. Now it's one wheel, and the VS Code extension carries it:
+  - **`expandrg` command** (`pyproject.toml`, new `expandrg/` package): `expandrg start [--group ID] [--no-browser] [--fresh] [--check]`, `stop`, `setup`, `add-project`, `version`. `run_demo.py` and `setup_expandrg.py` are now thin wrappers around it, with the same flags as before.
+  - **No Node needed.** `expandrg/dashboard.py` serves the built dashboard and passes `/api` and `/connector` on, as the Vite dev server does. It uses the same address, http://127.0.0.1:5173. A checkout with `frontend/node_modules` still uses the Vite dev server.
+  - **Files:** installed, the demo's data, its keys (`demo.env`) and the logs go in `~/.expandrg`, never inside the installed code. A checkout keeps `backend/data`, `backend/.env` and `.demo-logs` (`expandrg/paths.py`). The services run from `~/.expandrg`, so a project folder's own modules can't stand in for ExpandRG's. Messages name `expandrg …` or the scripts, whichever applies.
+  - **`start` refuses while ExpandRG is already running** and says which group. Before, the old backend answered the health check, so a second start looked fine, but its backend couldn't take the port.
+  - **`python build_package.py [--vsix]`** builds the dashboard into the package, then the wheel (`dist/`, copied into `vscode-extension/engine/`). With `--vsix` it also tests and packs the extension with the wheel inside. It refuses a wheel that contains `.env` files, databases, `data/`, `group.env` or `grants.json`. `backend/` got an `__init__.py` so it's packaged.
+  - **Extension 0.14.0:** Set up no longer asks where ExpandRG's folder is.
+    - It finds a Python with ExpandRG, or installs the wheel it carries into the first Python 3.10+ it finds or one you pick. pip's output is under Output → ExpandRG. Then setup continues; no second run is needed.
+    - An older installed ExpandRG can be updated.
+    - ExpandRG is started and stopped with `python -m expandrg`.
+    - Workspaces already set up with a source folder (`expandrg.connectorFolder`) keep using that folder's `run_demo.py`.
+    - What the launcher prints goes to `launcher.log`. If it stops without starting, the warning gives its reason at once instead of after 90 seconds.
+    - A backend running without its connector is stopped before starting again.
+  - Checks:
+    - New `tests/test_package.py` (the command, file locations installed versus checkout, refusing to start twice, the dashboard's pages, forwarding unchanged, a readable error when a service is down). `tests/test_run_demo.py` covers the installed command's processes. Extension tests cover Python versions, the carried wheel, and the commands in both modes.
+    - The wheel: 71 files, 242 KB with the new dashboard, with no keys, databases or `.env`. The `.vsix`: 15 files, 274 KB, carrying it.
+    - Installed into a new virtual environment and run from a folder outside the repo:
+      - the code loaded from the environment and its data went to `EXPANDRG_HOME`;
+      - `expandrg start` refused because the demo was running;
+      - `add-project` worked on a group made with the installed code;
+      - the installed backend, connector and dashboard ran on spare ports (8110, 8111, 5273), and through the packaged dashboard: the pages and app script loaded; health, sign-in and project creation worked through `/api` (a duplicate refused with 422); a folder grant worked through `/connector` and was saved under `EXPANDRG_HOME`.
+    - Not yet tried: the extension's Set up in a real VS Code window, and `expandrg start` on the default ports (the demo was running on them).
+- `setup_expandrg.py` ends by pointing to **ExpandRG: Set up** instead of settings lines.
+- **More projects in a group.** A group could only have the project it was set up with: setup made just that one, the dashboard had no way to add one, `--add-project` only worked on the demo, and VS Code's **Set up** lists projects from `group.json`, which nothing updated. Now the leader adds one either way, and both update the group's database and `group.json` together:
+  - **Dashboard:** a leader-only **Projects** page lists the group's projects and has **New project** (a name, and a checkbox per active researcher, all ticked). The new project is then chosen in the top bar.
+  - **Terminal:** `python setup_expandrg.py --add-project` asks which group (when there's more than one), the name (a name already used is asked again) and who works on it, and saves only after you confirm. Group setup now ends by mentioning it.
+  - `POST /projects` takes the ID from the name when none is given, and in a group (`EXPANDRG_GROUP`) also writes `group.json`. Offboarded researchers are left out by default and refused when picked.
+  - Answers piped into the setup from Windows PowerShell started with an invisible byte-order mark, which ended up in the saved name. It's removed now.
+  - README: **Use it on your own research project** is rewritten around this. It used to say you work as Researcher A in the demo.
+  - Checks: 5 new tests and one new refused case. In `tests/test_groups.py`: the terminal command with one group, several groups, no group and not confirming; offboarded researchers; the dashboard's API writing `group.json`. In `tests/test_project_overview.py`: the ID from the name, and a name with no letters refused. End to end on a scratch group, with your running ExpandRG left alone:
+    - the real `setup_expandrg.py --add-project` added "Pipe flow" for Ben;
+    - a scratch backend on port 8010 created "Jet flow" for Ana, refused the same name again (422) and refused a researcher (403);
+    - the extension's own `listGroups` then gave Ana "Channel flow, Jet flow" and Ben "Channel flow, Pipe flow".
+
+    The Projects page itself builds but wasn't clicked through in a browser.
+- The install commands in `vscode-extension/README.md` and `Documents/agent-toolkit.md` named old packages (0.10.0 and 0.8.0); they now name 0.12.1.
+- Final release checks: `python -m pytest`: **528 passed, 2 skipped**. Frontend production build and **34 extension tests** pass. Isolated Edge checks passed for Phase 1 (11 checks) and Phase 2 (12 checks), including a real experiment overlay, physical drag zoom, full-log restoration, exact differences/histograms/sweeps, and a 6.4 × 4.8 inch PDF. Two guarded requests through the existing CREAO connection verified a real heat-solver blow-up diagnosis/draft and graph refinement; all 11 referenced numeric claims matched. `python build_package.py --vsix` rebuilt 0.14.0; all runtime Python sources match the wheel, which includes Plotly and Phase 2, with identical copies in the extension and VSIX. No keys or databases are packaged. Installed-wheel smoke testing from outside the checkout also passed: all three services on spare ports, both API proxies, baseline-difference calculations, and a real publication PDF. Final layout checks passed for 24 researcher/leader page combinations at 1280px and 1440px.
+
+---
+
+## 2026-10-24 · `64e5c2a` · Guided first-time setup in VS Code, a resizable sidebar and talk box, Run results for the leader, clean agent replies, and weekly worksheets
 
 **Why:** Someone new had to type their group, member ID and project into `.vscode/settings.json` by hand. Now VS Code asks.
 

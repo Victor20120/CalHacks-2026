@@ -97,7 +97,20 @@ class PrivateMemory:
         if row is None:
             return None
         self._check(row["project_id"])
-        return dict(row)
+        return self._with_diagnostic_graphs(dict(row))
+
+    def _with_diagnostic_graphs(self, draft: dict) -> dict:
+        if not draft.get("episode_id"):
+            return draft
+        with closing(self.db.private(self.member_id)) as conn:
+            row = conn.execute("SELECT details FROM private_episodes WHERE id = ?", (draft["episode_id"],)).fetchone()
+        try:
+            graphs = json.loads(row["details"]).get("diagnostic_graphs", []) if row else []
+        except (ValueError, AttributeError):
+            graphs = []
+        if graphs:
+            draft["diagnostic_graphs"] = graphs
+        return draft
 
     def drafts(self, status: str = "pending") -> list[dict]:
         """This researcher's drafts, only for projects they are still a member of."""
@@ -111,7 +124,7 @@ class PrivateMemory:
                 f"SELECT * FROM share_drafts WHERE status = ? AND project_id IN ({marks}) ORDER BY created_at, id",
                 (status, *project_ids),
             )
-            return [dict(row) for row in rows]
+            return [self._with_diagnostic_graphs(dict(row)) for row in rows]
 
     def decide_draft(self, draft_id: str, status: str, finding_id: str | None = None) -> None:
         """Mark a pending draft approved or rejected."""

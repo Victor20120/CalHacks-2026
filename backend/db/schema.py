@@ -38,7 +38,8 @@ SHARED_TABLES = (
     "worksheet_weeks",
     "worksheet_in_week",
 )
-PRIVATE_TABLES = ("runs", "private_episodes", "share_drafts", "settings", "alerts", "project_context")
+PRIVATE_TABLES = ("runs", "private_episodes", "share_drafts", "settings", "alerts", "project_context", "visualizations",
+                  "visualization_history")
 
 SHARED_SCHEMA = """
 CREATE TABLE IF NOT EXISTS workspaces (
@@ -208,13 +209,15 @@ CREATE TABLE IF NOT EXISTS worksheet_items (
     leader_comment  TEXT NOT NULL DEFAULT ''
 );
 
--- Worksheets come in weeks: each "Make worksheets" is its project's next week, and teaches
--- what's new to each researcher since their last worksheet (unless only_new is 0). The leader
--- can cancel a whole week, or one person's worksheet in it, and restore either.
+-- The worksheets one Super Brain run wrote (a batch; the names are from when batches were
+-- weeks). It teaches what's new to each researcher since their last worksheet (unless only_new
+-- is 0). Worksheets are shown numbered per researcher (Worksheet 1, 2, ...); the leader cancels
+-- or restores one at a time (worksheet_in_week.cancelled_at). A batch-wide cancelled_at is only
+-- in older data, and is moved onto its worksheets when read.
 CREATE TABLE IF NOT EXISTS worksheet_weeks (
     id            TEXT PRIMARY KEY,
     project_id    TEXT NOT NULL REFERENCES projects(id),
-    week          INTEGER NOT NULL,  -- the order made in; the number shown skips cancelled weeks
+    week          INTEGER NOT NULL,  -- the order batches were made in
     made_by       TEXT NOT NULL REFERENCES members(id),
     made_at       TEXT NOT NULL,
     only_new      INTEGER NOT NULL DEFAULT 1 CHECK (only_new IN (0, 1)),
@@ -225,7 +228,7 @@ CREATE TABLE IF NOT EXISTS worksheet_weeks (
 CREATE TABLE IF NOT EXISTS worksheet_in_week (
     worksheet_id  TEXT PRIMARY KEY REFERENCES worksheets(id),
     week_id       TEXT NOT NULL REFERENCES worksheet_weeks(id),
-    cancelled_at  TEXT  -- this one person's worksheet was cancelled
+    cancelled_at  TEXT  -- this worksheet was cancelled
 );
 
 -- Runs watched on a researcher's computer, seen by them and the group leader.
@@ -334,5 +337,30 @@ CREATE TABLE IF NOT EXISTS project_context (
     map_stats     TEXT NOT NULL,  -- JSON: file counts of the map it was built from
     creao_run_id  TEXT,
     updated_at    TEXT NOT NULL
+);
+
+-- Saved graphs (the Visualization Studio): the spec and the graph's own conversation with the
+-- researcher's agent. Data is referenced, never copied; fingerprints say when it has changed.
+CREATE TABLE IF NOT EXISTS visualizations (
+    id            TEXT PRIMARY KEY,
+    project_id    TEXT NOT NULL,
+    title         TEXT NOT NULL,
+    spec          TEXT NOT NULL,              -- JSON (backend/visualization/spec.py)
+    fingerprints  TEXT NOT NULL DEFAULT '{}', -- JSON: "<dataset>|<measure>" -> fingerprint when last saved
+    conversation  TEXT NOT NULL DEFAULT '[]', -- JSON: the graph's exchanges with the agent
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+
+-- Every change to a saved graph: who made it (the researcher or their agent), the operations,
+-- and the spec after them, so any step can be undone.
+CREATE TABLE IF NOT EXISTS visualization_history (
+    id                TEXT PRIMARY KEY,
+    visualization_id  TEXT NOT NULL REFERENCES visualizations(id),
+    at                TEXT NOT NULL,
+    actor             TEXT NOT NULL CHECK (actor IN ('researcher', 'agent')),
+    ops               TEXT NOT NULL,          -- JSON list
+    spec              TEXT NOT NULL,          -- JSON, after these operations
+    creao_run_id      TEXT
 );
 """

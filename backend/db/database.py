@@ -6,7 +6,8 @@ Two kinds of database, in separate files:
 - private/<member_id>.db: one researcher's private project memory (runs and
   episodes). In the product this lives on the researcher's own computer.
 
-Files live in $EXPANDRG_DATA_DIR (default: backend/data/), which git ignores.
+Files live in $EXPANDRG_DATA_DIR (default: backend/data/ in a source checkout, which git
+ignores; ~/.expandrg/demo/data/ when installed as a package).
 """
 from __future__ import annotations
 
@@ -19,8 +20,9 @@ from pathlib import Path
 from typing import Callable
 
 from backend.db.schema import PRIVATE_SCHEMA, SCHEMA_VERSION, SHARED_SCHEMA
+from expandrg.paths import demo_data_dir
 
-DEFAULT_DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+DEFAULT_DATA_DIR = demo_data_dir()
 _MEMBER_ID = re.compile(r"^[a-z0-9_-]{1,64}$")
 RESET_COMMAND = "python -m backend.workspaces.demo --reset"
 

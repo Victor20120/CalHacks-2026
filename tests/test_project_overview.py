@@ -310,8 +310,14 @@ def test_the_leader_can_add_a_project(lab):
     assert "diffusion-study" not in [p["id"] for p in lab.client.get("/me", headers=lab.headers("researcher_b")).json()["projects"]]
 
 
+def test_a_new_projects_id_comes_from_its_name(lab):
+    created = lab.client.post("/projects", headers=lab.headers("leader"), json={"name": "Diffusion Study 2"})
+    assert created.status_code == 201 and created.json()["id"] == "diffusion-study-2"
+
+
 @pytest.mark.parametrize("body, member, status", [
     ({"id": "x-project", "name": "X"}, "researcher_a", 403),
+    ({"name": "!"}, "leader", 422),
     ({"id": "Bad ID!", "name": "X"}, "leader", 422),
     ({"id": "heat-diffusion", "name": "Duplicate"}, "leader", 422),
     ({"id": "x-project", "name": "X", "member_ids": ["nobody"]}, "leader", 422),

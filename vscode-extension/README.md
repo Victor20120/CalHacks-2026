@@ -6,11 +6,12 @@ The VS Code side of ExpandRG. The extension is the face; the local connector (Py
 
 The first time you open a project folder, ExpandRG asks to **Set up** (also in the bottom bar, and as the command **ExpandRG: Set up**). It takes about a minute and nothing is typed into settings files:
 
-1. **Where ExpandRG is**: pick the folder with `run_demo.py`. It's asked only if it isn't known yet.
-2. **A Python that runs it**: found by itself. It tries the configured one, then a virtual environment in or next to the ExpandRG folder, then `python`. If none has ExpandRG's packages, you pick one and it offers to install them.
-3. **Your group**: the groups made on this computer with `python setup_expandrg.py`, and the demo group. **Set up a new group…** (leader only) opens that setup in a terminal.
-4. **Who you are** in that group.
-5. **Which project this folder is**: only your projects are listed, and if there's one it's chosen for you.
+1. **A Python with ExpandRG**: found by itself (the configured one, then `python` / `py` on PATH). If none has it, the extension installs ExpandRG, which it carries, into the first Python 3.10+ it finds, or one you pick (for example a virtual environment's `python.exe`). pip's output is under **Output → ExpandRG**; it needs the internet once. If the installed ExpandRG is older than the one the extension carries, it offers to update it. No copy of ExpandRG's source is needed.
+2. **Your group**: the groups made on this computer with `expandrg setup`, and the demo group. **Set up a new group…** (leader only) opens that setup in a terminal.
+3. **Who you are** in that group.
+4. **Which project this folder is**: only your projects are listed, and if there's one it's chosen for you. A project that isn't listed yet is added by the group leader (dashboard **Projects** → **New project**, or `expandrg add-project`); run **Set up** again afterwards.
+
+A workspace set up with an ExpandRG source folder (`expandrg.connectorFolder`) keeps running that folder's `run_demo.py` while its Python doesn't have the package.
 
 It saves these in the workspace settings, turns on terminal command reporting there so typed runs can be watched, and starts the group. If ExpandRG is already running another group, it asks before restarting it with yours. When it's done, it offers to open **ExpandRG AI** or the dashboard.
 
@@ -53,7 +54,7 @@ CREAO remains the brain and skills provider. Personal chat uses the researcher's
   - if the output goes to a file (`> live.log`, `| tee run.log`), that file is watched instead.
 - **Pop-ups** (bottom right): when watching starts, at the first Warning, at the first Critical, and when the run ends (with its exit code if it failed). Each has **Open dashboard**.
 - **Status bar** (bottom left): what is being watched and its Critical problems, e.g. `ExpandRG: watching live.log · 2 critical` (red when there's a Critical problem). Click it to open the dashboard.
-- **ExpandRG starts by itself.** If `expandrg.connectorFolder` is set and ExpandRG isn't running, the extension starts it in the background (`run_demo.py --no-browser`, outside VS Code), so reloading or closing VS Code doesn't stop it. If it stops, a warning offers **Start ExpandRG**; a pop-up says when it's connected. Its logs are in `.demo-logs/` in the ExpandRG folder.
+- **ExpandRG starts by itself.** Once set up, if ExpandRG isn't running, the extension starts it in the background (`python -m expandrg start --no-browser`, outside VS Code), so reloading or closing VS Code doesn't stop it. If it stops, a warning offers **Start ExpandRG**; a pop-up says when it's connected. If it can't start (for example the demo has no keys on this computer), the warning says why at once. Its logs are in `~/.expandrg/logs/` (`launcher.log` and one per service), or `.demo-logs/` in a source folder.
 - **Output → ExpandRG** shows what the extension saw: start-up, whether ExpandRG is reachable, every terminal command and whether it was watched, ignored or asked about, and each run's result.
 
 ## Commands
@@ -76,9 +77,10 @@ Open the command box (the search box at the top middle of VS Code, or Ctrl+Shift
 
 ```json
 {
-  "expandrg.connectorFolder": "C:\\path\\to\\CalHacks-2026",
   "expandrg.pythonPath": "C:\\path\\to\\your-venv\\Scripts\\python.exe",
-  "expandrg.project": "heat-diffusion",
+  "expandrg.group": "fluids-lab",
+  "expandrg.member": "ana-ruiz",
+  "expandrg.project": "channel-flow-solver",
   "terminal.integrated.shellIntegration.enabled": true
 }
 ```
@@ -87,9 +89,9 @@ Open the command box (the search box at the top middle of VS Code, or Ctrl+Shift
 |---|---|---|
 | `expandrg.member` | `researcher_a` | Who you are (prototype sign-in) |
 | `expandrg.project` | empty | The ExpandRG project; **Choose project** sets it |
-| `expandrg.connectorFolder` | empty | The ExpandRG folder (with `run_demo.py`), so the extension can start it |
-| `expandrg.group` | empty | A research group made with `python setup_expandrg.py`. When set, the extension starts that group (`run_demo.py --group`) instead of the demo. Set `expandrg.member` to your ID in it |
-| `expandrg.pythonPath` | `python` | The Python that runs ExpandRG and `{python}` entry points (one with ExpandRG's packages) |
+| `expandrg.pythonPath` | `python` | The Python with ExpandRG installed (Set up installs it there). It also runs `{python}` entry points |
+| `expandrg.group` | empty | A research group made with `expandrg setup`. When set, the extension starts that group (`--group`) instead of the demo. Set `expandrg.member` to your ID in it |
+| `expandrg.connectorFolder` | empty | Only to run ExpandRG from a copy of its source (the folder with `run_demo.py`) instead of the installed package |
 | `expandrg.watchTerminalRuns` | on | Watch runs typed in the VS Code terminal |
 | `expandrg.backendUrl`, `expandrg.connectorUrl`, `expandrg.dashboardUrl` | `127.0.0.1` ports 8000, 8001, 5173 | Where the parts run |
 | `terminal.integrated.shellIntegration.enabled` (VS Code's own) | on | Must be on for typed runs to be seen. Use **Watch a log file** if terminal reporting is unavailable |
@@ -97,12 +99,16 @@ Open the command box (the search box at the top middle of VS Code, or Ctrl+Shift
 ## Install it
 
 ```
-cd vscode-extension
-npm install
-npm test                                     (compiles and runs the tests)
-npx @vscode/vsce@3.2.1 package --no-dependencies --allow-missing-repository --skip-license -o expandrg-0.10.0.vsix
-code --install-extension expandrg-0.10.0.vsix --force
+code --install-extension expandrg-0.14.0.vsix --force
 ```
+
+To build it, from the ExpandRG folder (`npm install` done in `frontend/` and `vscode-extension/`):
+
+```
+python build_package.py --vsix               (builds ExpandRG's package, tests the extension, packs both into the .vsix)
+```
+
+The `.vsix` carries ExpandRG's package in `engine/`; that's what Set up installs. Without it (a plain `vsce package`), Set up can't install ExpandRG and says so.
 
 Or in VS Code: open the **Extensions** sidebar (Ctrl+Shift+X), click **…** at its top right, choose **Install from VSIX…** and pick the `.vsix` file. After installing a new version, run `>Reload Window` from the command box. To remove it, uninstall "ExpandRG" from the Extensions sidebar.
 
@@ -113,7 +119,8 @@ Open the `vscode-extension` folder in VS Code, then **Run → Start Debugging** 
 ## If nothing happens
 
 - **Output → ExpandRG** says what the extension saw.
-- "The running ExpandRG backend does not have personal chat": an older backend is still running. Stop its `run_demo.py` launcher and start `python run_demo.py` again, then click **Refresh** in the chat. Reloading VS Code alone does not update an already-running backend. Keep existing data; no reset is needed.
-- "ExpandRG isn't running": click **Start ExpandRG**, or run `python run_demo.py`. Don't run it in a VS Code terminal you are about to reload, since reloading stops it.
+- "The running ExpandRG backend does not have personal chat": an older backend is still running. Stop it (`expandrg stop`, or `python run_demo.py --stop` in a source folder), click **Start ExpandRG**, then click **Refresh** in the chat. Reloading VS Code alone does not update an already-running backend. Keep existing data; no reset is needed.
+- "ExpandRG isn't running": click **Start ExpandRG**, or run `expandrg start`. Don't run it in a VS Code terminal you are about to reload, since reloading stops it.
+- "ExpandRG didn't start: …": the rest of the message is ExpandRG's reason, for example "ExpandRG is already running (group fluids-lab)" or that the demo has no keys on this computer. **Show details** shows the end of `launcher.log`.
 - A typed run isn't noticed: VS Code's terminal command reporting is off (`terminal.integrated.shellIntegration.enabled`). Turn the setting on, or use **ExpandRG: Watch a log file**.
 - PowerShell shows `>>` instead of running a command: the line ends with a `` ` `` (often copied by accident), which tells PowerShell the command continues. Press Ctrl+C and retype it.

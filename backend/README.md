@@ -90,7 +90,7 @@ It listens on this computer only (`127.0.0.1`), because sign-in is only a protot
 | `GET /offboarding` | Past handoffs. Leader only |
 | `POST /overview` | Body: `project_id`, `tree`, `files`, `excerpts`, `stats` (a project map from the local connector). Re-checks it, then starts an overview on your own agent. Returns `202` with `job_id` |
 | `GET /projects/{project_id}/overview` | Your saved overview of that project (purpose, structure, how to run, key parameters, open questions). Only you can see it |
-| `POST /projects` | Body: `id`, `name`, `description`, `member_ids`. Create a project in your group (leader only; the leader is always a member) |
+| `POST /projects` | Body: `name`, optional `id` (default: from the name, lowercase with dashes), `description`, `member_ids`. Create a project in your group (leader only; the leader is always a member). In a group made with `setup_expandrg.py` (`EXPANDRG_GROUP` set), it's also added to the group's `group.json`, so VS Code's **Set up** lists it |
 | `GET /jobs/{job_id}` | Any of your jobs (diagnosis or overview); same as `GET /diagnose/{job_id}` |
 | `POST /simulation-runs` | Body: `project_id`, `run_label`. Put a run you started watching on the dashboard (sent by your local connector). Returns `201` |
 | `POST /simulation-runs/{run_id}/report` | Body: `points` (list of `step` and `values`, a metric name to a number, or `null` for NaN/Inf), `alerts`, `stopped`. Only the researcher watching the run can report |
@@ -156,24 +156,39 @@ Personal agents are numbered within their workspace by registration/activation o
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /worksheets` | Leader only. Body: `project_id`, optional `member_ids` (who gets one this week; default everyone with something to learn), `only_new` (default `true`). Starts one Super Brain run for the project's next week (`202`, poll `/jobs/{job_id}`; the result has `worksheet_ids`, `week` and `week_id`). Returns `week`, `researchers` (who gets one, and how many findings they learn from) and `findings`. `422` when no one picked has anything (new) to learn; `409` while one is running |
-| `GET /worksheets/next?project_id=&only_new=` | Leader only. Next week's number (cancelled weeks don't count), and for each researcher `new_findings` (new to them since their last worksheet that wasn't cancelled) and `since`. Starts nothing |
-| `POST /worksheets/weeks/{week_id}/cancel`, `/restore` | Leader only. Cancel or restore a whole week |
-| `POST /worksheets/{id}/cancel`, `/restore` | Leader only. Cancel or restore one person's worksheet in its week |
-| `GET /worksheets?project_id=` | Every worksheet in the project for the leader; your own for a researcher. Each has `status` (`assigned`, `submitted`, `reviewed`), `items` and `answered` |
+| `POST /worksheets` | Leader only. Body: `project_id`, optional `member_ids` (who gets one; default everyone with something to learn), `only_new` (default `true`), `request` (what to cover, up to 2,000 characters), `title` (your own title for them), `questions` (up to 8 of `{kind: "question" or "try", prompt, model_answer}`, written by you for the Super Brain to finish). Starts one Super Brain run (`202`, poll `/jobs/{job_id}`; the result has `worksheet_ids`). Returns `researchers` (who gets one, and how many findings they learn from) and `findings`. With a `request` or `questions`, everyone picked gets one, even with nothing new to learn from. `422` when no one picked has anything (new) to learn and nothing was asked, or when nobody is picked; `409` while one is running |
+| `GET /worksheets/next?project_id=&only_new=` | Leader only. For each researcher, `new_findings` (findings from the others they'd learn from; with `only_new`, new since their last worksheet that wasn't cancelled) and `since`. Starts nothing |
+| `POST /worksheets/{id}/cancel`, `/restore` | Leader only. Cancel or restore one worksheet |
+| `GET /worksheets?project_id=` | Every worksheet in the project for the leader; your own for a researcher. Each has `number`, `status` (`assigned`, `submitted`, `reviewed`), `items`, `answered` and `cancelled` |
 | `GET /worksheets/{id}` | One worksheet with its items. A researcher sees `model_answer` only once the leader has reviewed it |
 | `PUT /worksheets/{id}/answers` | The researcher it's for. Body: `answers` (`{item_id: text}`), `submit`. `409` once reviewed |
 | `POST /worksheets/{id}/review` | Leader only. Body: `comments` (`{item_id: text}`), `comment`. Marks it reviewed |
 | `DELETE /worksheets/{id}` | Leader only |
 
-Every worksheet in `GET /worksheets` carries `week`, `week_id`, `only_new` and `cancelled` (`week`, `person` or `null`), newest week first. Researchers never see cancelled ones (`404` when opened). `week` counts only the weeks that weren't cancelled: after cancelling week 1, the next week made is week 1 too, the cancelled one still reads week 1, and restoring it moves the later weeks up by one (`worksheet_weeks.week` keeps the order they were made in). Weeks are kept in `worksheet_weeks` and `worksheet_in_week`, new tables made on start; worksheets made before weeks existed become week 1 (one week per batch).
+`GET /worksheets` lists the newest first. `number` is the worksheet's number for its researcher in that project (Worksheet 1, 2, ...): one more than the worksheets made for them before it that weren't cancelled. So a cancelled worksheet keeps showing its number to the leader, the next one made for that person takes the same number, and restoring the cancelled one moves the later ones up by one. Researchers never see cancelled ones (`404` when opened). Each Super Brain run's worksheets are stored as a batch in `worksheet_weeks` and `worksheet_in_week` (names from when batches were weeks; `worksheet_in_week.cancelled_at` marks a cancelled worksheet). A batch cancelled as a whole in older data becomes each of its worksheets cancelled when the project's worksheets are next read, so each can be restored on its own. Worksheets made before batches existed get one batch per Super Brain run.
 
-`backend/knowledge_sharing/teacher.py` lists, for each active researcher, the findings the *others* shared that are new to them: shared, or given a note, after their last worksheet that wasn't cancelled. That's everything in a first week or with `only_new=false`, up to 30. It also passes the topics they already covered (`already_covered`), and the brief asks to build on them rather than repeat them; a correction note overrides the finding. Only those findings are sent. One run on the Super Brain agent (the same agent and model as chat) gets them in a single prompt and returns a `{"worksheets": [...]}` block. The app keeps only:
+`backend/knowledge_sharing/teacher.py` lists, for each active researcher, the findings the *others* shared that are new to them: shared, or given a note, after their last worksheet that wasn't cancelled. That's everything in a first worksheet or with `only_new=false`, up to 30. The leader's `request` and `questions` go along as `leader_request` and `leader_questions`; the brief says to follow the request (teaching from general knowledge, and saying so, when no finding fits) and to keep the leader's questions in order, adding model answers, topics and finding links. Because the agent doesn't reliably add nothing, the app enforces it: a worksheet from the leader's questions is exactly those (their order, kind and words), each given the topic, model answer (the leader's own wins) and finding links of the agent's closest-worded item; the agent's other items are dropped. Text over its limit (model answers 2,500 characters) is cut at a sentence or word with "…". It also passes the topics they already covered (`already_covered`), and the brief asks to build on them rather than repeat them; a correction note overrides the finding. Only those findings are sent. One run on the Super Brain agent (the same agent and model as chat) gets them in a single prompt and returns a `{"worksheets": [...]}` block. The app keeps only:
 - the planned researchers, one worksheet each;
 - items that are a question or a "try it" step, with a prompt, at most 8 per worksheet;
 - finding IDs from what that researcher may learn from.
 
 Text is bounded and secrets are blanked everywhere. A worksheet is seen only by its researcher and the leader, while both are active members of its project. "Try it" steps tell the researcher to use a copy; nothing runs by itself. Tables: `worksheets` and `worksheet_items`, created on start.
+
+### Visualization Studio: graphs of runs and experiments
+
+The dashboard's **Visualize** page ([design](../Documents/visualization-design.md)). A graph is a spec (`backend/visualization/spec.py`: runs, measures, x axis, line or scatter, overlay or separate panels, range, scales, notes, style, units). Every change, from the page or the agent, is a list of operations that `ops.py` checks against the spec and the runs the viewer may see; a refused one changes nothing and says why. `figure.py` draws the Plotly figure from the runs' own numbers (`sources.py`, `transforms.py`). Nothing here writes to runs, alerts or experiments, and none of it calls CREAO except `/agent`.
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /visualize/datasets?project_id=` | The runs you may graph in the project (`run:<id>`: your own, or the shared ones for the leader; runs with no numbers per step are left out) and your experiments from the local connector (`exp:<id>`, and `base:<set id>` for a set's original run), with measures, alert counts and changed parameters. Also `notes` (for example the connector is down) and an empty `spec` |
+| `POST /visualize/figure` | Body: `spec`. The figure, `notes` on what it can't show, `stats` for each line (from every point), `comparisons` (largest difference where runs overlap) and `fingerprints` |
+| `POST /visualize/ops` | Body: `spec`, `ops` (up to 50). Applies them in order and draws the result. Adds `applied`, `refused` (`{op, reason}`) and `actions` (`save` or `export`, done by the page) |
+| `GET /visualizations?project_id=`, `POST /visualizations` | Your saved graphs (private). Body for saving: `title`, `spec`. Returns `201` |
+| `GET`, `PUT`, `DELETE /visualizations/{id}` | Open (redrawn from the current data; a note says which lines changed since it was saved), update (body: `spec`, `ops`, optional `title`; recorded as yours) or delete one |
+| `POST /visualizations/{id}/undo` | Back to the spec before the last change (one researcher change, or one agent reply). `409` when there's nothing to undo |
+| `POST /visualizations/{id}/agent` | Body: `message`, optional `folder`. Researchers only (`403` for the leader). Starts a reply from your own agent about this graph (`202`, poll `/jobs/{job_id}`); one at a time per project (`409`) |
+
+The agent gets the spec, the catalog (up to 40 runs), each line's statistics and a summary of at most 40 points (`series_summary`), the comparisons and the notes, never a full series. It may use its toolkit, then ends with a `{"graph_ops": [...]}` block instead of a share block. Refused operations go back to it once with the reasons. Applied ones are saved as the agent's, with the last CREAO run ID; the job's result has `reply`, `applied`, `refused`, the redrawn graph and `creao_runs`. Only the researcher sets units (`set_units` from the agent is refused). Phase 2 supports baseline differences, histograms, experiment sweeps, and optional publication PDF export. Full-resolution reads and units remain researcher-only actions. Tables: `visualizations` and `visualization_history` in the researcher's private database (the last 12 exchanges are kept with each graph), created on start; datasets are referenced by fingerprint, never copied.
 
 ### Sharing from chat
 
@@ -207,9 +222,9 @@ The one exception to per-finding approval, published in advance as a membership 
 
 ## Databases
 
-SQLite files in `backend/data/` (git ignores it; set `EXPANDRG_DATA_DIR` to move it). They are created with the demo workspace on first use.
+SQLite files in `backend/data/` (git ignores it; set `EXPANDRG_DATA_DIR` to move it). They are created with the demo workspace on first use. Installed as a package (`pip install expandrg-<version>.whl`), the demo's files are in `~/.expandrg/demo/data/` and its keys in `~/.expandrg/demo.env` instead, never inside the installed code (`expandrg/paths.py` decides which).
 
-A research group made with `python setup_expandrg.py` (`backend/workspaces/groups.py`) has its own folder. `run_demo.py --group <id>` points the backend at that folder:
+A research group made with `python setup_expandrg.py` or `expandrg setup` (`backend/workspaces/groups.py`) has its own folder. `run_demo.py --group <id>` (or `expandrg start --group <id>`) points the backend at that folder:
 - `EXPANDRG_DATA_DIR` is set to the group's `data/`;
 - `EXPANDRG_ENV_FILE` is set to its `group.env`, which is read instead of `backend/.env`.
 
@@ -218,7 +233,7 @@ The demo is never added to a database that already holds another group.
 | File | Holds |
 |---|---|
 | `superbrain.db` | The group's shared Super Brain: workspace, members, projects, agents, approvals, shared findings, their links, offboarding handoffs, chat shares (`auto_shares`), members' notes (`finding_notes`), and worksheets with their items, answers and the leader's comments |
-| `private/<member>.db` | One researcher's private memory (runs, episodes, drafts for the Super Brain, settings, and saved alerts if they turned history on), split by project. In the product this lives on the researcher's own computer |
+| `private/<member>.db` | One researcher's private memory (runs, episodes, drafts for the Super Brain, settings, saved graphs with their history, and saved alerts if they turned history on), split by project. In the product this lives on the researcher's own computer |
 
 Private and shared data are in different files with different tables, so no shared query can return private memory. `approvals` stores no draft text: rejected drafts never reach the shared database. Approving writes the approval and the finding in one transaction.
 
@@ -278,3 +293,14 @@ The local connector adds authenticated `/simulations` routes: `POST /inspect` sn
 Runtime discovery prefers a project virtual environment, then an activated virtual/Conda environment, then the connector’s current Python. It preserves external interpreter/compiler paths locally and sends CREAO only environment labels, tool/package availability, and compiler aliases. A bounded isolated metadata probe checks the selected interpreter; probe failure means unknown availability. Plans use `{python}`, `{fortran}`, `{cc}`, and `{cxx}` aliases, including Make/CMake compiler arguments. Repeated versions keep the selection, without copying or recreating the environment. A selected folder does not run SDK activation scripts; launch ExpandRG from an activated terminal when those scripts are required.
 
 The connector checks the backend identity and membership before accessing versions, with no client-supplied member identity. Each run registers monitoring before execution. Build steps run sequentially and a failed build never launches the simulation. Output is captured and parsed automatically, and the existing run visibility policy gives the owner and project leader access to its metrics. Source snapshots, code, complete logs, and setup metadata remain on the local computer. The source project is not modified, sensitive files and symlinks are excluded from copies, and each run uses a fresh work copy. Resource limits and command validation do not provide host filesystem/network isolation; the user reviews commands and explicitly clicks Run.
+
+
+### Visualization Studio phase 2
+
+Graph specs support `baseline`, `difference` (`absolute`/`relative`), `relative_threshold`, `histogram.bins`, `sweep.parameter`/`sweep.step`, and `resolution` (`recorded`/`full`). New operations are `set_baseline`, `configure_histogram`, `configure_sweep`, and researcher-only `set_resolution`; `compare_runs` accepts difference mode. Relative gaps near zero and interpolation are reported explicitly.
+
+`POST /visualize/export` accepts a checked spec, `format` (`pdf`, `svg`, `png`), width/height in inches (2–20), DPI (72–600), font size (6–28), and a supported font family. It returns a file, or 503 with the optional-extra installation command. Matplotlib is an optional `export` extra.
+
+`POST /diagnose` accepts optional `run_id` and `alert_id`. The backend checks run/project visibility, makes a default private diagnostic graph, and passes only bounded summaries to the personal CREAO agent. Valid graph operations attach private visualizations to the result and draft via its existing episode. In the graph-edit conversation, numeric claim references are checked against the supplied statistics and returned as `claim_checks`.
+
+The connector’s read-only `GET /visualize/local-data` resolves exact unambiguous granted log labels or saved simulation outputs, reads project units, and restores at most 100 MB/one million metric points when requested. The backend rejects a full log whose recorded samples no longer match. Experiments expose units from their granted project manifest. No run, alert, or simulation source is modified.

@@ -8,7 +8,7 @@ const ACTIVE = ["queued", "running"];
 
 // Try a change in a copy of the project and compare it with the original run.
 // Preparing only makes copies; nothing runs until the researcher clicks Run.
-export default function ExperimentsView({ session, project }) {
+export default function ExperimentsView({ session, project, onVisualize }) {
   const [root, setRoot] = useState("");
   const [manifest, setManifest] = useState(null);
   const [manifestError, setManifestError] = useState("");
@@ -79,7 +79,7 @@ export default function ExperimentsView({ session, project }) {
       <ErrorNote error={error} />
 
       {sets.map((set) => (
-        <ComparisonCard key={set.id} set={set} onAct={act} />
+        <ComparisonCard key={set.id} set={set} onAct={act} onVisualize={onVisualize} />
       ))}
     </div>
   );
@@ -217,7 +217,7 @@ function NewComparison({ root, manifest, session, project, onPrepared, onError }
   );
 }
 
-function ComparisonCard({ set, onAct }) {
+function ComparisonCard({ set, onAct, onVisualize }) {
   const [details, setDetails] = useState({});
   const prepared = set.items.filter((e) => e.status === "prepared");
   const budget = prepared.reduce((sum, e) => sum + e.limits.wall_seconds, 0);
@@ -242,6 +242,9 @@ function ComparisonCard({ set, onAct }) {
                                    result: details[e.id], status: e })),
   ];
   const hasNumbers = lines.some((l) => Object.keys(l.series).length);
+  // The same runs in Visualize: the original run first, then the experiments with numbers.
+  const graphable = lines.filter((l) => Object.keys(l.series).length)
+    .map((l) => (l.key === "baseline" ? `base:${set.id}` : `exp:${l.key}`));
 
   return (
     <section className="card comparison">
@@ -249,11 +252,17 @@ function ComparisonCard({ set, onAct }) {
         <h3>
           {set.items[0].entry} <span className="muted small">· prepared {localTime(set.items[set.items.length - 1].created_at)}</span>
         </h3>
-        {prepared.length > 1 && (
-          <button className="primary" onClick={() => onAct("/experiments/run", { ids: prepared.map((e) => e.id) })}>
-            Run all ({prepared.length}, up to {minutes(budget)})
-          </button>
-        )}
+        <div className="row-buttons">
+          {onVisualize && graphable.length > 0 && <>
+            <button onClick={() => onVisualize(graphable)}>Open in Visualize</button>
+            <button onClick={() => onVisualize(graphable, true)}>Edit with Agent</button>
+          </>}
+          {prepared.length > 1 && (
+            <button className="primary" onClick={() => onAct("/experiments/run", { ids: prepared.map((e) => e.id) })}>
+              Run all ({prepared.length}, up to {minutes(budget)})
+            </button>
+          )}
+        </div>
       </div>
       <table className="alert-table experiments-table">
         <tbody>

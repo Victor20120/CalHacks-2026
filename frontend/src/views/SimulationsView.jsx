@@ -6,8 +6,8 @@ import RunsView from "./RunsView.jsx";
 const labels = { awaiting_setup: "Preparing setup", needs_input: "Needs attention", ready: "Ready to run",
   queued: "Queued", running: "Running", finished: "Finished", failed: "Failed", stopped: "Stopped", interrupted: "Interrupted" };
 
-export default function SimulationsView({ session, project }) {
-  const [tab, setTab] = useState("setup");
+// The tab ("setup" or "monitor") is set by the sidebar too, so it lives in the app.
+export default function SimulationsView({ session, project, tab, onTab: setTab, onVisualize, onDiagnose }) {
   const [root, setRoot] = useState("");
   const [environment, setEnvironment] = useState("");
   const [compiler, setCompiler] = useState("");
@@ -153,7 +153,7 @@ export default function SimulationsView({ session, project }) {
         <button role="tab" aria-selected={tab === "monitor"} className={tab === "monitor" ? "active" : ""} onClick={() => setTab("monitor")}>Monitor</button>
       </div>
     </div>
-    {tab === "monitor" ? <RunsView session={session} project={project} initialRunId={monitorId} /> : <>
+    {tab === "monitor" ? <RunsView session={session} project={project} initialRunId={monitorId} onVisualize={onVisualize} onDiagnose={onDiagnose} /> : <>
       <section className="card simulation-prepare">
         <div className="simulation-step">01 · PREPARE A VERSION</div>
         <h3>What are you running?</h3>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
+import { ChevronRight, Crown, Microscope, Network } from "lucide-react";
 import { backend } from "../api.js";
-import { ErrorNote } from "../components.jsx";
+import { Avatar, ErrorNote } from "../components.jsx";
 
 export default function SignIn({ onSignIn }) {
   const [members, setMembers] = useState([]);
@@ -26,18 +27,30 @@ export default function SignIn({ onSignIn }) {
 
   return (
     <div className="sign-in">
-      <h1>ExpandRG</h1>
-      <p className="tagline">Expand Researching Globally</p>
-      <p className="muted">Prototype sign-in: choose a demo member.</p>
-      <div className="member-list">
-        {members.map((m) => (
-          <button key={m.id} onClick={() => choose(m.id)}>
-            <strong>{m.display_name}</strong>
-            <span className="muted small">{m.role}</span>
-          </button>
-        ))}
+      <div className="brand">
+        <span className="brand-mark"><Network /></span>
+        <span>
+          <h1 className="brand-name">ExpandRG</h1>
+          <span className="tagline">Expand Researching Globally</span>
+        </span>
       </div>
-      <ErrorNote error={error} />
+      <section className="card">
+        <h3>Sign in</h3>
+        <p className="muted small">Prototype sign-in: choose a member.</p>
+        <div className="member-list">
+          {members.map((m) => (
+            <button key={m.id} onClick={() => choose(m.id)}>
+              <Avatar id={m.id} name={m.display_name} />
+              <span className="member-text">
+                <strong>{m.display_name}</strong>
+                <span className="muted xs">{m.role === "leader" ? <><Crown />Group leader</> : <><Microscope />Researcher</>}</span>
+              </span>
+              <ChevronRight className="chev" />
+            </button>
+          ))}
+        </div>
+        <ErrorNote error={error} />
+      </section>
       {policy && <p className="muted small policy">{policy}</p>}
     </div>
   );

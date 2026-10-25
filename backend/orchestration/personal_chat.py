@@ -95,9 +95,12 @@ def clean_personal_reply(reply: str) -> str:
 
 def run_personal_chat(client: Any, project: str, message: str, rules: str,
                       history: list[dict], overview: str, shared_knowledge: dict,
-                      instruction_action: str | None = None, *, agent_name: str, tools: Any = None) -> dict:
+                      instruction_action: str | None = None, *, agent_name: str, tools: Any = None,
+                      graph: dict | None = None) -> dict:
     """One reply from the researcher's own agent. With tools (a Toolkit), the agent may ask
-    for files, runs and findings: each round of requests costs one more CREAO run."""
+    for files, runs and findings: each round of requests costs one more CREAO run. With graph
+    ({"instructions", "context"}, from the Visualization Studio), the message is about that graph:
+    the agent ends with a graph_ops block instead of a share block, returned as graph_ops."""
     recent, chars = [], 0
     for exchange in reversed(history[-4:]):
         item = {"user": exchange["question"][:500], "assistant": clean_personal_reply(exchange["reply"])[:1000]}
@@ -108,6 +111,10 @@ def run_personal_chat(client: Any, project: str, message: str, rules: str,
         chars += size
     payload = {"agent_name": agent_name, "current_message": message, "recent_conversation": recent, "project_overview": overview,
                "shared_knowledge": shared_knowledge, "instruction_action_completed_by_app": instruction_action}
+    if graph:
+        payload["graph"] = graph["context"]
+    closing_block = graph["instructions"] if graph else SHARE_INSTRUCTIONS
+    closing_name = "graph_ops" if graph else "share"
     introduction = (f"This is a new conversation: introduce yourself as {agent_name} in one short sentence. "
                     if not history else "")
 
@@ -132,7 +139,7 @@ def run_personal_chat(client: Any, project: str, message: str, rules: str,
                 "instead of inventing flags, file names, installed tools, or results. You can propose changes "
                 "and commands; this chat does not execute them or edit project files. Do not claim to have run "
                 "a local build, simulation, or changed files. The user's explicit actions control those steps. "
-                "Keep hypotheses distinct from confirmed findings. " + NO_CLOUD_RUNS + " " + SHARE_INSTRUCTIONS + " "
+                "Keep hypotheses distinct from confirmed findings. " + NO_CLOUD_RUNS + " " + closing_block + " "
                 + (toolkit_text + " " if toolkit_text else "") +
                 "If instruction_action_completed_by_app is set, the app has already saved or retrieved the "
                 "response guidelines above; acknowledge them accurately. Respond to current_message naturally.\n\n"
@@ -143,8 +150,8 @@ def run_personal_chat(client: Any, project: str, message: str, rules: str,
             "output_format": (LOOK_FIRST if toolkit_text and "tool_requests" in toolkit_text else "") + (
                 "Final user-facing answer only. Start with the answer, with no skill-loading or tool-setup preamble. "
                 "Use natural conversation and short paragraphs by default; use Markdown structure when useful. "
-                "No audit report or issue-list JSON unless explicitly requested. End with the share JSON block described "
-                "above."
+                "No audit report or issue-list JSON unless explicitly requested. "
+                f"End with the {closing_name} JSON block described above."
             ),
         }, rules)
         return _answer(client, inputs, len(inputs["observed_symptom"]))
@@ -166,9 +173,12 @@ def run_personal_chat(client: Any, project: str, message: str, rules: str,
         result["prompt_chars"] += prompt_chars
         runs += 1
     reply, _ = extract_json_block(result["reply"], "tool_requests")  # one after the last round can't be run
-    reply, share = extract_json_block(reply, "share")  # what the agent wants shared, if anything
+    _, numeric_claims = extract_json_block(reply, "numeric_claims") if graph else (reply, None)
+    reply, block = extract_json_block(reply, closing_name)  # what to share, or what to change on the graph
+    if graph:
+        reply, _ = extract_json_block(reply, "numeric_claims")
     reply = clean_personal_reply(reply)
     if calls:  # say what the agent looked at; the file contents themselves aren't kept in history
         reply += "\n\n" + describe_calls(calls)
-    return {**result, "reply": reply, "share": share, "creao_runs": runs,
-            "tool_calls": [{k: c[k] for k in ("tool", "request", "ok", "summary")} for c in calls]}
+    return {**result, "reply": reply, "share": None if graph else block, **({"graph_ops": block, "numeric_claims": numeric_claims} if graph else {}),
+            "creao_runs": runs, "tool_calls": [{k: c[k] for k in ("tool", "request", "ok", "summary")} for c in calls]}

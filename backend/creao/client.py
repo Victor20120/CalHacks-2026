@@ -21,11 +21,14 @@ from typing import Any, Callable
 import requests
 from dotenv import load_dotenv
 
+from expandrg.paths import demo_env_file
+
 log = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "https://agent.creao.ai/api/v1"
-# backend/.env, or a research group's own keys (run_demo.py --group sets EXPANDRG_ENV_FILE)
-DEFAULT_ENV_FILE = Path(os.environ.get("EXPANDRG_ENV_FILE") or Path(__file__).resolve().parents[1] / ".env")
+# The demo's keys (backend/.env, or ~/.expandrg/demo.env when installed), or a research group's
+# own keys (starting a group sets EXPANDRG_ENV_FILE)
+DEFAULT_ENV_FILE = Path(os.environ.get("EXPANDRG_ENV_FILE") or demo_env_file())
 TERMINAL_STATUSES = ("completed", "failed", "cancelled")
 
 # Required inputs of the configured hub agent. A run without them still

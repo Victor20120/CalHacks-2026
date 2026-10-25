@@ -10,7 +10,7 @@ const REPLAY_MS = 8000;
 // graphs and problems. A researcher's own runs show while they go (their Monitor tab). The
 // group leader sees what researchers shared: each run's log and data, drawn as graphs to see
 // what happened, so their page is "Run results", without live framing.
-export default function RunsView({ session, project, initialRunId }) {
+export default function RunsView({ session, project, initialRunId, onVisualize, onDiagnose }) {
   const isLeader = session.member.role === "leader";
   const runs = useRuns(session, project.id);
   const [selectedId, setSelectedId] = useState(initialRunId || null);
@@ -64,6 +64,8 @@ export default function RunsView({ session, project, initialRunId }) {
             session={session}
             run={selected}
             isLeader={isLeader}
+            onVisualize={onVisualize}
+            onDiagnose={onDiagnose}
           />
         ) : (
           <section className="run-viewer">
@@ -117,7 +119,7 @@ function SeverityGuide() {
 
 // One run: live while it's watched, or replayed step by step afterwards. For the leader,
 // a shared run's graphs: what happened, and where problems were found.
-function RunViewer({ session, run, isLeader }) {
+function RunViewer({ session, run, isLeader, onVisualize, onDiagnose }) {
   const [detail, setDetail] = useState(null);
   const [replayStep, setReplayStep] = useState(null); // null: show the whole run
   const [error, setError] = useState("");
@@ -175,6 +177,10 @@ function RunViewer({ session, run, isLeader }) {
               {replayStep === null ? (isLeader ? "Play back step by step" : "Replay") : "Stop"}
             </button>
           )}
+          {onVisualize && detail?.metrics.length > 0 && <>
+            <button onClick={() => onVisualize([`run:${run.id}`])}>Open in Visualize</button>
+            {!isLeader && <button onClick={() => onVisualize([`run:${run.id}`], true)}>Edit with Agent</button>}
+          </>}
         </div>
       </div>
       <ErrorNote error={error} />
@@ -216,6 +222,7 @@ function RunViewer({ session, run, isLeader }) {
                   <td className="num">{a.step !== null && `step ${a.step}`}</td>
                   <td>{a.message}</td>
                   <td className="muted small">{stamp(a.created_at).slice(11)}</td>
+                  {!isLeader && onDiagnose && <td><button className="link" onClick={() => onDiagnose({ run_id: run.id, alert_id: a.id, symptom: a.message })}>Diagnose this problem</button></td>}
                 </tr>
               ))}
             </tbody>

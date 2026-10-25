@@ -48,7 +48,7 @@ type Requester = <T>(base: string, path: string, options?: {
 
 function personalChatError(error: unknown): never {
   if (error instanceof HttpError && error.status === 404) {
-    throw new Error("The running ExpandRG backend does not have personal chat. Restart ExpandRG using run_demo.py, then click Refresh here.");
+    throw new Error("The running ExpandRG backend does not have personal chat. Restart ExpandRG (stop it, then ExpandRG: Start ExpandRG), then click Refresh here.");
   }
   throw error;
 }

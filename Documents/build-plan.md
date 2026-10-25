@@ -1,7 +1,8 @@
 # Build Plan — First Milestone
 
-**Status:** v0.2
+**Status:** v0.4
 **Milestone:** a single local simulation diagnosis reaches CREAO, is shown in the dashboard, and can become one researcher-approved group finding; a second researcher can retrieve that finding.
+**Next:** Phase 3 remains proposed: field/3D data sources, reusable templates, and sharing graphs. Visualization Studio phases 1 and 2 (steps 9–10) are built.
 
 ## How to use this plan
 
@@ -26,15 +27,17 @@
 | 6 | Dashboard and local anomaly checks | `frontend/`, `local_connector/simulation_monitor/`, `backend/monitoring/` | Done |
 | 7 | Optional: alert history and handoff | `backend/memory/`, `backend/knowledge_sharing/` | Done |
 | 8 | Project overview | `local_connector/evidence/`, `backend/orchestration/overview.py` | Done |
+| 9 | Visualization Studio, phase 1: graphs, overlays, Edit with Agent, saving | `backend/visualization/`, `backend/api/`, `frontend/` | Done |
+| 10 | Visualization Studio, phase 2: baselines, differences, diagnostic graphs, publication export | `backend/visualization/`, `backend/orchestration/`, `local_connector/` | Done |
 
 ---
 
 ## Standing checks (before every push)
 
-- [ ] All tests pass (`python -m pytest` from the repo root), using mock CREAO only, and the dashboard builds (`npm run build` in `frontend/`)
-- [ ] `git status` shows no `.env`, `.db` files or other secrets about to be committed
-- [ ] No code edits source files or stops a simulation without the researcher's approval
-- [ ] Any dashboard page you changed looks right at 1280px and 1440px wide
+- [x] All tests pass (`python -m pytest` from the repo root), using mock CREAO only, and the dashboard builds (`npm run build` in `frontend/`)
+- [x] `git status` shows no `.env`, `.db` files or other secrets about to be committed
+- [x] No code edits source files or stops a simulation without the researcher's approval
+- [x] Any dashboard page you changed looks right at 1280px and 1440px wide
 
 ---
 
@@ -193,6 +196,58 @@
 - [x] Automated: the map covers the project but never includes sensitive, binary, tool or test files; it stays within its size limit (`tests/test_project_overview.py`)
 - [x] Automated: unsafe or oversized maps are refused by the backend; the overview is private; later diagnoses include it
 - [x] Manual: build an overview of a real research project **(uses credits)**, and check whether the personal agent (an audit agent) explains the project or only audits it — passed 2026-10-24, run `416d9fb0` on a Fortran flagellum-hydrodynamics code (40 files, about 19,400 characters sent after a manual check for personal details): accurate purpose, 37-entry structure, key parameters and 10 sharp open questions. The audit agent explains well, so no separate agent is needed. It led to three fixes: other guides besides a README are picked (that project has none), small folders are listed in full, and the project's own folder counts as part of the project
+
+---
+
+## Step 9 — Visualization Studio, phase 1
+
+Design, operations, data flow and risks: [visualization-design.md](visualization-design.md). CREAO decides what to show; ExpandRG's toolkit does every calculation and draws every graph. Decisions taken (design section 8): Plotly in the browser; Matplotlib later as an optional extra; the leader graphs by hand, without an agent; units are set by the researcher per graph, never by the agent.
+
+**Tasks**
+- [x] `backend/visualization/spec.py`: the versioned graph spec (datasets, measures, x axis, type, overlay or separate, range, scales, annotations, style, researcher-set units). The history is kept with each saved graph (`store.py`)
+- [x] `backend/visualization/sources.py`: the catalog and series for a viewer, from watched runs (shared database, existing permission checks) and experiments (the connector), with flags for thinned series and non-finite steps. Runs with no numbers per step are left out
+- [x] `backend/visualization/transforms.py`: range filter; x axis from a logged measure (checked to increase); alignment within the overlap only, without interpolating across gaps or extrapolating; statistics; display downsampling that keeps each bucket's minimum and maximum
+- [x] `backend/visualization/figure.py`: Plotly figure JSON (traces, axis titles with units only when known, legend, alert markers, annotations). Phase 1 draws no interpolated series: interpolation is only used in the comparison text, which says so
+- [x] `backend/visualization/ops.py`: the phase 1 operations (`create_graph`, `select_runs`, `add_run`, `remove_run`, `change_metric`, `change_axis`, `set_time_range`, `compare_runs` overlay or separate, `change_graph_type` line or scatter, `add_annotation`, `remove_annotation`, `update_style`, `set_units` (researcher only), `save_visualization`, `export_figure` png or svg), each validated against the spec and the viewer's catalog; a refusal says why
+- [x] API: `GET /visualize/datasets`, `POST /visualize/figure`, `POST /visualize/ops`, saved graphs (`/visualizations`, with undo), and `POST /visualizations/{id}/agent` as a job
+- [x] Private tables `visualizations` and `visualization_history`. Datasets are referenced with a fingerprint, never copied
+- [x] Edit with Agent: the researcher's own agent gets the spec, the catalog, 40-point summaries and statistics (never full datasets), may use its tools first, and answers with a `graph_ops` block. Refused operations go back once with reasons; applied ones are recorded with the CREAO run ID; a range that hides an alert is flagged in the notes
+- [x] The **Visualize** page (researchers in the Simulation group, the leader in Group, without the agent): Runs panel, Plotly graph (loaded only on this page), controls, the graph's agent chat, save / reopen / undo, PNG and SVG export (always light on white)
+- [x] **Open in Visualize** and **Edit with Agent** on the run viewer (Monitor, Run results) and on experiment comparisons open the Studio with those runs
+
+**Checkpoint 9** (`tests/test_visualization.py`, 13 tests)
+- [x] Automated: alignment of runs with different step spacing and lengths stays inside the overlap and never interpolates across a gap or a non-finite value
+- [x] Automated: display downsampling keeps every spike (each bucket's minimum and maximum); statistics use all points
+- [x] Automated: a log axis with non-positive values says how many points it can't show; nothing is dropped silently
+- [x] Automated: operations naming unknown runs, measures from another dataset, runs in another project, unknown style keys, code or HTML are refused with reasons, and the spec is unchanged
+- [x] Automated: an agent reply (mock CREAO) with valid and invalid operations applies only the valid ones, records them as the agent's, and sends the refusals back once
+- [x] Automated: the agent's context contains summaries and statistics, never a full series, and only datasets the viewer may see
+- [x] Automated: no Studio endpoint writes to `run_points`, `run_alerts` or experiment files (checked byte for byte)
+- [x] Automated: a saved graph reopens to the same figure, and says so when its source data has changed
+- [x] Manual: two watched runs plus an actual completed experiment; physical drag zoom, legend toggles, separate panels, save/undo/reopen/reload, PNG and SVG exports; checked in isolated Edge with original project hashes unchanged.
+- [x] Manual: Edit with Agent with real CREAO **(uses credits)** — 2026-10-24, Researcher A's agent through the page: "steps 400 to 900 and a log scale, which diverges first?" (62 s, both applied, one Undo restored it), "show residual instead" (20 s, applied), and "these results look wrong" (42 s: it found the run diverging, quoted the statistics, and changed only the scale to log). "Add the last experiment" waits for an experiment in the project
+- [x] Pages look right at 1440px and 900px wide, light and dark
+
+---
+
+## Step 10 — Visualization Studio, phase 2
+
+**Tasks**
+- [x] `set_baseline` and `compare_runs` with `difference`: absolute differences, and relative ones only where the baseline is above the stored threshold. Difference series are styled as derived
+- [x] More graph types: histogram, and a parameter sweep (a value at a chosen step, or the final one, against a parameter across experiments)
+- [x] Units from the project's `expandrg.json` (`"units": {...}`); the agent still can't set them
+- [x] Full-resolution data for long watched runs, read from the run's log through the connector when the researcher asks
+- [x] Diagnostic graphs: when a diagnosis starts from an alert, the toolkit makes the default graph (the alerted measure around the alert, log scale for a blow-up, overlaid on the last clean run). The agent may ask for more in its reply; they attach to the diagnosis and its draft
+- [x] Publication export with Matplotlib (PDF, SVG, PNG at set sizes and fonts), as an optional install extra
+- [x] Check the numbers the agent quotes against the toolkit's statistics, and mark any that don't match
+
+**Checkpoint 10**
+- [x] Automated: differences on unequal grids match a hand-computed reference; relative differences near zero are gaps and counted
+- [x] Automated: a diagnosis with mock CREAO attaches the default diagnostic graph, and the graphs the agent asked for, to its draft
+- [x] Automated: the exported PDF, SVG and PNG carry the same data as the on-screen figure
+- [x] Manual: an actual local heat-solver blow-up produced a private graph and draft through the existing CREAO agent; a second CREAO request refined the graph and returned checked numeric claims. Isolated data only; product browser interactions checked separately.
+
+**Later (phase 3, not planned yet):** 3D and field visualization (PyVista) once runs produce field data; reusable graph templates across projects; parameter-sweep dashboards; sharing a saved graph with the group as part of a finding.
 
 ---
 

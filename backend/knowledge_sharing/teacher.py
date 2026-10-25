@@ -8,13 +8,17 @@ Researchers answer in the dashboard; the leader reads the answers and comments.
 Nothing is graded automatically, and a "try it" step is only a suggestion: runs
 still start only when the researcher clicks Run.
 
-Worksheets come in weeks. Each "Make worksheets" is the project's next week and, by
-default, teaches each researcher only what's new to them: findings shared, or added
-to with notes, since their last worksheet that wasn't cancelled. It builds on the
-topics they already covered rather than repeating them. The leader picks who gets
-one, and can cancel a whole week or one person's worksheet (and restore either).
-Weeks are numbered by the weeks that weren't cancelled, so after cancelling week 1
-the next one made is week 1 again; the cancelled one still shows, as week 1.
+The leader makes worksheets for the researchers they pick, two ways, and one Super
+Brain run writes them all: by asking it (optionally saying what to cover), or by
+writing the questions themselves for it to finish (model answers, topics, the
+findings they rely on). By default it teaches each researcher only what's new to
+them: findings shared, or added to with notes, since their last worksheet that
+wasn't cancelled, and it builds on the topics they already covered.
+
+Each researcher's worksheets in a project are numbered Worksheet 1, 2, ... in the
+order they were made, counting only those that weren't cancelled: a cancelled
+worksheet still shows (to the leader) with its number, and the next one made for
+that person takes the same number. The leader can cancel or restore any worksheet.
 
 Who sees a worksheet: the researcher it's for and the group leader, while both
 are active members of its project. A cancelled worksheet is hidden from the
@@ -23,6 +27,7 @@ has reviewed their worksheet.
 """
 from __future__ import annotations
 
+import difflib
 import json
 import re
 import sqlite3
@@ -40,18 +45,24 @@ MAX_FINDINGS = 30  # the newest; each summary is cut to MAX_SUMMARY_CHARS
 MAX_SUMMARY_CHARS = 1_500
 MAX_ITEMS = 8  # per worksheet
 MAX_REPLY_CHARS = 60_000
-LIMITS = {"title": 120, "topic": 80, "prompt": 800, "model_answer": 1_500}
+LIMITS = {"title": 120, "topic": 80, "prompt": 800, "model_answer": 2_500}
 MAX_ANSWER_CHARS = 4_000
 MAX_COMMENT_CHARS = 2_000
-MAX_COVERED = 20  # topics a researcher already covered, passed on so a new week builds on them
+MAX_COVERED = 20  # topics a researcher already covered, passed on so a new worksheet builds on them
+MAX_REQUEST_CHARS = 2_000
 
 TEACHER_BRIEF = (
-    "You are the research group's Super Brain, acting as its teacher, writing this week's worksheets. Below "
+    "You are the research group's Super Brain, acting as its teacher, writing worksheets. Below "
     "are the findings to teach and the researchers. For each researcher listed, write one worksheet that teaches "
     "them what the OTHER researchers found: use only the finding IDs in that researcher's learn_from (what's new "
-    "to them since their last worksheet; everything in a first week). Their already_covered lists topics from "
-    "earlier weeks: build on them and go further, don't repeat them. A note marked as a correction overrides "
-    "what the finding says. First sort those findings into a few topics (for example 'Time step stability'). Then, per "
+    "to them since their last worksheet; everything in their first one). Their already_covered lists topics from "
+    "earlier worksheets: build on them and go further, don't repeat them. A note marked as a correction overrides "
+    "what the finding says. If the group leader made a request (leader_request), follow it: it sets the topic and "
+    "emphasis; use learn_from findings where they fit, and when nothing there fits, teach from sound general "
+    "knowledge and say so. If the leader wrote questions (leader_questions), the worksheet is exactly those: keep every "
+    "one, in order, with its kind and its wording unchanged; write a model answer for each (keep the leader's model "
+    "answer when given), give each a topic, and link the learn_from finding IDs each relies on; add no other items. "
+    "First sort the findings into a few topics (for example 'Time step stability'). Then, per "
     "topic, write: questions that check understanding of the cause, the evidence and the fix (kind "
     "'question', with a model answer the leader can compare against), and hands-on things to try in their "
     "own project (kind 'try'): a small change to make in a copy of the project, what to predict before "
@@ -74,13 +85,14 @@ class WorksheetLocked(Exception):
 
 
 def worksheet_plan(conn: sqlite3.Connection, project_id: str, member_ids: list[str] | None = None,
-                   only_new: bool = True) -> dict:
-    """Next week's plan: for each active researcher, the findings the others shared that are new to
-    them (shared, or given a note, since their last worksheet that wasn't cancelled; all of them with
-    only_new=False), and the topics they already covered. people lists everyone with how many new
-    findings they'd get; researchers only those picked (member_ids, default everyone) with something
-    to learn. The caller checks that the leader is a member of the project."""
-    _backfill_weeks(conn, project_id)
+                   only_new: bool = True, requested: bool = False) -> dict:
+    """What new worksheets would teach: for each active researcher, the findings the others shared
+    that are new to them (shared, or given a note, since their last worksheet that wasn't cancelled;
+    all of them with only_new=False), and the topics they already covered. people lists everyone with
+    how many findings they'd learn from; researchers only those picked (member_ids, default everyone)
+    with something to learn, or, when the leader asked for something or wrote the questions
+    (requested), everyone picked. The caller checks that the leader is a member of the project."""
+    _prepare(conn, project_id)
     findings = list_project_findings(conn, project_id)
     attach_notes(conn, findings)
     people, researchers, used = [], [], {}
@@ -93,18 +105,40 @@ def worksheet_plan(conn: sqlite3.Connection, project_id: str, member_ids: list[s
         fresh = [f for f in findings if f["contributed_by"] != row["id"] and (
             since is None or f["created_at"] > since or any(n["created_at"] > since for n in f["notes"]))][:MAX_FINDINGS]
         people.append({"member_id": row["id"], "name": row["display_name"], "new_findings": len(fresh), "since": since})
-        if fresh and (member_ids is None or row["id"] in member_ids):
+        if (fresh or requested) and (member_ids is None or row["id"] in member_ids):
             researchers.append({"member_id": row["id"], "name": row["display_name"], "learn_from": [f["id"] for f in fresh],
                                 "already_covered": _covered(conn, project_id, row["id"])})
             used.update({f["id"]: f for f in fresh})
-    return {"week": _next_week(conn, project_id), "only_new": only_new, "findings": list(used.values()), "researchers": researchers, "people": people}
+    return {"only_new": only_new, "findings": list(used.values()), "researchers": researchers, "people": people}
+
+
+def leader_request(text: str) -> str:
+    """What the leader asked the Super Brain to cover, bounded and with secrets blanked."""
+    return redact_secrets(text.strip()[:MAX_REQUEST_CHARS])[0]
+
+
+def leader_title(text: str) -> str:
+    """The leader's own title for the worksheets, bounded and with secrets blanked ('' for none)."""
+    return _text(text, "title")
+
+
+def leader_questions(questions: list[dict]) -> list[dict]:
+    """The questions the leader wrote, bounded and with secrets blanked; empty prompts are dropped."""
+    kept = []
+    for q in questions[:MAX_ITEMS]:
+        prompt = _text(q.get("prompt"), "prompt")
+        if prompt and q.get("kind") in ("question", "try"):
+            kept.append({"kind": q["kind"], "prompt": prompt, "model_answer": _text(q.get("model_answer"), "model_answer")})
+    return kept
 
 
 def worksheet_inputs(plan: dict, project_name: str, dedicated: bool) -> dict[str, str]:
-    """The Super Brain run's inputs: the dedicated chat agent's two, or the hub's contract."""
+    """The Super Brain run's inputs: the dedicated chat agent's two, or the hub's contract. The
+    plan may carry the leader's request and questions (plan["request"], plan["questions"])."""
     payload = {
         "project": project_name,
-        "week": plan.get("week", 1),
+        **({"leader_request": plan["request"]} if plan.get("request") else {}),
+        **({"leader_questions": plan["questions"]} if plan.get("questions") else {}),
         "researchers": plan["researchers"],
         "findings": [{
             "id": f["id"], "title": f["title"], "researcher": f["contributed_by_name"], "category": f["category"],
@@ -138,9 +172,12 @@ def write_worksheets(client: Any, plan: dict, project_name: str, dedicated: bool
 
 def parse_worksheets(value: Any, plan: dict) -> list[dict]:
     """The agent's worksheets, checked: only the planned researchers, each item's findings
-    only from what that researcher may learn from, text bounded, secrets blanked."""
+    only from what that researcher may learn from, text bounded, secrets blanked. When the
+    leader wrote the questions, each worksheet is exactly those (see _keep_leader_questions)."""
     allowed = {r["member_id"]: set(r["learn_from"]) for r in plan["researchers"]}
     names = {r["member_id"]: r["name"] for r in plan["researchers"]}
+    leader = plan.get("questions") or []
+    limit = MAX_ITEMS * 3 if leader else MAX_ITEMS  # the leader's may come after items the agent added
     worksheets, seen = [], set()
     for sheet in value if isinstance(value, list) else []:
         member_id = sheet.get("member_id") if isinstance(sheet, dict) else None
@@ -157,8 +194,10 @@ def parse_worksheets(value: Any, plan: dict) -> list[dict]:
             items.append({"kind": item["kind"], "topic": _text(item.get("topic"), "topic") or "General",
                           "prompt": prompt, "model_answer": _text(item.get("model_answer"), "model_answer"),
                           "finding_ids": list(dict.fromkeys(ids))})
-            if len(items) == MAX_ITEMS:
+            if len(items) == limit:
                 break
+        if leader and items:
+            items = _keep_leader_questions(items, leader)
         if items:
             seen.add(member_id)
             title = _text(sheet.get("title"), "title") or f"What the group learned, for {names[member_id]}"
@@ -166,18 +205,42 @@ def parse_worksheets(value: Any, plan: dict) -> list[dict]:
     return worksheets
 
 
+def _keep_leader_questions(written: list[dict], leader: list[dict]) -> list[dict]:
+    """The leader's questions, in their order, kind and words, each with what the agent wrote for
+    the closest-worded item it returned: the topic, the model answer (the leader's own wins) and
+    the finding links. Items the agent added on its own are dropped; agents don't reliably obey
+    'add nothing'."""
+    unused = list(written)
+    kept = []
+    for question in leader:
+        best = max(unused, key=lambda item: _likeness(item["prompt"], question["prompt"]), default=None)
+        match = best if best is not None and _likeness(best["prompt"], question["prompt"]) >= 0.5 else None
+        if match is not None:
+            unused.remove(match)
+        kept.append({
+            "kind": question["kind"], "prompt": question["prompt"],
+            "topic": match["topic"] if match else "General",
+            "model_answer": question["model_answer"] or (match["model_answer"] if match else ""),
+            "finding_ids": match["finding_ids"] if match else [],
+        })
+    return kept
+
+
+def _likeness(a: str, b: str) -> float:
+    return difflib.SequenceMatcher(None, a.lower(), b.lower()).ratio()
+
+
 def save_worksheets(conn: sqlite3.Connection, leader: dict, project_id: str, worksheets: list[dict],
                     run_id: str | None, only_new: bool = True) -> dict:
-    """Saves a new week with its worksheets. Returns {"week", "week_id", "ids"}; no week is made
-    when the Super Brain returned no usable worksheet."""
+    """Saves the worksheets one Super Brain run wrote, as one batch (worksheet_weeks, a name from
+    when batches were weeks). Returns {"ids"}; nothing is saved when no worksheet was usable."""
     now = _now()
     ids: list[str] = []
     if not worksheets:
-        return {"week": None, "week_id": None, "ids": ids}
-    _backfill_weeks(conn, project_id)
+        return {"ids": ids}
+    _prepare(conn, project_id)
     week_id = str(uuid.uuid4())
     with conn:
-        week = _next_week(conn, project_id)
         order = (conn.execute("SELECT MAX(week) FROM worksheet_weeks WHERE project_id = ?", (project_id,)).fetchone()[0] or 0) + 1
         conn.execute("INSERT INTO worksheet_weeks (id, project_id, week, made_by, made_at, only_new) VALUES (?, ?, ?, ?, ?, ?)",
                      (week_id, project_id, order, leader["id"], now, int(only_new)))
@@ -196,20 +259,20 @@ def save_worksheets(conn: sqlite3.Connection, leader: dict, project_id: str, wor
                   json.dumps(i["finding_ids"])) for n, i in enumerate(sheet["items"])],
             )
             conn.execute("INSERT INTO worksheet_in_week (worksheet_id, week_id) VALUES (?, ?)", (sheet_id, week_id))
-    return {"week": week, "week_id": week_id, "ids": ids}
+    return {"ids": ids}
 
 
 def list_worksheets(conn: sqlite3.Connection, viewer: dict, project_id: str) -> list[dict]:
     """The leader's view of every worksheet in the project, or a researcher's own. Newest first."""
     if not is_project_member(conn, viewer["id"], project_id):
         return []
-    _backfill_weeks(conn, project_id)
+    _prepare(conn, project_id)
     sql = f"SELECT {_COLUMNS} {_FROM} WHERE w.project_id = ?"
     params: list = [project_id]
     if viewer["role"] != "leader":
         sql += " AND w.member_id = ? AND ww.cancelled_at IS NULL AND wiw.cancelled_at IS NULL"
         params.append(viewer["id"])
-    rows = conn.execute(sql + " ORDER BY ww.week DESC, m.display_name, w.rowid", params).fetchall()
+    rows = conn.execute(sql + " ORDER BY w.rowid DESC", params).fetchall()
     return [_sheet(r) for r in rows if _may_see(conn, viewer, dict(r))]
 
 
@@ -278,33 +341,27 @@ def delete_worksheet(conn: sqlite3.Connection, leader: dict, worksheet_id: str) 
         conn.execute("DELETE FROM worksheets WHERE id = ?", (worksheet_id,))
 
 
-def cancel_week(conn: sqlite3.Connection, leader: dict, week_id: str, cancelled: bool = True) -> None:
-    """Cancel (or restore) a whole week: its worksheets disappear for the researchers, and the next
-    week teaches them what that week would have."""
-    row = conn.execute("SELECT project_id FROM worksheet_weeks WHERE id = ?", (week_id,)).fetchone()
-    if leader["role"] != "leader" or row is None or not is_project_member(conn, leader["id"], row["project_id"]):
-        raise WorksheetNotFound("No worksheet week with that ID.")
-    with conn:
-        conn.execute("UPDATE worksheet_weeks SET cancelled_at = ? WHERE id = ?", (_now() if cancelled else None, week_id))
-
-
 def cancel_worksheet(conn: sqlite3.Connection, leader: dict, worksheet_id: str, cancelled: bool = True) -> dict:
-    """Cancel (or restore) one person's worksheet in its week, leaving everyone else's."""
+    """Cancel (or restore) one worksheet: a cancelled one is hidden from its researcher, its
+    lessons come back in their next worksheet, and that one takes its number."""
     if leader["role"] != "leader":
         raise WorksheetNotFound("No worksheet with that ID.")
-    get_worksheet(conn, leader, worksheet_id)
+    _prepare(conn, get_worksheet(conn, leader, worksheet_id)["project_id"])
     with conn:
         conn.execute("UPDATE worksheet_in_week SET cancelled_at = ? WHERE worksheet_id = ?",
                      (_now() if cancelled else None, worksheet_id))
     return get_worksheet(conn, leader, worksheet_id)
 
 
+# number: the researcher's worksheets in this project made before this one that weren't cancelled, plus one.
 _COLUMNS = """
     w.id, w.project_id, w.member_id, m.display_name AS member_name, w.created_by, w.title, w.status,
     w.leader_comment, w.creao_run_id, w.created_at, w.submitted_at, w.reviewed_at,
-    ww.id AS week_id, ww.only_new, ww.cancelled_at AS week_cancelled_at, wiw.cancelled_at AS person_cancelled_at,
-    CASE WHEN ww.id IS NOT NULL THEN (SELECT COUNT(*) + 1 FROM worksheet_weeks lw WHERE lw.project_id = ww.project_id
-        AND lw.week < ww.week AND lw.cancelled_at IS NULL) END AS week,
+    ww.cancelled_at AS batch_cancelled_at, wiw.cancelled_at AS sheet_cancelled_at,
+    (SELECT COUNT(*) + 1 FROM worksheets e LEFT JOIN worksheet_in_week ewiw ON ewiw.worksheet_id = e.id
+        LEFT JOIN worksheet_weeks eww ON eww.id = ewiw.week_id
+        WHERE e.project_id = w.project_id AND e.member_id = w.member_id AND e.rowid < w.rowid
+        AND ewiw.cancelled_at IS NULL AND eww.cancelled_at IS NULL) AS number,
     (SELECT COUNT(*) FROM worksheet_items i WHERE i.worksheet_id = w.id) AS items,
     (SELECT COUNT(*) FROM worksheet_items i WHERE i.worksheet_id = w.id AND i.answer != '') AS answered
 """
@@ -314,17 +371,9 @@ _FROM = """FROM worksheets w JOIN members m ON m.id = w.member_id
 
 def _sheet(row: sqlite3.Row) -> dict:
     sheet = dict(row)
-    sheet["only_new"] = bool(sheet["only_new"])
-    sheet["cancelled"] = "week" if sheet["week_cancelled_at"] else "person" if sheet["person_cancelled_at"] else None
+    batch, own = sheet.pop("batch_cancelled_at"), sheet.pop("sheet_cancelled_at")
+    sheet["cancelled"] = bool(batch or own)
     return sheet
-
-
-def _next_week(conn: sqlite3.Connection, project_id: str) -> int:
-    """The next week's number. worksheet_weeks.week is the order weeks were made in; the number
-    shown counts only the weeks before it that weren't cancelled, so a cancelled week's number is
-    used again (and restoring it moves the later weeks up by one)."""
-    return conn.execute("SELECT COUNT(*) FROM worksheet_weeks WHERE project_id = ? AND cancelled_at IS NULL",
-                        (project_id,)).fetchone()[0] + 1
 
 
 def _last_taught(conn: sqlite3.Connection, project_id: str, member_id: str) -> str | None:
@@ -344,14 +393,30 @@ def _covered(conn: sqlite3.Connection, project_id: str, member_id: str) -> list[
         """SELECT i.topic FROM worksheet_items i JOIN worksheets w ON w.id = i.worksheet_id
            JOIN worksheet_in_week wiw ON wiw.worksheet_id = w.id JOIN worksheet_weeks ww ON ww.id = wiw.week_id
            WHERE w.project_id = ? AND w.member_id = ? AND ww.cancelled_at IS NULL AND wiw.cancelled_at IS NULL
-           ORDER BY ww.week DESC, i.position""",
+           ORDER BY w.rowid DESC, i.position""",
         (project_id, member_id),
     )
     return list(dict.fromkeys(r[0] for r in rows))[:MAX_COVERED]
 
 
+def _prepare(conn: sqlite3.Connection, project_id: str) -> None:
+    """Brings older data up to date: worksheets made before batches existed get one, and a batch
+    cancelled as a whole (when batches were weeks) becomes each of its worksheets cancelled, so
+    every worksheet can be restored on its own."""
+    _backfill_weeks(conn, project_id)
+    with conn:
+        conn.execute(
+            """UPDATE worksheet_in_week SET cancelled_at = (SELECT ww.cancelled_at FROM worksheet_weeks ww
+                   WHERE ww.id = worksheet_in_week.week_id)
+               WHERE cancelled_at IS NULL AND week_id IN
+                   (SELECT id FROM worksheet_weeks WHERE project_id = ? AND cancelled_at IS NOT NULL)""",
+            (project_id,))
+        conn.execute("UPDATE worksheet_weeks SET cancelled_at = NULL WHERE project_id = ? AND cancelled_at IS NOT NULL",
+                     (project_id,))
+
+
 def _backfill_weeks(conn: sqlite3.Connection, project_id: str) -> None:
-    """Worksheets made before weeks existed: each batch (one Super Brain run) becomes a week, oldest first."""
+    """Worksheets made before batches existed: each Super Brain run's worksheets become a batch, oldest first."""
     rows = conn.execute(
         """SELECT w.id, w.creao_run_id, w.created_at, w.created_by FROM worksheets w
            LEFT JOIN worksheet_in_week wiw ON wiw.worksheet_id = w.id
@@ -382,7 +447,15 @@ def _may_see(conn: sqlite3.Connection, viewer: dict, sheet: dict) -> bool:
 
 
 def _text(value: Any, field: str) -> str:
-    text = re.sub(r"[ \t]+", " ", str(value or "")).strip()[: LIMITS[field]]
+    """Tidied, bounded and with secrets blanked. Text over the limit ends at a sentence (or else a
+    word) with "…", never mid-word."""
+    text = re.sub(r"[ \t]+", " ", str(value or "")).strip()
+    limit = LIMITS[field]
+    if len(text) > limit:
+        cut = text[: limit - 1]
+        sentence = max(cut.rfind(". "), cut.rfind(".\n"), cut.rfind("? "), cut.rfind("! "))
+        cut = cut[: sentence + 1] if sentence >= limit * 0.6 else cut[: cut.rfind(" ")] if " " in cut else cut
+        text = cut.rstrip() + "…"
     return redact_secrets(text)[0]
 
 

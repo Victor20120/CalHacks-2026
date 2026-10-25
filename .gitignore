@@ -33,3 +33,9 @@ Thumbs.db
 vscode-extension/out/
 *.vsix
 !vscode-extension/.vscode/
+
+# Package build output: the dashboard pages built into the package, the wheel copied into the extension
+expandrg/pages/
+vscode-extension/engine/
+*.egg-info/
+*.whl

@@ -69,11 +69,22 @@ class ConnectorClient:
         self.base_url = (os.environ.get("EXPANDRG_CONNECTOR") or DEFAULT_CONNECTOR if base_url is None else base_url).rstrip("/")
         self.http = http or requests.Session()
 
+    def get(self, path: str, params: dict | None = None) -> Any:
+        try:
+            response = self.http.get(self.base_url + path, params=params, timeout=15)
+        except requests.RequestException:
+            raise ToolError("ExpandRG's local connector isn't running, so its data can't be read right now.") from None
+        return self._answer(response)
+
     def post(self, path: str, body: dict) -> dict:
         try:
             response = self.http.post(self.base_url + path, json=body, timeout=15)
         except requests.RequestException:
             raise ToolError("ExpandRG's local connector isn't running, so files can't be read right now.") from None
+        return self._answer(response)
+
+    @staticmethod
+    def _answer(response: Any) -> Any:
         if response.status_code >= 400:
             try:
                 detail = response.json().get("detail")
@@ -228,7 +239,7 @@ class Toolkit:
             raise ToolError("No run with that ID that this researcher can see.")
         alerts = [{k: a[k] for k in ("severity", "check", "message", "metric", "step", "line")}
                   for a in detail["alerts"][:MAX_RUN_ALERTS]]
-        numbers = {metric: _series(points) for metric, points in detail["series"].items()}
+        numbers = {metric: series_summary(points) for metric, points in detail["series"].items()}
         return ({**_run_row(detail), "alerts": alerts, "alerts_left_out": max(0, len(detail["alerts"]) - MAX_RUN_ALERTS),
                  "numbers": numbers}, f'looked at run "{detail["run_label"][:60]}" ({len(detail["alerts"])} alerts)')
 
@@ -257,7 +268,7 @@ def _run_row(r: dict) -> dict:
             "alerts": {"critical": r["critical"], "warning": r["warning"], "informational": r["informational"]}}
 
 
-def _series(points: list[list]) -> dict:
+def series_summary(points: list[list]) -> dict:
     """A metric's numbers per step, shortened: the range, the first non-finite step, and evenly spaced points."""
     finite = [v for _, v in points if v is not None]
     stride = max(1, -(-len(points) // MAX_SERIES_POINTS))

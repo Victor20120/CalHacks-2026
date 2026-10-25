@@ -168,7 +168,8 @@ def record_diagnosis(
     memory = PrivateMemory(db, member_id)
     issues = diagnosis.get("issues") or []
     details = {"symptom": symptom, "reply": diagnosis["reply"], "issues": issues,
-               "context_finding_ids": list(context_finding_ids or [])}
+               "context_finding_ids": list(context_finding_ids or []),
+               "diagnostic_graphs": diagnosis.get("diagnostic_graphs", [])}
     episode_id = memory.add_episode(
         project_id,
         "diagnosis",

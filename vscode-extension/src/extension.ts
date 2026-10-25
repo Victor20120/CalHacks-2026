@@ -4,17 +4,22 @@
 // a simulation.
 
 import { ChildProcess, spawn, spawnSync } from "child_process";
+import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 import { call, HttpError, isUp } from "./http";
 import { dashboardUrl, insideFolder, statusText, Watched } from "./logic";
 import { watchTerminalRuns } from "./runs";
 import { PersonalAgentPanel } from "./personalAgent";
-import { Group, isExpandrgFolder, listGroups, projectsFor, pythonCandidates } from "./setup";
+import {
+  bundledEngine, Engine, engineCommand, Group, isExpandrgFolder, listGroups, projectsFor, pythonCandidates,
+  pythonVersion, supportedPython, wheelVersion,
+} from "./setup";
 
 const POLL_MS = 3000;
 let connectorProcess: ChildProcess | undefined;
 let output: vscode.OutputChannel;
+let extensionPath = "";
 
 function settings() {
   const c = vscode.workspace.getConfiguration("expandrg");
@@ -32,6 +37,7 @@ function settings() {
 }
 
 export async function activate(context: vscode.ExtensionContext) {
+  extensionPath = context.extensionPath;
   output = vscode.window.createOutputChannel("ExpandRG");
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   status.command = "expandrg.openDashboard";
@@ -136,15 +142,26 @@ async function refreshStatus(status: vscode.StatusBarItem) {
 
 // --- First-time setup ------------------------------------------------------------
 
-// Set up means: ExpandRG's folder is known and you've said who you are in this workspace.
+// Set up means: ExpandRG can be started here (a Python with it installed, or a checkout of its
+// source) and you've said who you are in this workspace.
 function isConfigured(): boolean {
   const c = vscode.workspace.getConfiguration("expandrg");
-  const member = c.inspect<string>("member");
-  return Boolean(c.get<string>("connectorFolder") && (member?.workspaceValue ?? member?.workspaceFolderValue ?? member?.globalValue));
+  const isSet = (key: string) => {
+    const value = c.inspect<string>(key);
+    return Boolean(value?.workspaceValue ?? value?.workspaceFolderValue ?? value?.globalValue);
+  };
+  return (isSet("pythonPath") || isSet("connectorFolder")) && isSet("member");
 }
 
-// One guided setup: where ExpandRG is, a Python that runs it, your group, who you are and this
-// folder's project. Saved in this workspace's settings, so nothing has to be typed there.
+// How this workspace runs ExpandRG: the installed package, or a checkout when connectorFolder is set.
+function engine(): Engine {
+  const s = settings();
+  return s.connectorFolder ? { python: s.pythonPath, folder: s.connectorFolder } : { python: s.pythonPath };
+}
+
+// One guided setup: a Python with ExpandRG (installed from the package this extension carries
+// if needed), your group, who you are and this folder's project. Saved in this workspace's
+// settings, so nothing has to be typed there.
 async function setUp(): Promise<boolean> {
   const save = (key: string, value: unknown) =>
     vscode.workspace.getConfiguration("expandrg").update(key, value, vscode.ConfigurationTarget.Workspace);
@@ -152,23 +169,20 @@ async function setUp(): Promise<boolean> {
     vscode.window.showWarningMessage("ExpandRG: open your project folder first, then run ExpandRG: Set up.");
     return false;
   }
-  let folder = settings().connectorFolder;
-  if (!folder || !isExpandrgFolder(folder)) {
-    const picked = await vscode.window.showOpenDialog({
-      canSelectFolders: true, canSelectFiles: false, openLabel: "Use this ExpandRG folder",
-      title: "ExpandRG setup: where is the ExpandRG folder? (the one with run_demo.py in it)",
-    });
-    if (!picked) return false;
-    folder = picked[0].fsPath;
-    if (!isExpandrgFolder(folder)) {
-      vscode.window.showErrorMessage(`ExpandRG: "${folder}" isn't the ExpandRG folder; it has no run_demo.py.`);
-      return false;
-    }
+  const found = findEngine(settings().pythonPath, settings().connectorFolder);
+  const wheel = bundledEngine(extensionPath);
+  let ready: Engine | undefined = found;
+  if (!found) {
+    ready = await installEngine(settings().pythonPath, wheel);
+  } else if (!found.folder && wheel && found.version !== wheelVersion(wheel)) {
+    const update = await vscode.window.showInformationMessage(
+      `ExpandRG ${found.version} is installed in ${found.python}; this extension carries ${wheelVersion(wheel)}. Update it?`,
+      "Update", "Keep");
+    if (update === "Update") ready = await install(found.python, wheel);
   }
-  const python = findPython(settings().pythonPath, folder) ?? (await pickPython(folder));
-  if (!python) return false;
-  await save("connectorFolder", folder);
-  await save("pythonPath", python);
+  if (!ready) return false;
+  await save("pythonPath", ready.python);
+  await save("connectorFolder", ready.folder); // none: the installed package is used
 
   const groupPick = await vscode.window.showQuickPick<vscode.QuickPickItem & { group?: Group }>([
     ...listGroups().map((g) => ({
@@ -180,7 +194,9 @@ async function setUp(): Promise<boolean> {
   ], { title: "ExpandRG setup (1 of 3): which research group are you in?", ignoreFocusOut: true });
   if (!groupPick) return false;
   if (!groupPick.group) {
-    vscode.window.createTerminal({ name: "ExpandRG group setup", cwd: folder, shellPath: python, shellArgs: ["setup_expandrg.py"] }).show();
+    const setup = engineCommand(ready, "setup");
+    fs.mkdirSync(setup.cwd, { recursive: true });
+    vscode.window.createTerminal({ name: "ExpandRG group setup", cwd: setup.cwd, shellPath: setup.python, shellArgs: setup.args }).show();
     vscode.window.showInformationMessage("Answer the questions in the terminal. When it's done, run ExpandRG: Set up again and pick your new group.");
     return false;
   }
@@ -206,7 +222,8 @@ async function setUp(): Promise<boolean> {
   await save("project", projectPick.project.id);
   // So ExpandRG sees the runs you type in this workspace's terminal.
   await vscode.workspace.getConfiguration("terminal.integrated").update("shellIntegration.enabled", true, vscode.ConfigurationTarget.Workspace);
-  output.appendLine(`Set up as ${personPick.person.id} in ${group.id || "the demo"}, project ${projectPick.project.id}, Python ${python}.`);
+  output.appendLine(`Set up as ${personPick.person.id} in ${group.id || "the demo"}, project ${projectPick.project.id}, ` +
+    `Python ${ready.python}${ready.folder ? ` with the ExpandRG checkout ${ready.folder}` : ""}.`);
 
   await ensureGroupRunning(group);
   const choice = await vscode.window.showInformationMessage(
@@ -216,34 +233,75 @@ async function setUp(): Promise<boolean> {
   return true;
 }
 
-// The first Python that has ExpandRG's packages: the configured one, a virtual environment in
-// or next to the ExpandRG folder, then the ones on PATH.
-function findPython(configured: string, folder: string): string | undefined {
-  return pythonCandidates(configured, folder).find((python) => hasExpandrgPackages(python));
-}
-
-function hasExpandrgPackages(python: string): boolean {
-  const check = spawnSync(python, ["-c", "import fastapi, uvicorn, dotenv, requests"], { timeout: 20000, windowsHide: true });
-  return check.status === 0;
-}
-
-async function pickPython(folder: string): Promise<string | undefined> {
-  const choice = await vscode.window.showWarningMessage(
-    "ExpandRG needs a Python with its packages installed. Pick the Python to use (for example your virtual environment's python.exe).",
-    "Pick Python…", "Cancel");
-  if (choice !== "Pick Python…") return undefined;
-  const picked = await vscode.window.showOpenDialog({ canSelectFiles: true, openLabel: "Use this Python", title: "The Python that runs ExpandRG" });
-  if (!picked) return undefined;
-  const python = picked[0].fsPath;
-  if (hasExpandrgPackages(python)) return python;
-  const install = await vscode.window.showWarningMessage(
-    "This Python doesn't have ExpandRG's packages yet. Install them now?", "Install", "Cancel");
-  if (install === "Install") {
-    vscode.window.createTerminal({ name: "ExpandRG install", cwd: folder, shellPath: python,
-      shellArgs: ["-m", "pip", "install", "-r", path.join("backend", "requirements.txt")] }).show();
-    vscode.window.showInformationMessage("When the install finishes, run ExpandRG: Set up again.");
+// The first Python with ExpandRG installed: the configured one, then the ones on PATH. With
+// expandrg.connectorFolder set to a checkout of ExpandRG's source and no installed package, the
+// first Python with its requirements runs the checkout instead (also looking in or next to it).
+function findEngine(configured: string, folder: string): (Engine & { version?: string }) | undefined {
+  const candidates = pythonCandidates(configured, folder && isExpandrgFolder(folder) ? folder : "");
+  for (const python of candidates) {
+    const check = spawnSync(python, ["-c", "import expandrg; print(expandrg.__version__)"], { encoding: "utf8", timeout: 20000, windowsHide: true });
+    if (check.status === 0) return { python, version: check.stdout.trim() };
+  }
+  if (folder && isExpandrgFolder(folder)) {
+    const python = candidates.find((p) =>
+      spawnSync(p, ["-c", "import fastapi, uvicorn, dotenv, requests"], { timeout: 20000, windowsHide: true }).status === 0);
+    if (python) return { python, folder };
   }
   return undefined;
+}
+
+function versionOf(python: string): [number, number] | undefined {
+  const check = spawnSync(python, ["--version"], { encoding: "utf8", timeout: 20000, windowsHide: true });
+  return check.status === 0 ? pythonVersion(`${check.stdout} ${check.stderr}`) : undefined;
+}
+
+// ExpandRG isn't installed in any Python yet: install the package this extension carries into
+// one the person chooses (the first Python 3.10+ found, or one they pick, e.g. a virtual environment's).
+async function installEngine(configured: string, wheel: string | undefined): Promise<Engine | undefined> {
+  if (!wheel) {
+    vscode.window.showErrorMessage("ExpandRG: this copy of the extension doesn't carry ExpandRG's package. " +
+      "Install it with pip (python -m pip install expandrg-<version>.whl), then run ExpandRG: Set up again.");
+    return undefined;
+  }
+  const found = pythonCandidates(configured).find((python) => supportedPython(versionOf(python)));
+  const choice = found
+    ? await vscode.window.showInformationMessage(
+      `ExpandRG isn't installed on this computer yet. Install it into ${found}? It takes about a minute and needs the internet once.`,
+      "Install", "Pick another Python…")
+    : await vscode.window.showWarningMessage("ExpandRG needs Python 3.10 or newer. Pick the Python to install it into.", "Pick Python…");
+  let python = choice === "Install" ? found : undefined;
+  if (choice?.startsWith("Pick")) {
+    const picked = await vscode.window.showOpenDialog({
+      canSelectFiles: true, openLabel: "Install ExpandRG here",
+      title: "The Python to install ExpandRG into (3.10 or newer, for example a virtual environment's python.exe)",
+    });
+    python = picked?.[0].fsPath;
+    if (python && !supportedPython(versionOf(python))) {
+      vscode.window.showErrorMessage(`ExpandRG: ${python} isn't Python 3.10 or newer.`);
+      return undefined;
+    }
+  }
+  return python ? install(python, wheel) : undefined;
+}
+
+// pip install the package into that Python, showing pip's output under Output → ExpandRG.
+async function install(python: string, wheel: string): Promise<Engine | undefined> {
+  output.appendLine(`Installing ${path.basename(wheel)} into ${python}.`);
+  const ok = await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: `ExpandRG: installing into ${python}…` },
+    () => new Promise<boolean>((resolve) => {
+      const pip = spawn(python, ["-m", "pip", "install", "--upgrade", "--disable-pip-version-check", wheel], { windowsHide: true });
+      pip.stdout.on("data", (d) => output.append(String(d)));
+      pip.stderr.on("data", (d) => output.append(String(d)));
+      pip.on("error", (e) => { output.appendLine(e.message); resolve(false); });
+      pip.on("close", (code) => resolve(code === 0));
+    }));
+  if (!ok) {
+    output.show(true);
+    vscode.window.showErrorMessage("ExpandRG couldn't be installed. Output → ExpandRG shows pip's reason.");
+    return undefined;
+  }
+  return { python };
 }
 
 // ExpandRG serves one group at a time: start the chosen one, or offer to switch to it.
@@ -262,10 +320,16 @@ async function ensureGroupRunning(group: Group) {
     const choice = await vscode.window.showWarningMessage(
       `ExpandRG is running ${now}, not ${group.name}. Restart it with ${group.name}?`, "Restart ExpandRG", "Not now");
     if (choice !== "Restart ExpandRG") return;
-    const stopped = spawnSync(s.pythonPath, ["run_demo.py", "--stop"], { cwd: s.connectorFolder, encoding: "utf8", timeout: 60000, windowsHide: true });
-    output.appendLine(`Stopping ExpandRG for the switch: ${(stopped.stdout || stopped.stderr || "").trim()}`);
+    output.appendLine(`Stopping ExpandRG for the switch: ${stopExpandrg()}`);
   }
   await startConnector(true);
+}
+
+function stopExpandrg(): string {
+  const stop = engineCommand(engine(), "stop");
+  fs.mkdirSync(stop.cwd, { recursive: true });
+  const stopped = spawnSync(stop.python, stop.args, { cwd: stop.cwd, encoding: "utf8", timeout: 60000, windowsHide: true });
+  return (stopped.stdout || stopped.stderr || "").trim();
 }
 
 // --- Commands ------------------------------------------------------------------
@@ -347,38 +411,55 @@ async function stopWatching() {
 
 // --- The local connector -------------------------------------------------------
 
-// Start ExpandRG (backend, local connector and dashboard: run_demo.py --no-browser) from
-// expandrg.connectorFolder unless it is already running. It runs on its own, outside VS
-// Code, so reloading or closing VS Code doesn't stop it. Its logs go to .demo-logs/.
+// Start ExpandRG (backend, local connector and dashboard: `expandrg start --no-browser`, or a
+// checkout's run_demo.py) unless it is already running. It runs on its own, outside VS Code, so
+// reloading or closing VS Code doesn't stop it. What it prints goes to launcher.log in its logs
+// folder; if it stops without starting, the reason is shown at once.
 async function startConnector(askedByUser: boolean) {
   const s = settings();
   if (await isUp(s.connectorUrl)) {
     if (askedByUser) vscode.window.showInformationMessage("ExpandRG is already running.");
     return;
   }
-  if (!s.connectorFolder) {
+  if (!isConfigured()) {
     if (askedByUser) {
-      vscode.window.showWarningMessage(
-        "ExpandRG: set \"expandrg.connectorFolder\" to your ExpandRG folder (the one with run_demo.py), or run: python run_demo.py",
-      );
+      vscode.window.showWarningMessage("ExpandRG: run Set up first, so ExpandRG knows which Python runs it.", "Set up")
+        .then((choice) => choice && setUp());
     }
     return;
   }
-  const args = ["run_demo.py", "--no-browser", ...(s.group ? ["--group", s.group] : [])];
-  output.appendLine(`Starting ExpandRG: ${s.pythonPath} ${args.join(" ")} (in ${s.connectorFolder}).`);
-  connectorProcess = spawn(s.pythonPath, args, {
-    cwd: s.connectorFolder, detached: true, stdio: "ignore", windowsHide: true,
+  if (await isUp(s.backendUrl)) {
+    // Half running (its connector stopped): stop the rest, so it can start cleanly.
+    output.appendLine(`ExpandRG's backend is running without its connector; stopping it first: ${stopExpandrg()}`);
+  }
+  const start = engineCommand(engine(), "start", ["--no-browser", ...(s.group ? ["--group", s.group] : [])]);
+  fs.mkdirSync(start.cwd, { recursive: true });
+  fs.mkdirSync(start.logs, { recursive: true });
+  const logFile = path.join(start.logs, "launcher.log");
+  const log = fs.openSync(logFile, "w");
+  output.appendLine(`Starting ExpandRG: ${start.python} ${start.args.join(" ")} (in ${start.cwd}).`);
+  let ended = false;
+  connectorProcess = spawn(start.python, start.args, {
+    cwd: start.cwd, detached: true, stdio: ["ignore", log, log], windowsHide: true, env: { ...process.env, PYTHONUNBUFFERED: "1" },
   });
-  connectorProcess.on("error", (e) => output.appendLine(`Could not start ExpandRG: ${e.message}`));
+  fs.closeSync(log);
+  connectorProcess.on("error", (e) => { ended = true; output.appendLine(`Could not start ExpandRG: ${e.message}`); });
+  connectorProcess.on("exit", () => { ended = true; });
   connectorProcess.unref();
   const progress = vscode.window.setStatusBarMessage("ExpandRG: starting…");
-  for (let i = 0; i < 90 && !(await isUp(s.connectorUrl)); i++) await new Promise((r) => setTimeout(r, 1000));
+  for (let i = 0; i < 90 && !ended && !(await isUp(s.connectorUrl)); i++) await new Promise((r) => setTimeout(r, 1000));
   progress.dispose();
   const up = await isUp(s.connectorUrl);
-  output.appendLine(up ? "ExpandRG started." : "ExpandRG didn't start within 90 s. See .demo-logs/ in the ExpandRG folder.");
-  if (askedByUser || !up) {
-    vscode.window.showInformationMessage(up ? "ExpandRG is running." : "ExpandRG didn't start. See .demo-logs/ in the ExpandRG folder.");
+  if (up) {
+    output.appendLine("ExpandRG started.");
+    if (askedByUser) vscode.window.showInformationMessage("ExpandRG is running.");
+    return;
   }
+  const said = fs.existsSync(logFile) ? fs.readFileSync(logFile, "utf8").split(/\r?\n/).filter((l) => l.trim()) : [];
+  output.appendLine(`ExpandRG didn't start. ${logFile}:`);
+  said.slice(-12).forEach((line) => output.appendLine(`  ${line}`));
+  vscode.window.showWarningMessage(`ExpandRG didn't start: ${said.at(-1) ?? `see ${logFile}`}`, "Show details")
+    .then((choice) => choice && output.show(true));
 }
 
 // --- Helpers -------------------------------------------------------------------

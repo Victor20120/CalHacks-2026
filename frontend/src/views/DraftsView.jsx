@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { CATEGORIES, VERIFICATION_STATUSES, backend } from "../api.js";
 import { ErrorNote } from "../components.jsx";
+import { DiagnosticGraphs } from "./VisualizeView.jsx";
 
-export default function DraftsView({ session, projects }) {
+export default function DraftsView({ session, projects, onOpenDiagnostic }) {
   const [drafts, setDrafts] = useState(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -47,7 +48,7 @@ export default function DraftsView({ session, projects }) {
       <ErrorNote error={error} />
       {drafts && !drafts.length && <p className="muted">No drafts waiting.</p>}
       {drafts?.map((d) => (
-        <DraftCard key={d.id} session={session} draft={d} projectName={projectName(d.project_id)} onDecide={decide} />
+        <DraftCard key={d.id} session={session} draft={d} projectName={projectName(d.project_id)} onDecide={decide} onOpenDiagnostic={onOpenDiagnostic} />
       ))}
     </div>
   );
@@ -56,7 +57,7 @@ export default function DraftsView({ session, projects }) {
 // A run watched up to a day before the draft is offered first: it's probably the one it's about.
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-function DraftCard({ session, draft, projectName, onDecide }) {
+function DraftCard({ session, draft, projectName, onDecide, onOpenDiagnostic }) {
   const [title, setTitle] = useState(draft.title);
   const [summary, setSummary] = useState(draft.summary);
   const [category, setCategory] = useState(draft.category);
@@ -71,7 +72,9 @@ function DraftCard({ session, draft, projectName, onDecide }) {
         setRuns(own);
         const made = Date.parse(draft.created_at);
         const recent = own.find((r) => Date.parse(r.started_at) <= made && made - Date.parse(r.started_at) < DAY_MS);
-        if (recent) setRunId(recent.id);
+        const originating = draft.source_run_id || draft.diagnostic_graphs?.[0]?.spec?.datasets?.find((id) => id.startsWith("run:"))?.slice(4);
+        if (originating && own.some((r) => r.id === originating)) setRunId(originating);
+        else if (recent) setRunId(recent.id);
       })
       .catch(() => setRuns([]));
   }, [draft.id]);
@@ -89,6 +92,7 @@ function DraftCard({ session, draft, projectName, onDecide }) {
         Summary
         <textarea rows={8} value={summary} onChange={(e) => setSummary(e.target.value)} maxLength={4000} />
       </label>
+      <DiagnosticGraphs graphs={draft.diagnostic_graphs} session={session} onOpen={(graph) => onOpenDiagnostic?.(graph, draft.project_id)} />
       <div className="options">
         <label>
           Category

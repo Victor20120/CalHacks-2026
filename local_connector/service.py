@@ -11,6 +11,8 @@ researcher clicks Run.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import logging
 import os
 import threading
@@ -268,6 +270,28 @@ def create_service(
             return registry.grant_named(folder)
         except AccessDenied as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from None
+
+    @app.get("/visualize/local-data")
+    def graph_local_data(run_id: str, run_label: str, member_id: str, project_id: str, full: bool = False) -> dict:
+        """Read-only log/manifest data. Backend checks run visibility before calling.
+
+        File reads still require a live grant, including after a grant is revoked.
+        No file path supplied by a graph or agent is ever executed.
+        """
+        from local_connector.visualization import local_data
+        try:
+            record = next((r for r in simulation_store.records.values()
+                           if r.get("backend_run_id") == run_id and r["member_id"] == member_id
+                           and r["project_id"] == project_id), None)
+            if record:
+                source = Path(record.get("runtime", {}).get("source_root", ""))
+                return local_data(registry, run_label, full, path=simulation_store.home / record["id"] / "output.log",
+                                  source_root=source)
+            return local_data(registry, run_label, full)
+        except AccessDenied as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from None
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
 
     @app.post("/tools/list_project_files")
     def tool_list_files(body: ListIn) -> dict:
@@ -542,6 +566,11 @@ def create_service(
             detail = lab.detail(experiment_id)
         except ExperimentNotFound as exc:
             raise refused(exc) from None
+        from local_connector.visualization import manifest_units
+        try:
+            detail["units"] = manifest_units(registry, Path(detail["root"]))
+        except AccessDenied:
+            detail["units"] = {}
         detail["baseline_result"] = None
         if detail["baseline"]:
             try:

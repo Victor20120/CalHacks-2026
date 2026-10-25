@@ -10,12 +10,14 @@ import requests
 from dotenv import dotenv_values
 from fastapi.testclient import TestClient
 
-import setup_expandrg
 from backend.api.app import create_app
 from backend.creao.client import personal_agent
 from backend.db.database import Database
 from backend.workspaces.demo import seed_demo
-from backend.workspaces.groups import Agent, GroupError, check_app, check_key, groups_home, group_environment
+from backend.workspaces.groups import (
+    Agent, GroupError, active_researchers, add_project, check_app, check_key, groups_home, group_environment,
+)
+from expandrg import setup_group as setup_expandrg
 
 HUB = ("11111111-1111-1111-1111-111111111111", "capi_superbrain_key_0001")
 ANA = ("22222222-2222-2222-2222-222222222222", "capi_ana_agent_key_0002")
@@ -67,6 +69,7 @@ def test_the_leader_sets_up_a_group_with_its_own_super_brain():
     folder = groups_home() / "fluids-lab"
     assert "agent.creao.ai" in terminal.text and "API Trigger" in terminal.text  # where to find the ID and key
     assert "python run_demo.py --group fluids-lab" in terminal.text
+    assert "python setup_expandrg.py --add-project" in terminal.text  # how to add more projects later
     assert '"ExpandRG: Set up"' in terminal.text and "settings.json" not in terminal.text  # VS Code asks; nothing to type
     assert terminal.checked_keys == [HUB[1], ANA[1], BEN[1]] and terminal.checked_apps == []
     assert HUB[1] not in terminal.text and "capi_****0001" in terminal.text  # keys are never shown in full
@@ -167,6 +170,64 @@ def test_an_unknown_group_lists_the_ones_there_are():
     Terminal(LEADER_ANSWERS, [HUB[1], ANA[1], BEN[1]]).run()
     with pytest.raises(GroupError, match="Groups on this computer: fluids-lab"):
         group_environment("nope")
+
+
+def group_json(group_id="fluids-lab"):
+    return json.loads((groups_home() / group_id / "group.json").read_text(encoding="utf-8"))
+
+
+def add_in_terminal(answers):
+    terminal = Terminal(answers, [])
+    return setup_expandrg.run_add_project(terminal.ask, terminal.say), terminal
+
+
+def test_add_project_saves_it_where_vs_code_and_the_dashboard_find_it():
+    Terminal(LEADER_ANSWERS, [HUB[1], ANA[1], BEN[1]]).run()
+    code, terminal = add_in_terminal(["Channel flow solver", "Pipe flow", "2", "y"])
+    assert code == 0
+    assert "Group: Fluids Lab" in terminal.text  # the only group isn't asked for
+    assert 'already has a project called "channel-flow-solver"' in terminal.text
+    assert '"ExpandRG: Set up"' in terminal.text
+    assert group_json()["projects"][1] == {"id": "pipe-flow", "name": "Pipe flow", "members": ["dr-maya-lee", "ben-okafor"]}
+    with closing(Database(groups_home() / "fluids-lab" / "data").shared()) as conn:
+        assert {r[0] for r in conn.execute("SELECT member_id FROM project_members WHERE project_id = 'pipe-flow'")} == {
+            "dr-maya-lee", "ben-okafor"}
+
+
+def test_add_project_asks_which_group_and_saves_nothing_unless_confirmed():
+    code, terminal = add_in_terminal([])
+    assert code == 1 and "no group on this computer yet" in terminal.text
+    Terminal(LEADER_ANSWERS, [HUB[1], ANA[1], BEN[1]]).run()
+    Terminal(["y", "Optics Lab", *LEADER_ANSWERS[2:]], [HUB[1], ANA[1], BEN[1]]).run()
+    code, terminal = add_in_terminal(["3", "2", "Lens model", "", "n"])
+    assert code == 1 and "Type a number from 1 to 2." in terminal.text and "Nothing was saved." in terminal.text
+    assert len(group_json("optics-lab")["projects"]) == 1
+    assert add_in_terminal(["2", "Lens model", "", "y"])[0] == 0
+    assert [p["id"] for p in group_json("optics-lab")["projects"]] == ["channel-flow-solver", "lens-model"]
+    assert len(group_json("fluids-lab")["projects"]) == 1
+
+
+def test_offboarded_researchers_are_left_out_of_a_new_project():
+    Terminal(LEADER_ANSWERS, [HUB[1], ANA[1], BEN[1]]).run()
+    with closing(Database(groups_home() / "fluids-lab" / "data").shared()) as conn, conn:
+        conn.execute("UPDATE members SET status = 'offboarded' WHERE id = 'ben-okafor'")
+    assert active_researchers("fluids-lab") == [{"id": "ana-ruiz", "name": "Ana Ruiz"}]
+    assert add_project("fluids-lab", "Pipe flow")["members"] == ["dr-maya-lee", "ana-ruiz"]
+    with pytest.raises(GroupError, match="not an active member"):
+        add_project("fluids-lab", "Jet flow", ["ben-okafor"])
+    with pytest.raises(GroupError, match="two letters or digits"):
+        add_project("fluids-lab", "!")
+
+
+def test_a_project_made_on_the_dashboard_is_added_to_group_json(monkeypatch):
+    Terminal(LEADER_ANSWERS, [HUB[1], ANA[1], BEN[1]]).run()
+    for name, value in group_environment("fluids-lab").items():
+        monkeypatch.setenv(name, value)
+    client = TestClient(create_app(client_factory=lambda prefix: None))
+    leader = {"Authorization": f"Bearer {client.post('/sign-in', json={'member_id': 'dr-maya-lee'}).json()['token']}"}
+    created = client.post("/projects", json={"name": "Pipe flow", "member_ids": ["ana-ruiz"]}, headers=leader)
+    assert created.status_code == 201 and created.json()["id"] == "pipe-flow"
+    assert group_json()["projects"][1] == {"id": "pipe-flow", "name": "Pipe flow", "members": ["dr-maya-lee", "ana-ruiz"]}
 
 
 def test_key_and_app_checks_read_creaos_answers():

@@ -1,4 +1,5 @@
-"""Research groups set up with `python setup_expandrg.py`, each with its own Super Brain.
+"""Research groups set up with `expandrg setup` (`python setup_expandrg.py` in a checkout), each
+with its own Super Brain.
 
 The demo group (Leader, Researchers A, B and C) stays as it is. A new group lives in
 its own folder on this computer, $EXPANDRG_HOME/groups/<id>/ (default ~/.expandrg):
@@ -8,6 +9,8 @@ its own folder on this computer, $EXPANDRG_HOME/groups/<id>/ (default ~/.expandr
     data/        its databases: a new, empty Super Brain and each researcher's private memory
 
 `python run_demo.py --group <id>` starts ExpandRG on that folder instead of the demo.
+More projects are added with `python setup_expandrg.py --add-project` or the leader's
+Projects page; both update group.json too, since VS Code's Set up lists projects from it.
 CREAO agents can't be created from here (that needs a paid developer key), so the
 leader makes them in agent.creao.ai and pastes each one's app ID and key.
 """
@@ -24,7 +27,8 @@ from pathlib import Path
 import requests
 
 from backend.db.database import Database
-from backend.workspaces.store import create_project
+from backend.workspaces.store import InvalidProject, create_project
+from expandrg.paths import command
 
 DEFAULT_BASE_URL = "https://agent.creao.ai/api/v1"
 APP_ID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
@@ -186,10 +190,64 @@ def group_environment(group_id: str) -> dict[str, str]:
     folder = groups_home() / group_id
     if not (folder / "group.json").exists():
         known = ", ".join(sorted(p.name for p in groups_home().glob("*") if (p / "group.json").exists())) or "none yet"
-        raise GroupError(f'No group called "{group_id}". Groups on this computer: {known}. Make one with: python setup_expandrg.py')
+        raise GroupError(f'No group called "{group_id}". Groups on this computer: {known}. Make one with: {command("setup")}')
     return {"EXPANDRG_DATA_DIR": str(folder / "data"), "EXPANDRG_ENV_FILE": str(folder / "group.env"),
             "EXPANDRG_GROUP": group_id}
 
 
 def describe(group_id: str) -> dict:
     return json.loads((groups_home() / group_id / "group.json").read_text(encoding="utf-8"))
+
+
+def list_groups() -> list[dict]:
+    """The groups set up on this computer, by ID. A group file that can't be read is left out."""
+    groups = []
+    for folder in sorted(groups_home().glob("*")) if groups_home().exists() else []:
+        try:
+            groups.append(describe(folder.name))
+        except (OSError, ValueError):
+            pass
+    return groups
+
+
+def project_id_for(name: str) -> str | None:
+    """A project's ID from its name (lowercase, dashes), or None when the name has too few letters or digits."""
+    project_id = slugify(name)
+    return project_id if len(project_id) >= 2 else None
+
+
+def active_researchers(group_id: str) -> list[dict]:
+    """The group's researchers who haven't been offboarded: {"id", "name"}, in the order they were added."""
+    group_environment(group_id)  # an unknown group says which ones there are
+    with closing(Database(groups_home() / group_id / "data").shared()) as conn:
+        return [{"id": r["id"], "name": r["display_name"]} for r in conn.execute(
+            "SELECT id, display_name FROM members WHERE role = 'researcher' AND status = 'active' ORDER BY rowid")]
+
+
+def add_project(group_id: str, name: str, member_ids: list[str] | None = None) -> dict:
+    """A new project in a group set up on this computer, with its leader and the given researchers
+    (default: every active researcher). Saved in the group's database and in group.json."""
+    group_environment(group_id)
+    project_id = project_id_for(name)
+    if project_id is None:
+        raise GroupError("Use at least two letters or digits in the project name.")
+    members = member_ids or [r["id"] for r in active_researchers(group_id)]
+    with closing(Database(groups_home() / group_id / "data").shared()) as conn:
+        try:
+            project = create_project(conn, group_id, project_id, name, "", [describe(group_id)["leader"]["id"], *members])
+        except InvalidProject as exc:
+            raise GroupError(str(exc)) from None
+    note_project(group_id, project)
+    return project
+
+
+def note_project(group_id: str, project: dict) -> None:
+    """Records a project in group.json, where VS Code's Set up reads a group's projects. Does
+    nothing for a group without one (the demo)."""
+    path = groups_home() / group_id / "group.json"
+    if not path.exists():
+        return
+    group = json.loads(path.read_text(encoding="utf-8"))
+    entry = {"id": project["id"], "name": project["name"], "members": project["members"]}
+    group["projects"] = [p for p in group.get("projects", []) if p["id"] != project["id"]] + [entry]
+    path.write_text(json.dumps(group, indent=2), encoding="utf-8")

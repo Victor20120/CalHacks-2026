@@ -1,5 +1,85 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { CONNECTOR_HELP, connector } from "./api.js";
+
+// Light or dark: the system's choice until the viewer picks one with the toggle, which this
+// browser remembers (a convenience; without storage it lasts until the page reloads).
+export function useTheme() {
+  const query = typeof window.matchMedia === "function" ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+  const [system, setSystem] = useState(query?.matches ? "dark" : "light");
+  const [chosen, setChosen] = useState(() => {
+    try {
+      const saved = localStorage.getItem("expandrg.theme");
+      return saved === "dark" || saved === "light" ? saved : null;
+    } catch {
+      return null;
+    }
+  });
+  useEffect(() => {
+    if (!query) return undefined;
+    const update = () => setSystem(query.matches ? "dark" : "light");
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+  useEffect(() => {
+    if (chosen) document.documentElement.dataset.theme = chosen;
+    else delete document.documentElement.dataset.theme;
+  }, [chosen]);
+  const theme = chosen || system;
+  function toggle() {
+    const next = theme === "dark" ? "light" : "dark";
+    setChosen(next);
+    try {
+      localStorage.setItem("expandrg.theme", next);
+    } catch {
+      // storage unavailable
+    }
+  }
+  return [theme, toggle];
+}
+
+const AVATAR_COLORS = ["#6366f1", "#10a37f", "#3b8fd9", "#c98a12", "#a78bfa", "#e0607e", "#0e9aa7"];
+
+// A person's initials on their own colour (the same colour every time for the same ID).
+export function Avatar({ id, name, size = 27 }) {
+  const initials = (name || id || "?").split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("");
+  const hash = [...(id || name || "")].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7);
+  const color = AVATAR_COLORS[hash % AVATAR_COLORS.length];
+  return (
+    <span className="avatar" aria-hidden="true" style={{
+      width: size, height: size, flexBasis: size, fontSize: Math.round(size * 0.38),
+      background: `color-mix(in srgb, ${color} 16%, transparent)`, color: `color-mix(in srgb, ${color} 88%, var(--text))`,
+    }}>{initials}</span>
+  );
+}
+
+// A menu that opens under (or above) the button that opened it. Clicking outside it or
+// pressing Escape closes it.
+export function Menu({ anchor, label, onClose, children }) {
+  const box = useRef(null);
+  const [place, setPlace] = useState({ left: -9999, top: 0 });
+  useLayoutEffect(() => {
+    const r = anchor.getBoundingClientRect();
+    const { offsetWidth: w, offsetHeight: h } = box.current;
+    const top = r.bottom + 6 + h > window.innerHeight - 8 ? r.top - h - 6 : r.bottom + 6;
+    setPlace({ left: Math.max(8, Math.min(r.left, window.innerWidth - w - 8)), top: Math.max(8, top) });
+  }, [anchor]);
+  useEffect(() => {
+    const outside = (e) => { if (!box.current.contains(e.target) && !anchor.contains(e.target)) onClose(); };
+    const escape = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("mousedown", outside);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("mousedown", outside);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [anchor, onClose]);
+  return (
+    <div className="menu" role="menu" aria-label={label} ref={box} style={place}>
+      <div className="menu-label">{label}</div>
+      {children}
+    </div>
+  );
+}
 
 // A size the viewer chose by dragging, kept in this browser only. null means the layout's default.
 export function useStoredSize(key) {

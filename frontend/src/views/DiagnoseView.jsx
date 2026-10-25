@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { DEPTHS, FOCUS_AREAS, backend, connector } from "../api.js";
+import { DiagnosticGraphs } from "./VisualizeView.jsx";
 import { AgentStatusBadge, ErrorNote, FolderPicker, Markdown, VerificationBadge } from "../components.jsx";
 
-export default function DiagnoseView({ session, project, onOpenDrafts }) {
+export default function DiagnoseView({ session, project, onOpenDrafts, seed, onOpenDiagnostic }) {
   const [root, setRoot] = useState("");
   const [files, setFiles] = useState([]);
   const [selected, setSelected] = useState({}); // path -> line range ("" = whole file / log excerpt)
-  const [symptom, setSymptom] = useState("");
+  const [symptom, setSymptom] = useState(seed?.symptom || "");
   const [focus, setFocus] = useState(["numerical"]);
   const [depth, setDepth] = useState("standard");
   const [useSuperBrain, setUseSuperBrain] = useState(true);
@@ -16,6 +17,7 @@ export default function DiagnoseView({ session, project, onOpenDrafts }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const poller = useRef(null);
+  const fromAlert = Boolean(seed?.run_id && seed?.alert_id);
 
   useEffect(() => {
     setFiles([]);
@@ -60,7 +62,8 @@ export default function DiagnoseView({ session, project, onOpenDrafts }) {
         symptom,
         focus_areas: focus,
         analysis_depth: depth,
-        evidence: preview.evidence,
+        evidence: preview?.evidence || [],
+        ...(fromAlert ? { run_id: seed.run_id, alert_id: seed.alert_id } : {}),
         use_super_brain: useSuperBrain,
       };
       const start = await backend("/diagnose", { method: "POST", body, token: session.token });
@@ -90,12 +93,15 @@ export default function DiagnoseView({ session, project, onOpenDrafts }) {
     <div className="view">
       <h2>Diagnose a problem in {project.name}</h2>
       <p className="muted">
-        Your own agent analyzes only the evidence you select below. You see exactly what is sent before anything leaves this
-        computer.
+        {fromAlert
+          ? "Your own agent analyzes the selected alert and its run. Review the problem below and add file excerpts if needed."
+          : "Your own agent analyzes only the evidence you select below. You see exactly what is sent before anything leaves this computer."}
       </p>
 
       <section className="card">
         <h3>1. Evidence</h3>
+        {fromAlert && <div className="notice"><strong>Selected run problem</strong><p>{seed.symptom}</p>
+          <p className="muted small">Your agent will receive this alert and a summary of its run. You can add file excerpts below. Nothing is sent until you choose Send to my agent.</p></div>}
         <FolderPicker root={root} onChange={setRoot} />
         {files.length > 0 && (
           <table className="file-table">
@@ -196,11 +202,11 @@ export default function DiagnoseView({ session, project, onOpenDrafts }) {
                 <pre>{e.excerpt}</pre>
               </details>
             ))}
-            <button className="primary" onClick={send} disabled={busy || !symptom.trim() || !focus.length}>
-              {busy ? "Your agent is working…" : "Send to my agent"}
-            </button>
           </div>
         )}
+        {(preview || fromAlert) && <div className="actions"><button className="primary" onClick={send} disabled={busy || !symptom.trim() || !focus.length}>
+          {busy ? "Your agent is working…" : "Send to my agent"}
+        </button></div>}
         <ErrorNote error={error} />
       </section>
 
@@ -218,6 +224,7 @@ export default function DiagnoseView({ session, project, onOpenDrafts }) {
               ))}
             </div>
           )}
+          <DiagnosticGraphs graphs={job?.diagnosis?.diagnostic_graphs || started.diagnostic_graphs} session={session} onOpen={onOpenDiagnostic} />
           {!job && <p className="muted">Waiting for your agent (usually about a minute)…</p>}
           {job?.status === "failed" && <ErrorNote error={`Diagnosis failed (${job.error.type}): ${job.error.message}`} />}
           {job?.status === "completed" && <Diagnosis job={job} onOpenDrafts={onOpenDrafts} />}

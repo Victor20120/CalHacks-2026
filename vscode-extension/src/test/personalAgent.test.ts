@@ -84,7 +84,7 @@ test("an older backend gives a restart hint for missing personal chat while othe
     if (path.endsWith("/personal-chat") || path === "/personal-agent/chat") throw new HttpError("Not Found", 404);
     return { instructions: "Be clear", default_instructions: "Be clear" } as T;
   });
-  await assert.rejects(client.load(session), /Restart ExpandRG using run_demo.py, then click Refresh/);
+  await assert.rejects(client.load(session), /Restart ExpandRG \(stop it, then ExpandRG: Start ExpandRG\), then click Refresh/);
   await assert.rejects(client.send(session, "Hello"), /Restart ExpandRG/);
   const denied = new PersonalAgentClient(async <T>(): Promise<T> => { throw new HttpError("Membership removed", 403); });
   await assert.rejects(denied.send(session, "Hello"), /Membership removed/);

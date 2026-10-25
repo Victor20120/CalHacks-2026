@@ -5,8 +5,6 @@ import { RunCharts } from "../charts.jsx";
 import { ErrorNote, Markdown, VerificationBadge } from "../components.jsx";
 import WorksheetsView from "./WorksheetsView.jsx";
 
-const LINK = new URLSearchParams(window.location.search);
-
 const CATEGORY_LABELS = {
   error_diagnosis: "Error diagnosis",
   research_result: "Research result",
@@ -19,14 +17,14 @@ const NOTE_KINDS = {
   correction: "Correction",
 };
 
-// Shared updates grouped by researcher, with private CREAO chat docked at the bottom.
-export default function SuperBrainView({ session, project, projects }) {
+// Shared updates grouped by researcher, with private CREAO chat beside them. The tab is
+// "updates" or "worksheets" (the Super Brain as a teacher); the sidebar switches it too.
+export default function SuperBrainView({ session, project, projects, tab, onTab }) {
   const [findings, setFindings] = useState(null);
   const [loading, setLoading] = useState(true);
   const [openId, setOpenId] = useState(null);
-  // "updates", or "worksheets" (the Super Brain as a teacher); ?tab=worksheets opens it
-  const [tab, setTab] = useState(LINK.get("tab") === "worksheets" ? "worksheets" : "updates");
   const [error, setError] = useState("");
+  const setTab = (id) => { onTab(id); setOpenId(null); };
 
   useEffect(() => {
     setLoading(true);
@@ -40,14 +38,15 @@ export default function SuperBrainView({ session, project, projects }) {
   }, [project.id]);
 
   const projectName = (id) => projects.find((p) => p.id === id)?.name || id;
+  const withChat = tab !== "worksheets" || openId;
   return (
-    <div className="super-brain">
+    <div className={`super-brain ${withChat ? "with-chat" : ""}`}>
       <div className="sb-content">
         <div className="sb-inner">
           <div className="sb-tabs" role="tablist" aria-label="Super Brain">
             {[["updates", "Updates"], ["worksheets", "Worksheets"]].map(([id, label]) => (
               <button key={id} role="tab" aria-selected={tab === id && !openId} className={tab === id && !openId ? "active" : ""}
-                onClick={() => { setTab(id); setOpenId(null); }}>
+                onClick={() => setTab(id)}>
                 {label}
               </button>
             ))}
@@ -69,7 +68,7 @@ export default function SuperBrainView({ session, project, projects }) {
           )}
         </div>
       </div>
-      <AgentChat key={`${session.member.id}:${project.id}`} session={session} project={project} />
+      {withChat && <AgentChat key={`${session.member.id}:${project.id}`} session={session} project={project} />}
     </div>
   );
 }

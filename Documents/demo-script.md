@@ -93,7 +93,7 @@ I refined the grid to dx = 0.005 for better resolution. Now the run blows up: ma
 
 > "Researcher B isn't in our wave-propagation project. B can't search it, open it, or follow a link into it, and the Super Brain never feeds B's agent anything B couldn't read."
 
-(In the top bar, B's **Project** list only shows Heat diffusion solver.)
+(Click B's **Project** switcher at the top of the sidebar: it only lists Heat diffusion solver.)
 
 ### 7. When someone leaves (1 minute) — new window
 
@@ -110,10 +110,10 @@ I refined the grid to dx = 0.005 for better resolution. Now the run blows up: ma
 5. Back in B's window, refresh **Super Brain**: C's work is there, marked **handed off at offboarding**.
 6. In the leader's window, click **Super Brain**: the bar chart shows how many updates each researcher shared, and each researcher's updates are listed with their issue underneath.
 
-> "As the leader I see what everyone shared, in one place. For more detail I just ask the Super Brain at the bottom of the page."
+> "As the leader I see what everyone shared, in one place. For more detail I just ask the Super Brain, right beside it."
 
-7. Type `blows up after refining the grid` in **Ask Super Brain** and press **Ask**.
-8. Optional (uses about a minute and credits): click the **Worksheets** tab, then **Make worksheets**. When it's done, open Researcher B's worksheet: questions and things to try, taught from A's finding.
+7. Type `blows up after refining the grid` in the **Ask Super Brain** panel on the right and press Enter (or the send arrow).
+8. Optional (uses about a minute and credits): click **Worksheets** (the tab, or under Super Brain in the sidebar), then **New worksheet**, keep everyone ticked, and **Send to CREAO**. When it's done, open Researcher B's worksheet: questions and things to try, taught from A's finding.
 
 > "The Super Brain also teaches. Each researcher gets a worksheet from what the others found; I read their answers and comment."
 

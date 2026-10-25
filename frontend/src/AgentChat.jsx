@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { ArrowUp, BrainCircuit, RotateCcw, SlidersHorizontal } from "lucide-react";
 import { backend } from "./api.js";
-import { ErrorNote, Markdown, Resizer, useStoredSize } from "./components.jsx";
+import { Avatar, ErrorNote, Markdown, Resizer, useStoredSize } from "./components.jsx";
 
 export default function AgentChat({ session, project }) {
   const [scope, setScope] = useState("project"); // the project chosen in the top bar
@@ -22,7 +23,7 @@ function ChatPanel({ session, project, scope, onScope }) {
   const [elapsed, setElapsed] = useState(0);
   const scroller = useRef(null);
   const box = useRef(null);
-  const [chatHeight, setChatHeight] = useStoredSize("expandrg.chatHeight");
+  const [chatWidth, setChatWidth] = useStoredSize("expandrg.chatWidth");
   const token = session.token;
   const base = `/projects/${encodeURIComponent(project.id)}`;
   const chatPath = `${base}/chat?scope=${scope}`;
@@ -143,12 +144,14 @@ function ChatPanel({ session, project, scope, onScope }) {
   }
 
   const dirty = rules !== savedRules;
+  const me = session.member;
   return (
     <section className="agent-chat" ref={box} aria-label="Super Brain research assistant"
-      style={chatHeight ? { height: `${chatHeight}px`, maxHeight: "85%" } : undefined}>
-      <Resizer axis="y" grow={-1} label="Talk box height" current={() => box.current.offsetHeight} onResize={setChatHeight}
-        min={120} max={() => (box.current?.parentElement?.offsetHeight || 800) * 0.85} />
+      style={chatWidth ? { width: `${chatWidth}px` } : undefined}>
+      <Resizer axis="x" grow={-1} label="Talk box width" current={() => box.current.offsetWidth} onResize={setChatWidth}
+        min={300} max={() => Math.min(680, window.innerWidth * 0.5)} />
       <div className="agent-chat-head">
+        <span className="li-icon accent"><BrainCircuit /></span>
         <div className="agent-chat-title">
           <strong>Ask Super Brain</strong>
           <label className="agent-scope">Knowledge
@@ -159,10 +162,12 @@ function ChatPanel({ session, project, scope, onScope }) {
           </label>
         </div>
         <div className="agent-chat-actions">
-          <button className="link" onClick={() => setEditing(!editing)} aria-expanded={editing} aria-controls="agent-instructions">
-            Instructions{dirty ? " *" : ""}
+          <button className={`icon-btn ${editing ? "on" : ""}`} onClick={() => setEditing(!editing)} aria-expanded={editing}
+            aria-controls="agent-instructions" title={`Instructions${dirty ? " (not saved)" : ""}`} aria-label="Instructions">
+            <SlidersHorizontal />{dirty && <span className="dot unsaved" />}
           </button>
-          <button className="link" onClick={clear} disabled={!loaded || busy || !!pending || !exchanges.length}>Clear chat</button>
+          <button className="icon-btn" onClick={clear} disabled={!loaded || busy || !!pending || !exchanges.length}
+            title="Clear chat" aria-label="Clear chat"><RotateCcw /></button>
         </div>
       </div>
       {editing && (
@@ -177,32 +182,53 @@ function ChatPanel({ session, project, scope, onScope }) {
           </div>
         </div>
       )}
-      {(exchanges.length > 0 || pending) && (
-        <div className="agent-transcript" ref={scroller} role="log" aria-label="Agent conversation" aria-live="polite">
-          {exchanges.map((x) => (
-            <article className="exchange" key={x.id}>
-              <p className="question"><span className="label">You</span> {x.question}</p>
-              <div className="agent-reply"><span className="label">{x.reply_kind === "creao" || !x.reply_kind ? "Super Brain · CREAO" : "Super Brain"}</span><Markdown text={x.reply} /></div>
-            </article>
-          ))}
-          {pending && <div className="exchange">
-            {pending.question && <p className="question"><span className="label">You</span> {pending.question}</p>}
-            <p className="muted" role="status">Super Brain is thinking… {elapsed}s elapsed.</p>
-          </div>}
-        </div>
-      )}
+      <div className="agent-transcript" ref={scroller} role="log" aria-label="Agent conversation" aria-live="polite">
+        {!exchanges.length && !pending && (
+          <p className="chat-empty muted small">
+            {loaded ? `Ask what your group has shared in ${scope === "all" ? "all your projects" : project.name}: findings, runs and worksheets.` : "Loading shared knowledge…"}
+          </p>
+        )}
+        {exchanges.map((x) => (
+          <article className="exchange" key={x.id}>
+            <div className="msg msg-me">
+              <Avatar id={me.id} name={me.display_name} size={23} />
+              <p className="msg-box question"><span className="sr-only">You: </span>{x.question}</p>
+            </div>
+            <div className="msg msg-ai">
+              <span className="avatar sb-avatar" aria-hidden="true">SB</span>
+              <div className="msg-col">
+                <div className="msg-box agent-reply"><Markdown text={x.reply} /></div>
+                <div className="msg-src"><span className="src-chip"><BrainCircuit />{x.reply_kind === "creao" || !x.reply_kind ? "Super Brain · CREAO" : "Super Brain"}</span></div>
+              </div>
+            </div>
+          </article>
+        ))}
+        {pending && <div className="exchange">
+          {pending.question && (
+            <div className="msg msg-me">
+              <Avatar id={me.id} name={me.display_name} size={23} />
+              <p className="msg-box question"><span className="sr-only">You: </span>{pending.question}</p>
+            </div>
+          )}
+          <div className="msg msg-ai">
+            <span className="avatar sb-avatar" aria-hidden="true">SB</span>
+            <p className="msg-box muted" role="status"><span className="dot pulse" /> Super Brain is thinking… {elapsed}s</p>
+          </div>
+        </div>}
+      </div>
       <div className="agent-feedback"><ErrorNote error={error} />{notice && <p className="muted small" role="status">{notice}</p>}</div>
       <form className="ask-dock" onSubmit={ask}>
         <div className="ask-row">
           <input value={question} maxLength={4000} onChange={(e) => setQuestion(e.target.value)}
-            placeholder={loaded ? "Ask what the group knows, or say: Act as a researcher and be clear…" : "Loading shared knowledge…"}
+            placeholder={loaded ? "Ask what the group knows…" : "Loading shared knowledge…"}
             aria-label="Message your research agent" disabled={!loaded || busy} />
-          <button className="primary" type="submit" disabled={!loaded || busy || !!pending || !question.trim() || dirty}>
-            {pending || busy ? "Please wait…" : "Send"}
+          <button className="primary send" type="submit" disabled={!loaded || busy || !!pending || !question.trim() || dirty}
+            aria-label={pending || busy ? "Please wait" : "Send"} title={pending || busy ? "Please wait…" : "Send"}>
+            <ArrowUp />
           </button>
         </div>
-        <p className="muted small">{dirty ? "Save your instructions before sending. " : ""}
-          CREAO answers using its own knowledge and research shared by your group's agents. You can set response instructions directly in chat. Sending uses CREAO credits.
+        <p className="muted xs">{dirty ? "Save your instructions before sending. " : ""}
+          Answers come from CREAO and what your group shared. You can set how it replies right in chat. Sending uses CREAO credits.
         </p>
       </form>
     </section>

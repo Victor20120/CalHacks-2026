@@ -15,4 +15,6 @@ export default defineConfig({
       "/connector": { target: "http://127.0.0.1:8001", rewrite: (path) => path.replace(/^\/connector/, "") },
     },
   },
+  // Plotly (about 4.7 MB) is its own chunk, loaded only when Visualize opens.
+  build: { chunkSizeWarningLimit: 5000 },
 });
