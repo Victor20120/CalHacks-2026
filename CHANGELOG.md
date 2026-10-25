@@ -4,7 +4,60 @@ One entry per commit, newest first. Each commit adds its own entry with the hash
 
 ---
 
-## 2026-10-24 · `pending` · Agent toolkit, Super Brain worksheets and comments, your own research group, and simulations from the dashboard
+## 2026-10-24 · `pending` · Guided first-time setup in VS Code, a resizable sidebar and talk box, Run results for the leader, clean agent replies, and weekly worksheets
+
+**Why:** Someone new had to type their group, member ID and project into `.vscode/settings.json` by hand. Now VS Code asks.
+
+- Extension 0.11.0: **ExpandRG: Set up** (a welcome message on first open, the bottom bar while it isn't set up, and a command). It asks:
+  - for the ExpandRG folder, only if it isn't known;
+  - for a Python that has ExpandRG's packages. It tries the configured one, a virtual environment in or next to ExpandRG, then PATH, and offers to install the packages into a picked Python;
+  - for the group (those made with `setup_expandrg.py`, read from `~/.expandrg/groups/*/group.json`, plus the demo). **Set up a new group…** opens the leader's terminal setup;
+  - who you are, and the project (only yours; one is chosen automatically).
+
+  It saves the answers in the workspace settings, turns on terminal command reporting there, and starts that group. If another group is running, it asks before restarting ExpandRG with yours.
+- Dashboard: drag the sidebar's right edge to make it wider or narrower (140 to 420 px), and the "Ask Super Brain" talk box's top edge to make it taller or shorter (120 px to 85% of the page).
+  - Arrow keys work on a focused edge (16 px per press), and a double-click resets.
+  - The browser remembers the sizes. A taller talk box fills with the conversation, and the input stays at the bottom.
+  - Checked in a real browser on the running dashboard: dragged 200 to 300 px and 137 to 337 px, kept after a reload, stopped at 420 px, reset by a double-click, and 3 arrow presses added 48 px.
+- **The leader's Monitor is now Run results.** It read like live surveillance, but it's the runs researchers shared: each one's log and data, drawn as graphs to see what happened.
+  - The page says that in one sentence and lists "Shared runs, newest first", with researcher, date, steps recorded and problem counts.
+  - Each run reads "Shared by … · date · N steps recorded", without Live/Finished tags, and has **Play back step by step**.
+  - The red live count is gone from the leader's menu. Researchers' own Monitor tab is unchanged.
+- **Stale "live" runs fixed.** A run counted as in progress forever when ExpandRG restarted without ending its watch: a run from 07:37 still showed "more of its log is still arriving", and researchers saw a stale badge of 5. Now a run is in progress only while data arrived in the last 5 minutes. This applies to the leader, the researcher Monitor and the menu badge.
+  - Checked in a real browser on the running dashboard for the leader and Researcher A: the new wording shows, the newest run opens first, there are no stale Live tags or badge, and no page errors.
+- **Clean, professional replies from the personal agent.** A real reply had four problems, all fixed:
+  - **Raw Markdown in VS Code.** The chat panel showed `**`, backticks and `- ` literally. Extension 0.12.1 formats replies: paragraphs, headings, bold, italics, lists, inline code, code blocks and tables (`vscode-extension/src/markdown.ts`). They're built with `createElement` and text nodes only, so a reply can't inject markup. The `Sources:`, `Couldn't open:` and "Shared with your group" lines are small and grey.
+  - **A leaked setup sentence** ("I'll start by reviewing the agent's skill instructions and manifest."). The filter now catches any opening first-person sentence about reading or reviewing skills, or the agent's or app's manifest. It still keeps sentences about the researcher's own manifest.
+  - **A technical "Checked:" line** with raw errors and repeats. It's now `Sources:` (files by name, runs, Super Brain findings, no repeats) plus `Couldn't open:` for missing files. Per-request details stay in `tool_calls`.
+  - **The agent couldn't find files.** VS Code had granted the whole workspace (`CALHACK_PROJECAT`), whose listing of 300+ files went over the size limit. So the agent guessed `config.json` at the top and failed.
+    - Listings now leave out virtual environments (any folder with `pyvenv.cfg`), `site-packages` and hidden folders. `.demo-logs` alone held about 290 files.
+    - More than 150 files come back as the folders that hold them; `list_project_files` takes `under` to list one folder.
+    - A wrong path comes back with the files of that name.
+    - The agent is told its own sandbox can't see the researcher's computer, to always look when asked to check files, to read by the exact listed path, and not to describe tool errors.
+  - **Writing style:** the agent writes as a professional research colleague. It never mentions skills, manifests, tools, its process or ExpandRG's internals; it writes formulas in plain text, not LaTeX; it refers to nothing outside the reply (such as "H-01"); and it introduces itself in one short sentence. The "Shared with your group" line is shorter.
+  - Checked with the real Agent 1 and the user's own VS Code folder, on a scratch backend. Before: no files read and a "can't open" answer. After: it read `config.json`, `run.log`, `heat2d.py` and `expandrg.json` in 3 CREAO runs and answered with the cause (r = 0.30 > 0.25, matched to the log), what isn't the cause, the exact change and a code guard, with clean sources. The panel was rendered with that reply and checked in a screenshot.
+  - New tests: Markdown parsing and safe rendering (including HTML staying text, and snake_case untouched); the sources line; big folders, `under`, wrong-path suggestions and virtual environments; and the new setup-sentence wording.
+- **Weekly worksheets.** Each "Make worksheets" is the project's next week.
+  - **Only what's new:** each researcher gets only findings that are new to them, shared or given a note after their last worksheet that wasn't cancelled. The agent is told the topics they already covered, to build on them, and that a correction note overrides a finding. Only those findings are sent, and "only what's new" can be turned off.
+  - **Optional per person:** the leader ticks who gets one. A preview (`GET /worksheets/next`) shows each person's count of new findings and greys out anyone with nothing new.
+  - **Cancel and restore**, either a whole week or one person's worksheet. Cancelled worksheets disappear for the researcher (and refuse answers). The cancelled lessons come back in that person's next week.
+    - **A cancelled week's number is used again.** Cancelling week 1 made the next one week 2. Now weeks are numbered by those that weren't cancelled: the panel goes back to **Week 1** as soon as it's cancelled (it now reloads on cancel and restore), and the cancelled week stays listed as Week 1, tagged Cancelled. Restoring it moves the later weeks up by one. No table change: `worksheet_weeks.week` keeps the order weeks were made in, and the number shown is worked out from it.
+  - **Storage:** new tables `worksheet_weeks` and `worksheet_in_week`. The layout version stays the same, so existing databases keep working. Worksheets made before weeks existed become week 1; on this computer, the 3 existing ones did.
+  - **Page:** a **Week N** panel with the tick-list, one card per week with **Cancel week** / **Restore week**, and a per-person **Cancel** / **Restore**.
+  - **Checks:**
+    - 9 new tests in `tests/test_worksheet_weeks.py`: numbering and nothing-new refusal; only what's new plus covered topics; a correction making a finding new; everything again; cancelling a week (hidden, answers refused, lessons back, restore); a cancelled week's number used again (it stays listed, and restoring renumbers); cancelling one person; leader only; earlier worksheets becoming week 1.
+    - A real-browser check with two weeks and one person cancelled: the plan showed Week 3 with only Researcher B having something new. Clicking **Cancel week** on Week 2 greyed it with **Restore week**. Researcher A then saw only Week 1, and Researcher B saw nothing. No page errors.
+- `run_demo.py --stop` stops a running ExpandRG wherever it was started: the launchers, backend, connector and this folder's dashboard, never another app's dev server or itself.
+- `GET /health` now says which group the backend serves (`group`: an ID, or `demo`).
+- `setup_expandrg.py` ends by pointing to **ExpandRG: Set up** instead of settings lines.
+- Checks:
+  - New `tests/test_run_demo.py` (the stop command picks only ExpandRG's processes; `/health` reports the group) and `vscode-extension/src/test/setup.test.ts` (groups listed from disk, a broken group file skipped, projects per person, `EXPANDRG_HOME`, the ExpandRG folder check, Python candidates). The group test checks the new closing message.
+  - A dry run of `--stop` on this computer picked exactly ExpandRG's 7 processes out of 185. Then `--stop` for real stopped ExpandRG, it started again, and `/health` answered `{"status": "ok", "group": "demo"}`.
+  - `python -m pytest`: 470 passed, 2 skipped. `npm run build` succeeds. `npm test` in `vscode-extension/`: 31 passed. Extension 0.12.1 packaged and installed.
+
+---
+
+## 2026-10-24 · `407964b` · Agent toolkit, Super Brain worksheets and comments, your own research group, and simulations from the dashboard
 
 **Why:** Personal agents should look at the researcher's files, runs and the group's findings before answering. The Super Brain should teach and be easy to read, and group members should be able to comment on what's shared. A real group needs its own Super Brain and agents rather than the demo. Researchers should be able to set up and run an existing simulation from the dashboard, with their agent preparing the steps and the project's own environment and compilers reused.
 

@@ -10,6 +10,7 @@ a file is only ever opened for reading. Secrets in what is read are blanked.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from pathlib import PurePosixPath
 
 from backend.orchestration.evidence_policy import path_problem, redact_secrets
@@ -17,7 +18,9 @@ from local_connector.evidence.extract import _log_ranges, _numbered, file_kind
 from local_connector.file_access.grants import AccessDenied, Grant, GrantRegistry
 from local_connector.file_access.walk import iter_project_files
 
-MAX_LISTED = 300
+MAX_LISTED = 150  # more than this, and the folder is described by its subfolders
+MAX_FOLDERS = 80
+MAX_SUGGESTIONS = 5
 MAX_READ_LINES = 400  # per request; the agent asks for a range to see more
 MAX_READ_CHARS = 12_000
 
@@ -37,17 +40,30 @@ def is_research_file(relative: str) -> bool:
     return name in READABLE_NAMES or PurePosixPath(name).suffix in READABLE_SUFFIXES
 
 
-def list_project_files(grant: Grant) -> dict:
-    """The research files in a granted folder, without sensitive, binary or tool-folder files."""
-    files, truncated = [], False
-    for relative, full in iter_project_files(grant):
-        if not is_research_file(relative):
-            continue
-        if len(files) >= MAX_LISTED:
-            truncated = True
-            break
-        files.append({"path": relative, "kind": file_kind(relative), "bytes": full.stat().st_size})
-    return {"folder": grant.name, "files": files, "truncated": truncated}
+def list_project_files(grant: Grant, under: str = "") -> dict:
+    """The research files in a granted folder, or in one of its subfolders (under), without
+    sensitive, binary or tool-folder files. A folder with too many to list is described by the
+    folders that hold them, with how many each has, so the agent can read or list the right one."""
+    prefix = under.strip().replace("\\", "/").strip("/")
+    if prefix:
+        problem = path_problem(prefix)
+        if problem:
+            raise AccessDenied(f"{prefix} {problem}.")
+        prefix += "/"
+    files = [relative for relative, _ in iter_project_files(grant) if relative.startswith(prefix) and is_research_file(relative)]
+    result = {"folder": grant.name, "under": prefix.rstrip("/"), "total": len(files)}
+    if len(files) <= MAX_LISTED:
+        return {**result, "files": files}
+    folders = Counter(str(PurePosixPath(f).parent) for f in files)
+    return {**result, "files": [f for f in files if "/" not in f[len(prefix):]][:MAX_LISTED],
+            "folders": [{"path": path, "research_files": n} for path, n in sorted(folders.items())[:MAX_FOLDERS]],
+            "note": "Too many files to list at once. Read a file by its full path, or list one folder with under."}
+
+
+def same_name(grant: Grant, relative: str) -> list[str]:
+    """Research files elsewhere in the folder with the same name as a path that isn't there."""
+    name = PurePosixPath(relative).name.lower()
+    return [f for f, _ in iter_project_files(grant) if PurePosixPath(f).name.lower() == name and is_research_file(f)][:MAX_SUGGESTIONS]
 
 
 def read_project_file(registry: GrantRegistry, grant: Grant, path: str, lines: str | None = None) -> dict:
@@ -58,6 +74,10 @@ def read_project_file(registry: GrantRegistry, grant: Grant, path: str, lines: s
     if problem:
         raise AccessDenied(f"{path} {problem}.")
     resolved, relative = registry.check_path(path, grant)
+    if not resolved.is_file():
+        found = same_name(grant, relative)
+        raise AccessDenied(f"There is no {relative} in {grant.name}." + (
+            f" Files with that name: {', '.join(found)}." if found else " List the folder to see what's there."))
     if not is_research_file(relative):
         raise AccessDenied(f"{relative} isn't a research file type ExpandRG reads (code, build files, configs, data and logs).")
     relative, text, read_from_end = registry.read_file(resolved, grant)

@@ -12,6 +12,7 @@ from contextlib import closing
 from dataclasses import asdict
 from pathlib import Path
 from threading import Lock
+import os
 import time
 from typing import Any, Callable, Literal
 
@@ -42,6 +43,8 @@ from backend.knowledge_sharing.teacher import (
     MAX_ITEMS as MAX_WORKSHEET_ITEMS,
     WorksheetLocked,
     WorksheetNotFound,
+    cancel_week,
+    cancel_worksheet,
     delete_worksheet,
     get_worksheet,
     list_worksheets,
@@ -182,6 +185,8 @@ class NoteIn(BaseModel):
 
 class WorksheetsIn(BaseModel):
     project_id: str = Field(min_length=1, max_length=64)
+    member_ids: list[str] | None = Field(default=None, max_length=200)  # who gets one this week; default everyone
+    only_new: bool = True  # teach only what's new to each researcher since their last worksheet
 
 
 class AnswersIn(BaseModel):
@@ -287,7 +292,8 @@ def create_app(
 
     @app.get("/health")
     def health() -> dict[str, str]:
-        return {"status": "ok"}
+        # Which group this backend serves (run_demo.py --group), so VS Code can tell it's the right one.
+        return {"status": "ok", "group": os.environ.get("EXPANDRG_GROUP") or "demo"}
 
     @app.get("/demo/members")
     def demo_members() -> list[dict[str, Any]]:
@@ -581,8 +587,7 @@ def create_app(
             except PermissionDenied:  # removed from the project during the run: keep the reply, share nothing
                 shared = None
             if shared:
-                result["reply"] += (f"\n\nShared with your group in the Super Brain, as a hypothesis: "
-                                    f"\"{shared['title']}\". Anyone in the project can add detail or their own guess to it.")
+                result["reply"] += f"\n\nShared with your group in the Super Brain as a hypothesis: \"{shared['title']}\"."
             return {**result, "agent": agent, "agent_slot": prefix, "used_project_overview": bool(overview),
                     "shared_finding": {"id": shared["id"], "title": shared["title"]} if shared else None}
 
@@ -692,15 +697,18 @@ def create_app(
     @app.post("/worksheets", status_code=202)
     def make_worksheets(body: WorksheetsIn, background: BackgroundTasks,
                         member: dict[str, Any] = Depends(current_member)) -> dict[str, Any]:
-        """The Super Brain's teacher (leader only): one run turns every finding shared in the
-        project into a worksheet per researcher, from what the others found. Poll /jobs/{job_id}."""
+        """The Super Brain's teacher (leader only): one run makes the project's next week of worksheets,
+        one per picked researcher, from what the others found that's new to them. Poll /jobs/{job_id}."""
         require_leader(member)
         with closing(db.shared()) as conn:
             require_member_of(conn, member["id"], body.project_id)
             project_name = conn.execute("SELECT name FROM projects WHERE id = ?", (body.project_id,)).fetchone()[0]
-            plan = worksheet_plan(conn, body.project_id)
+            plan = worksheet_plan(conn, body.project_id, body.member_ids, body.only_new)
         if not plan["researchers"]:
-            raise HTTPException(status_code=422, detail="Nothing to teach yet: no researcher here has findings from others to learn from.")
+            detail = ("Nothing new to teach: no one picked has new findings from others since their last worksheet."
+                      if body.only_new and any(p["since"] for p in plan["people"])
+                      else "Nothing to teach yet: no researcher picked has findings from others to learn from.")
+            raise HTTPException(status_code=422, detail=detail)
         with chat_lock:
             if store.running_chat(member["id"], body.project_id, kind="worksheets"):
                 raise HTTPException(status_code=409, detail="The Super Brain is still writing worksheets for this project.")
@@ -710,15 +718,62 @@ def create_app(
         def task() -> dict:
             written = write_worksheets(super_brain_client(settings), plan, project_name, settings.slot == "CHAT")
             with closing(db.shared()) as conn:
-                ids = save_worksheets(conn, member, body.project_id, written["worksheets"], written["run_id"])
-            return {"worksheet_ids": ids, "run_id": written["run_id"], "provider_ms": written["provider_ms"],
+                saved = save_worksheets(conn, member, body.project_id, written["worksheets"], written["run_id"], body.only_new)
+            return {"worksheet_ids": saved["ids"], "week": saved["week"], "week_id": saved["week_id"],
+                    "run_id": written["run_id"], "provider_ms": written["provider_ms"],
                     "prompt_chars": written["prompt_chars"], "agent_slot": settings.slot,
                     "for": [w["member_id"] for w in written["worksheets"]]}
 
         background.add_task(run_job, store, job.job_id, task)
-        return {"job_id": job.job_id, "status": job.status, "findings": len(plan["findings"]),
+        return {"job_id": job.job_id, "status": job.status, "week": plan["week"], "findings": len(plan["findings"]),
                 "researchers": [{"member_id": r["member_id"], "name": r["name"], "findings": len(r["learn_from"])}
                                 for r in plan["researchers"]]}
+
+    @app.get("/worksheets/next")
+    def next_worksheets(project_id: str, only_new: bool = True,
+                        member: dict[str, Any] = Depends(current_member)) -> dict[str, Any]:
+        """What next week's worksheets would teach (leader only): its number, and for each researcher
+        how many findings are new to them since their last worksheet. Starts nothing."""
+        require_leader(member)
+        with closing(db.shared()) as conn:
+            require_member_of(conn, member["id"], project_id)
+            plan = worksheet_plan(conn, project_id, None, only_new)
+        return {"week": plan["week"], "only_new": only_new, "findings": len(plan["findings"]), "people": plan["people"]}
+
+    def set_week(week_id: str, member: dict[str, Any], cancelled: bool) -> dict[str, str]:
+        require_leader(member)
+        with closing(db.shared()) as conn:
+            try:
+                cancel_week(conn, member, week_id, cancelled)
+            except WorksheetNotFound as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from None
+        return {"status": "cancelled" if cancelled else "restored"}
+
+    @app.post("/worksheets/weeks/{week_id}/cancel")
+    def cancel_worksheet_week(week_id: str, member: dict[str, Any] = Depends(current_member)) -> dict[str, str]:
+        """Cancel a whole week of worksheets (leader only): they disappear for the researchers."""
+        return set_week(week_id, member, True)
+
+    @app.post("/worksheets/weeks/{week_id}/restore")
+    def restore_worksheet_week(week_id: str, member: dict[str, Any] = Depends(current_member)) -> dict[str, str]:
+        return set_week(week_id, member, False)
+
+    def set_person(worksheet_id: str, member: dict[str, Any], cancelled: bool) -> dict[str, Any]:
+        require_leader(member)
+        with closing(db.shared()) as conn:
+            try:
+                return cancel_worksheet(conn, member, worksheet_id, cancelled)
+            except WorksheetNotFound as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from None
+
+    @app.post("/worksheets/{worksheet_id}/cancel")
+    def cancel_one_worksheet(worksheet_id: str, member: dict[str, Any] = Depends(current_member)) -> dict[str, Any]:
+        """Cancel one person's worksheet in its week, leaving everyone else's (leader only)."""
+        return set_person(worksheet_id, member, True)
+
+    @app.post("/worksheets/{worksheet_id}/restore")
+    def restore_one_worksheet(worksheet_id: str, member: dict[str, Any] = Depends(current_member)) -> dict[str, Any]:
+        return set_person(worksheet_id, member, False)
 
     @app.get("/worksheets")
     def worksheets(project_id: str, member: dict[str, Any] = Depends(current_member)) -> list[dict[str, Any]]:

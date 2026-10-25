@@ -35,6 +35,8 @@ SHARED_TABLES = (
     "worksheet_items",
     "finding_runs",
     "finding_comments",
+    "worksheet_weeks",
+    "worksheet_in_week",
 )
 PRIVATE_TABLES = ("runs", "private_episodes", "share_drafts", "settings", "alerts", "project_context")
 
@@ -204,6 +206,26 @@ CREATE TABLE IF NOT EXISTS worksheet_items (
     finding_ids     TEXT NOT NULL DEFAULT '[]',
     answer          TEXT NOT NULL DEFAULT '',
     leader_comment  TEXT NOT NULL DEFAULT ''
+);
+
+-- Worksheets come in weeks: each "Make worksheets" is its project's next week, and teaches
+-- what's new to each researcher since their last worksheet (unless only_new is 0). The leader
+-- can cancel a whole week, or one person's worksheet in it, and restore either.
+CREATE TABLE IF NOT EXISTS worksheet_weeks (
+    id            TEXT PRIMARY KEY,
+    project_id    TEXT NOT NULL REFERENCES projects(id),
+    week          INTEGER NOT NULL,  -- the order made in; the number shown skips cancelled weeks
+    made_by       TEXT NOT NULL REFERENCES members(id),
+    made_at       TEXT NOT NULL,
+    only_new      INTEGER NOT NULL DEFAULT 1 CHECK (only_new IN (0, 1)),
+    cancelled_at  TEXT,
+    UNIQUE (project_id, week)
+);
+
+CREATE TABLE IF NOT EXISTS worksheet_in_week (
+    worksheet_id  TEXT PRIMARY KEY REFERENCES worksheets(id),
+    week_id       TEXT NOT NULL REFERENCES worksheet_weeks(id),
+    cancelled_at  TEXT  -- this one person's worksheet was cancelled
 );
 
 -- Runs watched on a researcher's computer, seen by them and the group leader.

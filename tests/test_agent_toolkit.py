@@ -74,10 +74,10 @@ def read(connector, path, lines=None, folder="heat_project"):
 
 def test_lists_only_research_files_a_researcher_would_share(connector):
     listed = connector.client.post("/tools/list_project_files", json={"folder": "heat_project"}).json()
-    paths = {f["path"] for f in listed["files"]}
+    paths = set(listed["files"])
     assert {"heat2d.py", "config.json", "run.log", "solver.f90", "params.py"} <= paths
     assert not paths & {".env", "deploy.pem", ".git/config", "id_rsa", "results.bin", "notes.xyz"}
-    assert listed["folder"] == "heat_project" and listed["truncated"] is False
+    assert listed["folder"] == "heat_project" and listed["total"] == len(paths) and "folders" not in listed
 
 
 def test_reads_a_line_range_with_line_numbers(connector):
@@ -113,7 +113,7 @@ def test_long_files_are_capped_and_short_ranges_say_so(connector):
     (".git/config", "sensitive"),
     ("results.bin", "research file type"),
     ("notes.xyz", "research file type"),
-    ("missing.py", "not a file"),
+    ("missing.py", "There is no missing.py in heat_project"),
 ])
 def test_refuses_what_an_agent_must_not_read(connector, path, reason):
     response = read(connector, path)
@@ -149,7 +149,39 @@ def test_a_linked_folder_cannot_escape_the_granted_folder(connector, project, tm
     response = read(connector, "linked/private.py")
     assert response.status_code == 403 and "outside the granted project folder" in response.json()["detail"]
     listed = connector.client.post("/tools/list_project_files", json={"folder": "heat_project"}).json()
-    assert not any(f["path"].startswith("linked/") for f in listed["files"])
+    assert not any(f.startswith("linked/") for f in listed["files"])
+
+
+def test_a_big_folder_is_described_by_its_folders_and_one_can_be_listed(connector, project):
+    for n in range(160):
+        folder = project / "runs" / f"case{n // 40}"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / f"out{n}.log").write_text("step 1\n")
+    big = connector.client.post("/tools/list_project_files", json={"folder": "heat_project"}).json()
+    assert big["total"] == 166 and "heat2d.py" in big["files"] and "runs/case0/out0.log" not in big["files"]
+    assert {"path": "runs/case0", "research_files": 40} in big["folders"] and "Read a file by its full path" in big["note"]
+    one = connector.client.post("/tools/list_project_files", json={"folder": "heat_project", "under": "runs/case1"}).json()
+    assert one["total"] == 40 and one["under"] == "runs/case1" and one["files"][0].startswith("runs/case1/")
+    escape = connector.client.post("/tools/list_project_files", json={"folder": "heat_project", "under": "../.."})
+    assert escape.status_code == 403
+
+
+def test_a_wrong_path_gets_the_files_with_that_name(connector, project):
+    (project / "cases" / "sample").mkdir(parents=True)
+    (project / "cases" / "sample" / "config.json").write_text('{"dt": 0.01}')
+    response = read(connector, "settings/config.json")
+    assert response.status_code == 403
+    assert "There is no settings/config.json" in response.json()["detail"]
+    assert "config.json, cases/sample/config.json" in response.json()["detail"]
+
+
+def test_virtual_environments_are_never_listed_whatever_their_name(connector, project):
+    venv = project / "calhack"
+    (venv / "Lib" / "site-packages" / "numpy").mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text("home = C:\\Python312\n")
+    (venv / "Lib" / "site-packages" / "numpy" / "core.py").write_text("x = 1\n")
+    listed = connector.client.post("/tools/list_project_files", json={"folder": "heat_project"}).json()
+    assert not any(f.startswith("calhack/") for f in listed["files"])
 
 
 def test_only_granted_folders_by_name_and_never_an_ambiguous_one(connector, tmp_path):
@@ -246,8 +278,7 @@ def test_the_agent_reads_code_and_finds_the_groups_finding_before_answering(lab)
     assert "No more tool requests are possible" not in sent  # one more round was still allowed
     reply = job["diagnosis"]["reply"]
     assert reply.startswith("r * lap at heat2d.py:23")
-    assert "Checked: listed 6 files in heat_project · read heat2d.py lines 18-25 · " \
-           'searched the Super Brain for "time step CFL blow up" (1 findings) · looked at 0 recent runs' in reply
+    assert reply.endswith("\n\nSources: heat2d.py (lines 18-25) · project files · Super Brain (1 finding) · no recent runs")
     assert "tool_requests" not in reply and job["diagnosis"]["creao_runs"] == 2
     saved = lab.client.get("/projects/heat-diffusion/personal-chat", headers=lab.headers["researcher_a"]).json()["exchanges"][-1]
     assert [c["tool"] for c in saved["tool_calls"]] == ["list_project_files", "read_project_file",
@@ -261,6 +292,28 @@ def test_at_most_two_rounds_of_tool_requests_per_message(lab):
     assert len(lab.creao.calls) == 3
     assert "No more tool requests are possible" in lab.creao.calls[-1]["observed_symptom"]
     assert job["diagnosis"]["reply"].startswith("Still not sure.") and "tool_requests" not in job["diagnosis"]["reply"]
+
+
+def test_the_reply_ends_with_plain_sources_and_files_it_couldnt_open(lab):
+    job = chat(lab, [tool_block({"tool": "read_project_file", "path": "config.json"},
+                                {"tool": "read_project_file", "path": "run.log"},
+                                {"tool": "read_project_file", "path": "run.log"},
+                                {"tool": "read_project_file", "path": "nowhere/config.yaml"},
+                                {"tool": "search_super_brain", "query": "dt stability"}), "Here is what I found."])
+    reply = job["diagnosis"]["reply"]
+    assert reply.endswith("\n\nSources: config.json · run.log · Super Brain (0 findings)\nCouldn't open: nowhere/config.yaml")
+    assert "failed" not in reply and "size limit" not in reply and "Checked:" not in reply
+
+
+def test_sources_name_files_briefly_unless_two_share_a_name(lab, project):
+    (project / "cases").mkdir()
+    (project / "cases" / "config.json").write_text('{"dt": 0.01}')
+    job = chat(lab, [tool_block({"tool": "list_project_files"},
+                                {"tool": "read_project_file", "path": "config.json"},
+                                {"tool": "read_project_file", "path": "cases/config.json"},
+                                {"tool": "read_project_file", "path": "heat2d.py", "lines": "18-25"}), "Done."])
+    assert job["diagnosis"]["reply"].endswith(
+        "Sources: config.json · cases/config.json · heat2d.py (lines 18-25) · project files")
 
 
 def test_requests_are_capped_per_round_and_by_size(lab):

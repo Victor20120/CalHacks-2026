@@ -67,12 +67,13 @@ test("personal agent client refuses leaders and does not treat a denied overview
     token: "t", memberName: "A", projectName: "Heat" }), /Access removed/);
 });
 
-test("webview blocks external resources and treats conversation output as plain text", () => {
+test("webview blocks external resources and builds replies from text nodes, never HTML", () => {
   const html = personalAgentHtml("safe123nonce");
   assert.ok(html.includes("default-src 'none'"));
   assert.ok(html.includes("script-src 'nonce-safe123nonce'"));
-  assert.ok(html.includes("textContent=x.reply"));
-  assert.ok(!html.includes("innerHTML"));
+  assert.ok(html.includes("q.textContent=x.question"));
+  assert.ok(html.includes("renderMarkdown(a,x.reply,document,parseMarkdown)")); // see markdown.test.ts
+  assert.ok(!html.includes("innerHTML") && !html.includes("insertAdjacentHTML"));
   assert.throws(() => personalAgentHtml('bad" nonce'), /Invalid webview nonce/);
 });
 

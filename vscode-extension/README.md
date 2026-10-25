@@ -2,11 +2,23 @@
 
 The VS Code side of ExpandRG. The extension is the face; the local connector (Python, in this repo) is the engine: it reads your runs, runs the checks and sends numbers and problems to the backend, which the web dashboard shows to you and your group leader. ExpandRG never stops a simulation on its own.
 
+## First time: ExpandRG: Set up
+
+The first time you open a project folder, ExpandRG asks to **Set up** (also in the bottom bar, and as the command **ExpandRG: Set up**). It takes about a minute and nothing is typed into settings files:
+
+1. **Where ExpandRG is**: pick the folder with `run_demo.py`. It's asked only if it isn't known yet.
+2. **A Python that runs it**: found by itself. It tries the configured one, then a virtual environment in or next to the ExpandRG folder, then `python`. If none has ExpandRG's packages, you pick one and it offers to install them.
+3. **Your group**: the groups made on this computer with `python setup_expandrg.py`, and the demo group. **Set up a new group…** (leader only) opens that setup in a terminal.
+4. **Who you are** in that group.
+5. **Which project this folder is**: only your projects are listed, and if there's one it's chosen for you.
+
+It saves these in the workspace settings, turns on terminal command reporting there so typed runs can be watched, and starts the group. If ExpandRG is already running another group, it asks before restarting it with yours. When it's done, it offers to open **ExpandRG AI** or the dashboard.
+
 ## Talk to your personal agent
 
 Click **ExpandRG AI** in the bottom bar, or run **ExpandRG: Talk to ExpandRG AI** from the command palette. The panel uses a chat layout with slate and teal colors, clean typography, and a rounded composer, light and dark themes, and instructions behind the settings icon. The visible agent is ExpandRG AI, with a Powered by CREAO note. The panel opens beside your code, using the researcher and project configured for this workspace. Researcher A talks to A's own CREAO agent, and B talks to B's; this conversation is separate from Super Brain chat. The tab, chat header, welcome, and replies identify the personal agent as **Agent 1**, **Agent 2**, and so on. Numbers follow the order agents were registered/activated in the group; retired agents keep their place, and changing project or clearing a conversation does not renumber them. In the existing demo, A has Agent 1 and B has Agent 2. The agent is instructed to introduce itself by that name on the first reply of a new conversation.
 
-- **Your agent can look at your files.** When your open folder is allowed, the panel header says `… · can read <folder>`, and the agent can list and read research files there, search the Super Brain and look at your runs before answering. The line under its reply starts `Checked:` and lists what it looked at. On your first message in a folder that isn't allowed yet, VS Code asks **Allow ExpandRG to read "<folder>"?** Only the folder's name goes to ExpandRG; `.env` files, keys and binary files are never read. See [the toolkit](https://github.com/Victor20120/CalHacks-2026/blob/main/Documents/agent-toolkit.md).
+- **Your agent can look at your files.** When your open folder is allowed, the panel header says `… · can read <folder>`, and the agent can list and read research files there, search the Super Brain and look at your runs before answering. Replies are formatted (headings, bold, lists, code and tables), never shown as raw Markdown. Under each reply, a small grey `Sources:` line names what the agent looked at. On your first message in a folder that isn't allowed yet, VS Code asks **Allow ExpandRG to read "<folder>"?** Only the folder's name goes to ExpandRG; `.env` files, keys and binary files are never read. See [the toolkit](https://github.com/Victor20120/CalHacks-2026/blob/main/Documents/agent-toolkit.md).
 - **Understand project** maps a permitted workspace folder locally. Review the exact context in the panel, then click **Send to my agent**. Nothing goes to CREAO before that click. The saved private overview becomes context for later personal messages and diagnoses.
 - The settings icon → **Agent instructions** lets you save how the agent should help you. You can also say "Act as a researcher and explain compiler flags clearly" or "Be conversational and answer directly" in chat. Simple questions default to short, natural replies without internal skill-loading narration. Preferences apply to future personal conversations, diagnoses, and overviews for this project; they are request instructions, not edits to the hosted CREAO skill.
 - **Set up simulation** (the bottom-bar button or chat shortcut) prepares a setup request; click **Send** for your agent to inspect the project's permitted files. It checks README/build instructions, source entry points, dependencies, and inputs, then proposes commands for your terminal. Python gets environment/dependency guidance; Fortran and other compiled languages get separate build, link, and run steps. Missing choices are asked about. Existing drafts are preserved. This action does not execute commands or modify files, and does not require an `expandrg.json`.
@@ -60,7 +72,7 @@ Open the command box (the search box at the top middle of VS Code, or Ctrl+Shift
 
 ## Settings
 
-Put these in the workspace's `.vscode/settings.json`:
+**ExpandRG: Set up** fills these in for you. To set them by hand, put them in the workspace's `.vscode/settings.json`:
 
 ```json
 {

@@ -67,6 +67,7 @@ def test_the_leader_sets_up_a_group_with_its_own_super_brain():
     folder = groups_home() / "fluids-lab"
     assert "agent.creao.ai" in terminal.text and "API Trigger" in terminal.text  # where to find the ID and key
     assert "python run_demo.py --group fluids-lab" in terminal.text
+    assert '"ExpandRG: Set up"' in terminal.text and "settings.json" not in terminal.text  # VS Code asks; nothing to type
     assert terminal.checked_keys == [HUB[1], ANA[1], BEN[1]] and terminal.checked_apps == []
     assert HUB[1] not in terminal.text and "capi_****0001" in terminal.text  # keys are never shown in full
 

@@ -14,7 +14,7 @@ from local_connector.file_access.grants import Grant
 
 SKIP_DIRS = {
     "node_modules", "__pycache__", ".venv", "venv", "env", ".env", ".mypy_cache", ".pytest_cache",
-    ".ipynb_checkpoints", ".idea", ".vscode", ".tox", "build", "dist", ".eggs",
+    ".ipynb_checkpoints", ".idea", ".vscode", ".tox", "build", "dist", ".eggs", "site-packages",
 }
 
 
@@ -34,6 +34,10 @@ def iter_project_files(grant: Grant, stats: WalkStats | None = None) -> Iterator
                 stats.skipped["tool folders"] += 1
             elif path_problem((rel_dir / d / "x").as_posix()):
                 stats.skipped["sensitive folders"] += 1
+            elif (Path(dirpath) / d / "pyvenv.cfg").exists():  # a virtual environment, whatever its name
+                stats.skipped["tool folders"] += 1
+            elif d.startswith("."):  # hidden folders hold tools' state and logs (.github, .demo-logs, ...)
+                stats.skipped["hidden folders"] += 1
             elif is_link(Path(dirpath) / d):  # os.walk follows Windows junctions, which can lead anywhere
                 stats.skipped["linked folders"] += 1
             else:

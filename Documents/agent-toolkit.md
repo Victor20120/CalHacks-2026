@@ -6,7 +6,7 @@ What a researcher's personal agent can look at while it works on a simulation pr
 
 | Tool | What the agent gets | Where it runs | Permission |
 |---|---|---|---|
-| `list_project_files` | The research files in the researcher's granted project folder: code, build files, configs, data and logs | Local connector (`local_connector/agent_tools.py`) | Only a folder the researcher granted; sensitive, binary and tool-folder files are never listed |
+| `list_project_files` | The research files in the researcher's granted project folder, or in one subfolder (`under`): code, build files, configs, data and logs. More than 150 come back as the folders that hold them, with how many each has | Local connector (`local_connector/agent_tools.py`) | Only a folder the researcher granted; sensitive, binary and tool-folder files, virtual environments (any folder with `pyvenv.cfg`) and hidden folders are never listed |
 | `read_project_file` | One file with line numbers: a range (`"18-40"`), or the start of the file. A log without a range gives its first lines, the lines around problems and its end | Local connector | Same grant; at most 400 lines and 12,000 characters per request; secrets blanked |
 | `search_super_brain` | The group's shared findings that match: title, project, researcher, category, whether a researcher verified it, summary with evidence, the agent's guess if any, and members' notes | Backend (`search_findings`) | Only projects the researcher belongs to, so never another group's or a restricted project's findings |
 | `get_simulation_runs` | The researcher's recent watched runs with alert counts; with a `run_id`, that run's alerts and its numbers per step (range, first non-finite step, about 40 points) | Backend (runs store) | Only the researcher's own runs (the leader sees runs in their projects) |
@@ -33,7 +33,7 @@ You ask Agent 1 in VS Code: "why does heat2d blow up?"
   → ExpandRG runs each request for you: files through your local connector, from your granted folder;
     searches and runs through the backend, with your project memberships
   → CREAO run 2. The agent gets tool_results and either answers or asks once more
-  → Under the answer: "Checked: read config.json lines 1-9 · searched the Super Brain for … (1 findings)"
+  → Under the answer, in small grey text: "Sources: config.json · run.log · heat2d.py · Super Brain (1 finding)"
 ```
 
 Limits:
@@ -41,7 +41,9 @@ Limits:
 - 30,000 characters of results per round;
 - unknown tools and refused files come back to the agent as errors, never as files.
 
-Each round adds a CREAO run, typically 20 to 40 s. The `Checked:` line under the reply lists every request, including refused ones. Chat history keeps those summaries, not the file contents.
+Each round adds a CREAO run, typically 20 to 40 s.
+
+Under the reply, `Sources:` names what the agent looked at: files by name (the whole path only when two share a name), runs and Super Brain findings. `Couldn't open:` names any file it asked for that wasn't there. A wrong path comes back to the agent with the files that have that name, so it can read the right one in its next round. Chat history keeps a summary of each request (why one failed, too), not the file contents.
 
 Granting the folder is the permission (the group's choice, 2026-10-24): there is no extra prompt per file.
 
@@ -67,7 +69,7 @@ If CREAO adds custom tools for API runs, or Device Connect proves to work on Win
 2. Install the extension: `code --install-extension vscode-extension/expandrg-0.8.0.vsix --force`, then run **Developer: Reload Window**.
 3. Open your project folder in VS Code and click **ExpandRG AI** in the bottom bar.
 4. On your first message, if the folder isn't allowed yet, VS Code asks **Allow ExpandRG to read "<folder>"?** Click **Allow**. The panel header then says `… · can read <folder>`. If you click away, the agent works without files and says so.
-5. Ask about your simulation. The agent decides what to read, and the `Checked:` line shows what it looked at.
+5. Ask about your simulation. The agent decides what to read, and the `Sources:` line under its answer shows what it looked at.
 
 Only the folder's name goes to the backend, never its path. Only the excerpts the agent reads go to CREAO, with secrets blanked.
 

@@ -18,6 +18,7 @@ EXPECTED_DEMO_COUNTS = {
     "approvals": 0, "shared_findings": 0, "finding_links": 0, "handoff_events": 0, "handoff_records": 0,
     "simulation_runs": 0, "run_points": 0, "run_alerts": 0, "auto_shares": 0, "finding_notes": 0,
     "worksheets": 0, "worksheet_items": 0, "finding_runs": 0, "finding_comments": 0,
+    "worksheet_weeks": 0, "worksheet_in_week": 0,
 }
 MARKER = "PRIVATE-MARKER-7f3c: suspect ghost-cell sign error in my branch"
 

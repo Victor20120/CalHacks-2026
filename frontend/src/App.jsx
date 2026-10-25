@@ -1,14 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { backend, remember } from "./api.js";
 import DiagnoseView from "./views/DiagnoseView.jsx";
 import DraftsView from "./views/DraftsView.jsx";
 import ExperimentsView from "./views/ExperimentsView.jsx";
 import ProjectView from "./views/ProjectView.jsx";
 import OffboardingView from "./views/OffboardingView.jsx";
-import RunsView from "./views/RunsView.jsx";
+import RunsView, { isLive } from "./views/RunsView.jsx";
 import SimulationsView from "./views/SimulationsView.jsx";
 import SignIn from "./views/SignIn.jsx";
 import SuperBrainView from "./views/SuperBrainView.jsx";
+import { Resizer, useStoredSize } from "./components.jsx";
 
 const VIEWS = [
   ["project", "Project"],
@@ -68,7 +69,7 @@ export default function App() {
         const runs = await backend(`/simulation-runs?project_id=${encodeURIComponent(projectId)}`, { token: session.token });
         const drafts = session.member.role === "leader" ? [] : await backend("/drafts", { token: session.token });
         if (!stopped) {
-          setLiveCritical(runs.filter((r) => r.watching).reduce((sum, r) => sum + r.critical, 0));
+          setLiveCritical(runs.filter(isLive).reduce((sum, r) => sum + r.critical, 0));
           setDraftCount(drafts.length);
         }
       } catch (e) {
@@ -83,6 +84,10 @@ export default function App() {
     };
   }, [session, projectId]);
 
+  const [navWidth, setNavWidth] = useStoredSize("expandrg.navWidth");
+  const shell = useRef(null);
+  const nav = useRef(null);
+
   if (!session) return <SignIn onSignIn={signIn} />;
 
   const allowed = VIEWS_FOR_ROLE[session.member.role] || VIEWS_FOR_ROLE.researcher;
@@ -91,7 +96,7 @@ export default function App() {
   const shared = { session, project, projects };
 
   return (
-    <div className="app">
+    <div className="app" ref={shell} style={navWidth ? { "--nav-width": `${navWidth}px` } : undefined}>
       <div className="narrow-notice">ExpandRG is built for laptop and desktop screens. Widen the window for the best view.</div>
       <header className="topbar">
         <span className="brand" title="Expand Researching Globally">ExpandRG</span>
@@ -113,12 +118,16 @@ export default function App() {
         </span>
       </header>
 
-      <nav className="sidenav">
+      <nav className="sidenav" ref={nav}>
+        <Resizer axis="x" label="Sidebar width" current={() => nav.current.offsetWidth} onResize={setNavWidth}
+          min={140} max={() => Math.min(420, (shell.current?.offsetWidth || 1200) / 2)} />
         {VIEWS.filter(([id]) => allowed.includes(id)).map(([id, label]) => (
           <button key={id} className={current === id ? "active" : ""} onClick={() => setView(id)}>
-            {id === "alerts" ? session.member.role === "leader" ? "Monitor" : "Simulations" : label}
+            {id === "alerts" ? session.member.role === "leader" ? "Run results" : "Simulations" : label}
             {id === "drafts" && draftCount > 0 && <span className="count">{draftCount}</span>}
-            {id === "alerts" && liveCritical > 0 && <span className="count critical">{liveCritical}</span>}
+            {id === "alerts" && liveCritical > 0 && session.member.role !== "leader" && (
+              <span className="count critical">{liveCritical}</span> // problems in your own run that's going on now
+            )}
           </button>
         ))}
       </nav>

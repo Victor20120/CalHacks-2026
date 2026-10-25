@@ -3,13 +3,14 @@
 // backend, which the web dashboard shows. The extension never starts, pauses or stops
 // a simulation.
 
-import { ChildProcess, spawn } from "child_process";
+import { ChildProcess, spawn, spawnSync } from "child_process";
 import * as path from "path";
 import * as vscode from "vscode";
 import { call, HttpError, isUp } from "./http";
 import { dashboardUrl, insideFolder, statusText, Watched } from "./logic";
 import { watchTerminalRuns } from "./runs";
 import { PersonalAgentPanel } from "./personalAgent";
+import { Group, isExpandrgFolder, listGroups, projectsFor, pythonCandidates } from "./setup";
 
 const POLL_MS = 3000;
 let connectorProcess: ChildProcess | undefined;
@@ -62,7 +63,14 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("expandrg.stopWatching", stopWatching),
     vscode.commands.registerCommand("expandrg.startConnector", () => startConnector(true)),
     vscode.commands.registerCommand("expandrg.setupSimulation", () => personalAgent.showSimulationSetup()),
+    vscode.commands.registerCommand("expandrg.setUp", setUp),
   );
+  if (!isConfigured() && vscode.workspace.workspaceFolders?.length) {
+    vscode.window.showInformationMessage(
+      "Welcome to ExpandRG. Set up your group, who you are and this folder's project: about a minute, nothing to type into settings.",
+      "Set up", "Later",
+    ).then((choice) => { if (choice === "Set up") void setUp(); });
+  }
   const s = settings();
   output.appendLine(`ExpandRG ${context.extension.packageJSON.version} started as ${s.member}` +
     `${s.project ? ` in project ${s.project}` : " (no project chosen yet)"}; watching terminal runs: ${s.watchTerminalRuns ? "on" : "off"}.`);
@@ -93,6 +101,13 @@ let wasUp: boolean | undefined;
 
 async function refreshStatus(status: vscode.StatusBarItem) {
   const s = settings();
+  if (!isConfigured()) {
+    status.text = "$(gear) ExpandRG: Set up";
+    status.command = "expandrg.setUp";
+    status.backgroundColor = undefined;
+    return;
+  }
+  status.command = "expandrg.openDashboard";
   const up = await isUp(s.connectorUrl);
   if (up !== wasUp) {
     output.appendLine(up ? `Connected to the local connector at ${s.connectorUrl}.` : `The local connector at ${s.connectorUrl} is not running.`);
@@ -117,6 +132,140 @@ async function refreshStatus(status: vscode.StatusBarItem) {
   status.backgroundColor = watched.some((w) => w.member_id === s.member && w.state === "watching" && w.critical > 0)
     ? new vscode.ThemeColor("statusBarItem.errorBackground")
     : undefined;
+}
+
+// --- First-time setup ------------------------------------------------------------
+
+// Set up means: ExpandRG's folder is known and you've said who you are in this workspace.
+function isConfigured(): boolean {
+  const c = vscode.workspace.getConfiguration("expandrg");
+  const member = c.inspect<string>("member");
+  return Boolean(c.get<string>("connectorFolder") && (member?.workspaceValue ?? member?.workspaceFolderValue ?? member?.globalValue));
+}
+
+// One guided setup: where ExpandRG is, a Python that runs it, your group, who you are and this
+// folder's project. Saved in this workspace's settings, so nothing has to be typed there.
+async function setUp(): Promise<boolean> {
+  const save = (key: string, value: unknown) =>
+    vscode.workspace.getConfiguration("expandrg").update(key, value, vscode.ConfigurationTarget.Workspace);
+  if (!vscode.workspace.workspaceFolders?.length) {
+    vscode.window.showWarningMessage("ExpandRG: open your project folder first, then run ExpandRG: Set up.");
+    return false;
+  }
+  let folder = settings().connectorFolder;
+  if (!folder || !isExpandrgFolder(folder)) {
+    const picked = await vscode.window.showOpenDialog({
+      canSelectFolders: true, canSelectFiles: false, openLabel: "Use this ExpandRG folder",
+      title: "ExpandRG setup: where is the ExpandRG folder? (the one with run_demo.py in it)",
+    });
+    if (!picked) return false;
+    folder = picked[0].fsPath;
+    if (!isExpandrgFolder(folder)) {
+      vscode.window.showErrorMessage(`ExpandRG: "${folder}" isn't the ExpandRG folder; it has no run_demo.py.`);
+      return false;
+    }
+  }
+  const python = findPython(settings().pythonPath, folder) ?? (await pickPython(folder));
+  if (!python) return false;
+  await save("connectorFolder", folder);
+  await save("pythonPath", python);
+
+  const groupPick = await vscode.window.showQuickPick<vscode.QuickPickItem & { group?: Group }>([
+    ...listGroups().map((g) => ({
+      label: g.name, description: g.id ? `group ${g.id}` : "for presenting", group: g,
+      detail: `${g.people.length} people · projects: ${g.projects.map((p) => p.name).join(", ")}`,
+    })),
+    { label: "$(add) Set up a new group…", description: "leader only",
+      detail: "Asks in a terminal for your group and your CREAO agents' app IDs and keys." },
+  ], { title: "ExpandRG setup (1 of 3): which research group are you in?", ignoreFocusOut: true });
+  if (!groupPick) return false;
+  if (!groupPick.group) {
+    vscode.window.createTerminal({ name: "ExpandRG group setup", cwd: folder, shellPath: python, shellArgs: ["setup_expandrg.py"] }).show();
+    vscode.window.showInformationMessage("Answer the questions in the terminal. When it's done, run ExpandRG: Set up again and pick your new group.");
+    return false;
+  }
+  const group = groupPick.group;
+  const personPick = await vscode.window.showQuickPick(
+    group.people.map((p) => ({ label: p.name, description: p.role, person: p })),
+    { title: `ExpandRG setup (2 of 3): who are you in ${group.name}?`, ignoreFocusOut: true },
+  );
+  if (!personPick) return false;
+  const projects = projectsFor(group, personPick.person.id);
+  if (!projects.length) {
+    vscode.window.showErrorMessage(`ExpandRG: ${personPick.person.name} isn't in a project of ${group.name} yet.`);
+    return false;
+  }
+  const projectPick = projects.length === 1 ? { project: projects[0] } : await vscode.window.showQuickPick(
+    projects.map((p) => ({ label: p.name, description: p.id, project: p })),
+    { title: "ExpandRG setup (3 of 3): which project is this folder?", ignoreFocusOut: true },
+  );
+  if (!projectPick) return false;
+
+  await save("group", group.id);
+  await save("member", personPick.person.id);
+  await save("project", projectPick.project.id);
+  // So ExpandRG sees the runs you type in this workspace's terminal.
+  await vscode.workspace.getConfiguration("terminal.integrated").update("shellIntegration.enabled", true, vscode.ConfigurationTarget.Workspace);
+  output.appendLine(`Set up as ${personPick.person.id} in ${group.id || "the demo"}, project ${projectPick.project.id}, Python ${python}.`);
+
+  await ensureGroupRunning(group);
+  const choice = await vscode.window.showInformationMessage(
+    `ExpandRG is set up: ${personPick.person.name} · ${group.name} · ${projectPick.project.name}.`, "Open ExpandRG AI", "Open dashboard");
+  if (choice === "Open ExpandRG AI") void vscode.commands.executeCommand("expandrg.openPersonalAgent");
+  if (choice === "Open dashboard") openDashboard();
+  return true;
+}
+
+// The first Python that has ExpandRG's packages: the configured one, a virtual environment in
+// or next to the ExpandRG folder, then the ones on PATH.
+function findPython(configured: string, folder: string): string | undefined {
+  return pythonCandidates(configured, folder).find((python) => hasExpandrgPackages(python));
+}
+
+function hasExpandrgPackages(python: string): boolean {
+  const check = spawnSync(python, ["-c", "import fastapi, uvicorn, dotenv, requests"], { timeout: 20000, windowsHide: true });
+  return check.status === 0;
+}
+
+async function pickPython(folder: string): Promise<string | undefined> {
+  const choice = await vscode.window.showWarningMessage(
+    "ExpandRG needs a Python with its packages installed. Pick the Python to use (for example your virtual environment's python.exe).",
+    "Pick Python…", "Cancel");
+  if (choice !== "Pick Python…") return undefined;
+  const picked = await vscode.window.showOpenDialog({ canSelectFiles: true, openLabel: "Use this Python", title: "The Python that runs ExpandRG" });
+  if (!picked) return undefined;
+  const python = picked[0].fsPath;
+  if (hasExpandrgPackages(python)) return python;
+  const install = await vscode.window.showWarningMessage(
+    "This Python doesn't have ExpandRG's packages yet. Install them now?", "Install", "Cancel");
+  if (install === "Install") {
+    vscode.window.createTerminal({ name: "ExpandRG install", cwd: folder, shellPath: python,
+      shellArgs: ["-m", "pip", "install", "-r", path.join("backend", "requirements.txt")] }).show();
+    vscode.window.showInformationMessage("When the install finishes, run ExpandRG: Set up again.");
+  }
+  return undefined;
+}
+
+// ExpandRG serves one group at a time: start the chosen one, or offer to switch to it.
+async function ensureGroupRunning(group: Group) {
+  const s = settings();
+  let running: string | undefined;
+  try {
+    running = (await call<{ group?: string }>(s.backendUrl, "/health", { timeoutMs: 3000 })).group ?? "demo";
+  } catch {
+    running = undefined; // not running: start it below
+  }
+  const wanted = group.id || "demo";
+  if (running === wanted) return;
+  if (running) {
+    const now = running === "demo" ? "the demo group" : `the group "${running}"`;
+    const choice = await vscode.window.showWarningMessage(
+      `ExpandRG is running ${now}, not ${group.name}. Restart it with ${group.name}?`, "Restart ExpandRG", "Not now");
+    if (choice !== "Restart ExpandRG") return;
+    const stopped = spawnSync(s.pythonPath, ["run_demo.py", "--stop"], { cwd: s.connectorFolder, encoding: "utf8", timeout: 60000, windowsHide: true });
+    output.appendLine(`Stopping ExpandRG for the switch: ${(stopped.stdout || stopped.stderr || "").trim()}`);
+  }
+  await startConnector(true);
 }
 
 // --- Commands ------------------------------------------------------------------

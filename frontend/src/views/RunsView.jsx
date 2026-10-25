@@ -6,10 +6,10 @@ import { ErrorNote, SeverityBadge } from "../components.jsx";
 const GRAPHS = 3;
 const REPLAY_MS = 8000;
 
-// Runs in the selected project: the list on the left (live ones first), the chosen run on
-// the right with its graphs and alerts. A researcher starts watching a log here; the local
-// connector on their computer reads it and sends the numbers. The group leader sees every
-// researcher's runs.
+// Runs in the selected project: the list on the left, the chosen run on the right with its
+// graphs and problems. A researcher's own runs show while they go (their Monitor tab). The
+// group leader sees what researchers shared: each run's log and data, drawn as graphs to see
+// what happened, so their page is "Run results", without live framing.
 export default function RunsView({ session, project, initialRunId }) {
   const isLeader = session.member.role === "leader";
   const runs = useRuns(session, project.id);
@@ -17,40 +17,53 @@ export default function RunsView({ session, project, initialRunId }) {
   useEffect(() => { if (initialRunId) setSelectedId(initialRunId); }, [initialRunId]);
 
   const list = runs.list || [];
-  const selected = list.find((r) => r.id === selectedId) || list.find((r) => r.watching) || list[0] || null;
+  const selected = list.find((r) => r.id === selectedId) || (!isLeader && list.find(isLive)) || list[0] || null;
 
   return (
     <div className="view">
-      <h2>Monitor</h2>
-      <p className="lead">{isLeader ? `Your researchers' simulations in ${project.name}. ` : 'Your simulations and previous results. '}
-        New runs connect here automatically. Follow live metrics and problems, or open an earlier run to review and replay its results.
+      <h2>{isLeader ? "Run results" : "Monitor"}</h2>
+      <p className="lead">
+        {isLeader
+          ? `Runs your researchers shared in ${project.name}. Each one is a run's log and data from their computer, drawn as graphs so you can see what happened. Problems ExpandRG found in the numbers are marked.`
+          : "Your simulations and previous results. New runs connect here automatically. Follow live metrics and problems, or open an earlier run to review and replay its results."}
       </p>
       <SeverityGuide />
       <ErrorNote error={runs.error} />
 
       <div className="runs-layout">
+        {isLeader ? (
+          <nav className="run-list" aria-label="Shared runs">
+            <h4>Shared runs, newest first</h4>
+            {!list.length && <p className="muted small">None yet.</p>}
+            {list.map((r) => (
+              <RunItem key={r.id} run={r} selected={r.id === selected?.id} onSelect={setSelectedId} isLeader />
+            ))}
+          </nav>
+        ) : (
         <nav className="run-list" aria-label="Runs">
           <h4>Live runs</h4>
-          {!list.some((r) => r.watching) && <p className="muted small">No simulations are running right now.</p>}
+          {!list.some(isLive) && <p className="muted small">No simulations are running right now.</p>}
           {list
-            .filter((r) => r.watching)
+            .filter(isLive)
             .map((r) => (
-              <RunItem key={r.id} run={r} selected={r.id === selected?.id} onSelect={setSelectedId} showWho={isLeader} />
+              <RunItem key={r.id} run={r} selected={r.id === selected?.id} onSelect={setSelectedId} />
             ))}
           <h4>Previous runs</h4>
-          {!list.some((r) => !r.watching) && <p className="muted small">None yet.</p>}
+          {!list.some((r) => !isLive(r)) && <p className="muted small">None yet.</p>}
           {list
-            .filter((r) => !r.watching)
+            .filter((r) => !isLive(r))
             .map((r) => (
-              <RunItem key={r.id} run={r} selected={r.id === selected?.id} onSelect={setSelectedId} showWho={isLeader} />
+              <RunItem key={r.id} run={r} selected={r.id === selected?.id} onSelect={setSelectedId} />
             ))}
         </nav>
+        )}
 
         {selected ? (
           <RunViewer
             key={selected.id}
             session={session}
             run={selected}
+            isLeader={isLeader}
           />
         ) : (
           <section className="run-viewer">
@@ -58,7 +71,7 @@ export default function RunsView({ session, project, initialRunId }) {
               {runs.list === null
                 ? "Loading…"
                 : isLeader
-                  ? "No runs in this project yet. A run appears automatically when a researcher starts a simulation."
+                  ? "No runs shared in this project yet. A run appears here when a researcher runs a simulation or shares a run's log."
                   : "No runs yet. Prepare a version in Set up & run, then click Run simulation."}
             </p>
           </section>
@@ -68,13 +81,14 @@ export default function RunsView({ session, project, initialRunId }) {
   );
 }
 
-function RunItem({ run, selected, onSelect, showWho }) {
+function RunItem({ run, selected, onSelect, isLeader = false }) {
   return (
     <button className={`run-item ${selected ? "selected" : ""}`} onClick={() => onSelect(run.id)}>
       <code>{run.run_label}</code>
       <span className="small muted">
-        {showWho && `${run.member_name} · `}
+        {isLeader && `${run.member_name} · `}
         {stamp(run.started_at)}
+        {isLeader && ` · ${stepCount(run)}`}
       </span>
       {run.critical > 0 || run.warning > 0 ? (
         <span className="alert-counts">
@@ -101,8 +115,9 @@ function SeverityGuide() {
   );
 }
 
-// One run: live while it's watched, or replayed step by step afterwards.
-function RunViewer({ session, run }) {
+// One run: live while it's watched, or replayed step by step afterwards. For the leader,
+// a shared run's graphs: what happened, and where problems were found.
+function RunViewer({ session, run, isLeader }) {
   const [detail, setDetail] = useState(null);
   const [replayStep, setReplayStep] = useState(null); // null: show the whole run
   const [error, setError] = useState("");
@@ -138,35 +153,45 @@ function RunViewer({ session, run }) {
         <div>
           <h3>
             <code>{run.run_label}</code>{" "}
-            {run.watching ? <span className="tag live">Live</span> : <span className="tag">Finished</span>}
+            {!isLeader && (isLive(run) ? <span className="tag live">Live</span> : <span className="tag">Finished</span>)}
           </h3>
-          <p className="muted small">
-            {run.member_name}'s simulation · started {stamp(run.started_at)} ·{" "}
-            {replayStep !== null ? `replaying, step ${replayStep} of ${lastStep}` : `reached step ${lastStep}`} · last
-            update {stamp(run.updated_at).slice(11)}
-          </p>
+          {isLeader ? (
+            <p className="muted small">
+              Shared by {run.member_name} · {stamp(run.started_at).slice(0, 16)} ·{" "}
+              {replayStep !== null ? `playing back, step ${replayStep} of ${lastStep}` : `${stepCount(run)} recorded`}
+              {isLive(run) && " · more of its log is still arriving"}
+            </p>
+          ) : (
+            <p className="muted small">
+              {run.member_name}'s simulation · started {stamp(run.started_at)} ·{" "}
+              {replayStep !== null ? `replaying, step ${replayStep} of ${lastStep}` : `reached step ${lastStep}`} · last
+              update {stamp(run.updated_at).slice(11)}
+            </p>
+          )}
         </div>
         <div className="run-actions">
-          {!run.watching && detail && steps.length > 0 && (
+          {(isLeader || !isLive(run)) && detail && steps.length > 0 && (
             <button onClick={() => setReplayStep(replayStep === null ? steps[0] : null)}>
-              {replayStep === null ? "Replay" : "Stop replay"}
+              {replayStep === null ? (isLeader ? "Play back step by step" : "Replay") : "Stop"}
             </button>
           )}
         </div>
       </div>
       <ErrorNote error={error} />
-      {shown && <LatestAlerts alerts={shown.alerts} />}
+      {shown && <LatestAlerts alerts={shown.alerts} none={isLeader ? "No problems found in this run." : undefined} />}
       {!detail && !error && <p className="muted">Loading…</p>}
       {detail && !detail.metrics.length && (
         <p className="muted">
-          {run.watching
-            ? "Waiting for the first simulation metrics. Build output appears in the saved version while compilation runs…"
-            : "This run did not emit numeric step metrics. Its output and setup are kept with the saved version."}
+          {isLeader
+            ? "This run's log has no numbers per step to draw yet."
+            : isLive(run)
+              ? "Waiting for the first simulation metrics. Build output appears in the saved version while compilation runs…"
+              : "This run did not emit numeric step metrics. Its output and setup are kept with the saved version."}
         </p>
       )}
       {detail && detail.metrics.length > 0 && (
         <p className="muted small">
-          Each graph is one number the simulation writes at every step. A vertical line marks the step where a problem was
+          Each graph is one number from the run's log, at every step. A vertical line marks the step where a problem was
           found.
         </p>
       )}
@@ -208,9 +233,9 @@ function RunViewer({ session, run }) {
 }
 
 // The newest Warning and Critical alerts, right under the run's header, so they're seen without scrolling.
-function LatestAlerts({ alerts }) {
+function LatestAlerts({ alerts, none = "No problems found so far." }) {
   const latest = alerts.filter((a) => a.severity !== "informational").slice(-2).reverse();
-  if (!latest.length) return <p className="no-problems">No problems found so far.</p>;
+  if (!latest.length) return <p className="no-problems">{none}</p>;
   return (
     <>
       <p className="strip-title">Latest problems found</p>
@@ -225,6 +250,19 @@ function LatestAlerts({ alerts }) {
       </ul>
     </>
   );
+}
+
+// A run is in progress only while new data keeps arriving. A run whose watch ended without
+// saying so (ExpandRG restarted, say) counts as finished after a few quiet minutes.
+const LIVE_WINDOW_MS = 5 * 60 * 1000;
+
+export function isLive(run) {
+  return run.watching && Date.now() - Date.parse(run.updated_at) < LIVE_WINDOW_MS;
+}
+
+function stepCount(run) {
+  const n = run.last_step ?? 0;
+  return `${n.toLocaleString()} step${n === 1 ? "" : "s"}`;
 }
 
 // The run with only what had happened by `step`, for a replay.

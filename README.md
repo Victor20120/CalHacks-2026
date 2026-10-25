@@ -70,7 +70,7 @@ Where it saves:
 
 Start the group with `python run_demo.py --group <group>`. It prints a sign-in link for each person. Only one of the demo or a group runs at a time.
 
-In VS Code, set `"expandrg.group": "<group>"`, `"expandrg.member"` and `"expandrg.project"` (the setup prints them), and the extension starts that group instead of the demo.
+In VS Code, open the project folder and click **ExpandRG: Set up** in the bottom bar. It asks three things: your group, who you are, and which project the folder is. It saves them and starts that group. If the demo or another group is running, it offers to restart ExpandRG with yours (`python run_demo.py --stop` stops a running ExpandRG). Nothing has to be typed into settings files.
 
 ExpandRG can't create CREAO agents itself: that needs a paid developer key (`cr_sk_`). Make the Super Brain and one agent per researcher in agent.creao.ai first.
 
@@ -106,7 +106,7 @@ The researcher's **Simulations** page prepares and runs projects directly:
 
 1. In **Set up & run**, choose an existing simulation project and click **Detect & prepare**. ExpandRG checks its `.venv`, `venv`, or `env`, then an active virtual/Conda environment, then its current Python. Your existing personal CREAO agent reads a redacted project map and prepares the project’s build steps, inputs, and run command. No `expandrg.json` or log file selection is required.
 2. Review the saved setup and click **Run simulation**. The project uses its existing interpreter and installed dependencies; compiled languages such as Fortran build locally before execution. A failed build stops there. ExpandRG prepares existing simulations, without creating a new solver or environment by default. Unresolved tools or inputs block Run.
-3. **Monitor** opens automatically with live metrics and alerts. The group leader's **Monitor** page receives the run too; other researchers cannot read your run details.
+3. **Monitor** opens automatically with live metrics and alerts. The group leader sees it on their **Run results** page: the run's log and data drawn as graphs, with its problems marked. Other researchers cannot read your run details.
 4. **Saved versions** keeps each version's code, inputs, setup, output, and results. **Prepare from this version** creates another copy for a new run. Editing the source project or preparing a new version never overwrites an earlier version. Your original project is only read.
 
 For a custom location, open **Existing environment** before preparing, or **Environment details & connection** on a saved version. Enter an existing environment folder/Python executable or Fortran compiler path. **Use environment & update setup** asks CREAO to revise the plan; **Recheck existing tools** refreshes detection without another agent request. Compiler settings in `FC`, `CC`, `CXX`, Makefiles, and CMake presets/cache are reused. SDKs that need activation scripts should be activated in the terminal used to start ExpandRG. Discovery uses that execution environment; Windows and WSL are separate.
@@ -134,6 +134,10 @@ You can say **Act as a researcher and be clear and concise.** The app saves stan
 The last 12 completed exchanges are kept privately per project and knowledge scope. Recent conversation and up to eight selected approved records are supplied to the hub on each request; the records include their evidence and original agent run IDs. Private project overviews and unapproved drafts are not added to the hub's shared knowledge. **Clear chat** clears the selected local conversation and keeps instructions; it does not erase CREAO's own memory. Restarting the backend can interrupt tracking of in-progress jobs.
 
 **Worksheets: the Super Brain as a teacher.** On **Super Brain → Worksheets**, the leader clicks **Make worksheets**. One Super Brain run (about a minute) reads every finding shared in the project, sorts them into topics, and writes each researcher a worksheet from what the *others* found: questions, and things to try in a copy of their project. Researchers type their answers and click **Send to the leader**. The leader reads them next to the model answers and writes comments, and the researcher then sees the comments and the model answers. Nothing is graded automatically, and a "try it" step never runs anything by itself.
+
+Worksheets come **weekly**. Each **Make week N worksheets** teaches each researcher only what's new to them: findings shared, or corrected with a note, since their last worksheet. It builds on the topics they covered before rather than repeating them. Untick "Only what's new" to cover everything again.
+
+Who gets one is optional: tick the people (anyone with nothing new is greyed out). Any week can be cancelled (**Cancel week**), or one person's worksheet in it (**Cancel**), and restored later. A cancelled worksheet disappears for the researcher, and its lessons come back in their next week. A cancelled week stays on the leader's page, and its number is used again: cancel week 1 and the next one made is week 1.
 
 Super Brain chat is tuned for speed. It asks CREAO for a fast model (`gemini-3-flash`), and asks the hub to answer directly, without its audit workflow, tools or skills: that workflow made replies take 20 to 60 seconds, even for "hello". Set `CREAO_CHAT_MODEL_ID=saved` in `backend/.env` to keep the agent's own model. For the fastest replies, make the dedicated chat agent in CREAO ([setup](Documents/super-brain-chat-agent.md)); it uses an ordinary `capi_` app key.
 

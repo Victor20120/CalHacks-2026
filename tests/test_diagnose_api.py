@@ -80,7 +80,7 @@ def with_evidence(path=None, excerpt=None):
 
 
 def test_health(api):
-    assert api.client.get("/health").json() == {"status": "ok"}
+    assert api.client.get("/health").json() == {"status": "ok", "group": "demo"}
 
 
 def test_diagnosis_needs_sign_in(api):

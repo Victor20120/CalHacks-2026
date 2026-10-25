@@ -1,6 +1,68 @@
 import { useEffect, useState } from "react";
 import { CONNECTOR_HELP, connector } from "./api.js";
 
+// A size the viewer chose by dragging, kept in this browser only. null means the layout's default.
+export function useStoredSize(key) {
+  const [size, setSize] = useState(() => {
+    try {
+      const saved = Number(localStorage.getItem(key));
+      return saved > 0 ? saved : null;
+    } catch {
+      return null;
+    }
+  });
+  function update(value) {
+    setSize(value);
+    try {
+      if (value === null) localStorage.removeItem(key);
+      else localStorage.setItem(key, String(Math.round(value)));
+    } catch {
+      // storage unavailable: the size lasts until the page reloads
+    }
+  }
+  return [size, update];
+}
+
+// A handle that resizes a panel. Drag it, or focus it and use the arrow keys;
+// double-click puts the panel back to its default size. current() measures the
+// panel now; grow is +1 when moving right/down makes it bigger, -1 when it makes it smaller.
+export function Resizer({ axis, current, onResize, min, max, grow = 1, label }) {
+  const clamp = (value) => Math.min(max(), Math.max(min, value));
+  function start(event) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const origin = axis === "x" ? event.clientX : event.clientY;
+    const from = current();
+    const move = (e) => onResize(clamp(from + grow * ((axis === "x" ? e.clientX : e.clientY) - origin)));
+    const stop = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      document.body.classList.remove(`resizing-${axis}`);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    document.body.classList.add(`resizing-${axis}`);
+  }
+  function key(event) {
+    const keys = axis === "x" ? { ArrowLeft: -1, ArrowRight: 1 } : { ArrowUp: -1, ArrowDown: 1 };
+    if (!(event.key in keys)) return;
+    event.preventDefault();
+    onResize(clamp(current() + grow * keys[event.key] * 16));
+  }
+  return (
+    <div
+      role="separator"
+      aria-orientation={axis === "x" ? "vertical" : "horizontal"}
+      aria-label={`${label}: drag, or use the arrow keys, to resize. Double-click to reset.`}
+      tabIndex={0}
+      className={`resizer resizer-${axis}`}
+      onPointerDown={start}
+      onKeyDown={key}
+      onDoubleClick={() => onResize(null)}
+    />
+  );
+}
+
 export function SeverityBadge({ severity }) {
   return <span className={`badge severity-${severity}`}>{severity}</span>;
 }

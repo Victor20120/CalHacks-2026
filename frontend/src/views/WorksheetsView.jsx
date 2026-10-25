@@ -15,6 +15,7 @@ export default function WorksheetsView({ session, project, onOpenFinding }) {
   const [list, setList] = useState(null);
   const [openId, setOpenId] = useState(LINKED); // ?worksheet=<id> opens one
   const [error, setError] = useState("");
+  const [cancels, setCancels] = useState(0); // a cancel or restore changes next week's number and lessons
   const shownProject = useRef(project.id);
   const role = session.member.role === "leader" ? "leader" : "researcher";
 
@@ -39,23 +40,48 @@ export default function WorksheetsView({ session, project, onOpenFinding }) {
         onBack={() => { setOpenId(null); load(); }} />
     );
   }
+  async function act(path) {
+    try {
+      await backend(path, { method: "POST", token: session.token });
+      await load();
+      setCancels((n) => n + 1);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  const weeks = byWeek(list || []);
   return (
     <div>
       <h2>Worksheets</h2>
       <p className="muted">
         {role === "leader"
-          ? `The Super Brain as a teacher: each researcher in ${project.name} gets questions and things to try, made from what the others shared. You read their answers and comment.`
-          : `Questions and things to try, made by the Super Brain from what others in ${project.name} shared. Your leader reads your answers and comments.`}
+          ? `Each week, the Super Brain teaches each researcher in ${project.name} what's new from the others: questions and things to try. You choose who gets one, read their answers and comment. A week, or one person's worksheet, can be cancelled; the next week made takes a cancelled week's number.`
+          : `Each week's questions and things to try, made by the Super Brain from what others in ${project.name} shared. Your leader reads your answers and comments.`}
       </p>
       <ErrorNote error={error} />
-      {role === "leader" && <MakeWorksheets session={session} project={project} onMade={load} />}
+      {role === "leader" && <MakeWorksheets session={session} project={project} cancels={cancels} onMade={load} />}
       {list && !list.length && (
         <section className="card">
           <p className="muted">{role === "leader" ? "No worksheets yet." : "No worksheets for you yet."}</p>
         </section>
       )}
-      {list && list.length > 0 && (
-        <section className="card">
+      {weeks.map((week) => (
+        <section className={`card worksheet-week ${week.cancelled ? "cancelled" : ""}`} key={week.id}>
+          <div className="card-header">
+            <h3>
+              Week {week.week}
+              {week.cancelled && <span className="tag worksheet-cancelled">Cancelled</span>}
+            </h3>
+            <span className="muted small">
+              made {week.made} · {week.onlyNew ? "what was new to each person" : "everything shared"}
+            </span>
+            {role === "leader" && (
+              <button onClick={() => act(`/worksheets/weeks/${week.id}/${week.cancelled ? "restore" : "cancel"}`)}>
+                {week.cancelled ? "Restore week" : "Cancel week"}
+              </button>
+            )}
+          </div>
           <table className="worksheet-table">
             <thead>
               <tr>
@@ -63,34 +89,77 @@ export default function WorksheetsView({ session, project, onOpenFinding }) {
                 <th>Worksheet</th>
                 <th>Status</th>
                 <th>Answered</th>
-                <th>Made</th>
+                {role === "leader" && <th aria-label="Actions" />}
               </tr>
             </thead>
             <tbody>
-              {list.map((w) => (
-                <tr key={w.id}>
+              {week.sheets.map((w) => (
+                <tr key={w.id} className={w.cancelled === "person" ? "cancelled" : ""}>
                   {role === "leader" && <td className="nowrap">{w.member_name}</td>}
                   <td>
                     <button className="link" onClick={() => setOpenId(w.id)}>{w.title}</button>
                   </td>
-                  <td className="nowrap"><span className={`tag worksheet-${w.status}`}>{STATUS[role][w.status]}</span></td>
+                  <td className="nowrap">
+                    {w.cancelled === "person"
+                      ? <span className="tag worksheet-cancelled">Cancelled</span>
+                      : <span className={`tag worksheet-${w.status}`}>{STATUS[role][w.status]}</span>}
+                  </td>
                   <td className="nowrap">{w.answered} of {w.items}</td>
-                  <td className="nowrap muted">{w.created_at.slice(0, 10)}</td>
+                  {role === "leader" && (
+                    <td className="nowrap">
+                      {!week.cancelled && (
+                        <button className="link" onClick={() => act(`/worksheets/${w.id}/${w.cancelled ? "restore" : "cancel"}`)}>
+                          {w.cancelled ? "Restore" : "Cancel"}
+                        </button>
+                      )}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
           </table>
         </section>
-      )}
+      ))}
     </div>
   );
 }
 
-function MakeWorksheets({ session, project, onMade }) {
-  const [job, setJob] = useState(null); // { id, startedAt, researchers }
+// Worksheets grouped by their week, newest week first.
+function byWeek(list) {
+  const weeks = new Map();
+  for (const w of list) {
+    const key = w.week_id || w.id;
+    if (!weeks.has(key)) {
+      weeks.set(key, { id: w.week_id, week: w.week, made: w.created_at.slice(0, 10), onlyNew: w.only_new,
+        cancelled: w.cancelled === "week", sheets: [] });
+    }
+    weeks.get(key).sheets.push(w);
+  }
+  return [...weeks.values()].sort((a, b) => b.week - a.week);
+}
+
+// Next week's worksheets: who gets one, and only what's new to them (or everything).
+function MakeWorksheets({ session, project, cancels, onMade }) {
+  const [plan, setPlan] = useState(null); // { week, people: [{ member_id, name, new_findings, since }] }
+  const [onlyNew, setOnlyNew] = useState(true);
+  const [picked, setPicked] = useState({}); // member_id -> true
+  const [job, setJob] = useState(null); // { id, startedAt, researchers, week }
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+
+  function loadPlan() {
+    return backend(`/worksheets/next?project_id=${encodeURIComponent(project.id)}&only_new=${onlyNew}`, { token: session.token })
+      .then((next) => {
+        setPlan(next);
+        setPicked(Object.fromEntries(next.people.map((p) => [p.member_id, p.new_findings > 0])));
+      })
+      .catch((e) => setError(e.message));
+  }
+
+  useEffect(() => {
+    loadPlan();
+  }, [project.id, onlyNew, cancels]);
 
   useEffect(() => {
     if (!job) return undefined;
@@ -108,8 +177,11 @@ function MakeWorksheets({ session, project, onMade }) {
         if (state.status === "failed") setError(state.error?.message || "The Super Brain couldn't write the worksheets. Try again.");
         else {
           const made = state.diagnosis.worksheet_ids.length;
-          setNotice(made ? `${made} worksheet${made === 1 ? "" : "s"} made.` : "The Super Brain didn't return usable worksheets. Try again.");
+          setNotice(made
+            ? `Week ${state.diagnosis.week}: ${made} worksheet${made === 1 ? "" : "s"} made.`
+            : "The Super Brain didn't return usable worksheets. Try again.");
           onMade();
+          loadPlan();
         }
         setJob(null);
       } catch (e) {
@@ -120,13 +192,19 @@ function MakeWorksheets({ session, project, onMade }) {
     return () => { stopped = true; clearTimeout(timer); clearInterval(clock); };
   }, [job]);
 
+  const chosen = (plan?.people || []).filter((p) => picked[p.member_id] && p.new_findings > 0);
+
   async function start() {
     setError("");
     setNotice("");
     try {
-      const started = await backend("/worksheets", { method: "POST", token: session.token, body: { project_id: project.id } });
+      const started = await backend("/worksheets", {
+        method: "POST",
+        token: session.token,
+        body: { project_id: project.id, only_new: onlyNew, member_ids: chosen.map((p) => p.member_id) },
+      });
       setElapsed(0);
-      setJob({ id: started.job_id, startedAt: Date.now(), researchers: started.researchers, findings: started.findings });
+      setJob({ id: started.job_id, startedAt: Date.now(), researchers: started.researchers, week: started.week });
     } catch (e) {
       setError(e.message);
     }
@@ -135,18 +213,38 @@ function MakeWorksheets({ session, project, onMade }) {
   return (
     <section className="card teacher">
       <div className="card-header">
-        <h3>Make worksheets</h3>
-        <button className="primary" onClick={start} disabled={!!job}>{job ? "Writing…" : "Make worksheets"}</button>
+        <h3>{plan ? `Week ${plan.week}` : "Next week"}</h3>
+        <button className="primary" onClick={start} disabled={!!job || !chosen.length}>
+          {job ? "Writing…" : `Make week ${plan?.week ?? ""} worksheets${chosen.length ? ` (${chosen.length})` : ""}`}
+        </button>
       </div>
+      <label className="check">
+        <input type="checkbox" checked={onlyNew} disabled={!!job} onChange={(e) => setOnlyNew(e.target.checked)} />
+        Only what's new to each person since their last worksheet
+      </label>
+      <ul className="pick-people" aria-label="Who gets a worksheet this week">
+        {(plan?.people || []).map((p) => (
+          <li key={p.member_id}>
+            <label className={`check ${p.new_findings ? "" : "muted"}`}>
+              <input type="checkbox" disabled={!!job || !p.new_findings} checked={!!picked[p.member_id] && p.new_findings > 0}
+                onChange={(e) => setPicked({ ...picked, [p.member_id]: e.target.checked })} />
+              {p.name}
+              <span className="muted small">
+                {p.new_findings
+                  ? `${p.new_findings} finding${p.new_findings === 1 ? "" : "s"} to learn from`
+                  : onlyNew && p.since ? "nothing new since their last worksheet" : "nothing to learn from yet"}
+              </span>
+            </label>
+          </li>
+        ))}
+      </ul>
       {job ? (
         <p role="status">
-          The Super Brain is reading {job.findings} shared finding{job.findings === 1 ? "" : "s"} and writing a worksheet for{" "}
-          {job.researchers.map((r) => r.name).join(", ")}… {elapsed}s
+          The Super Brain is writing week {job.week} for {job.researchers.map((r) => r.name).join(", ")}… {elapsed}s
         </p>
       ) : (
-        <p className="muted">
-          One Super Brain run reads every finding shared in {project.name}, sorts them into topics, and writes each researcher
-          questions and things to try from what the others found. Uses CREAO credits.
+        <p className="muted small">
+          One Super Brain run writes them all. It builds on what each person covered in earlier weeks. Uses CREAO credits.
         </p>
       )}
       {notice && <p className="muted" role="status">{notice}</p>}
@@ -211,10 +309,17 @@ function Worksheet({ session, id, role, onOpenFinding, onBack }) {
       <button className="link" onClick={onBack}>‹ Back to worksheets</button>
       <h2>{sheet.title}</h2>
       <p className="muted">
-        For {sheet.member_name} · <span className={`tag worksheet-${sheet.status}`}>{STATUS[role][sheet.status]}</span> · made{" "}
+        {sheet.week && `Week ${sheet.week} · `}For {sheet.member_name} ·{" "}
+        <span className={`tag worksheet-${sheet.status}`}>{STATUS[role][sheet.status]}</span> · made{" "}
         {sheet.created_at.slice(0, 10)}
         {role === "researcher" && sheet.status !== "reviewed" && " · The model answers appear once your leader has checked your answers."}
       </p>
+      {sheet.cancelled && (
+        <p className="muted">
+          {sheet.cancelled === "week" ? `Week ${sheet.week} is cancelled` : "This worksheet is cancelled"}, so{" "}
+          {sheet.member_name} can't see it. Restore it from the list of worksheets.
+        </p>
+      )}
       {sheet.status === "reviewed" && sheet.leader_comment && (
         <p className="leader-comment"><span className="label">Leader</span>{sheet.leader_comment}</p>
       )}

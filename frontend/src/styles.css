@@ -161,7 +161,7 @@ pre {
 
 .app {
   display: grid;
-  grid-template-columns: 200px minmax(0, 1fr);
+  grid-template-columns: var(--nav-width, 200px) minmax(0, 1fr);
   grid-template-rows: auto 56px minmax(0, 1fr);
   grid-template-areas:
     "notice notice"
@@ -220,6 +220,9 @@ pre {
 
 .sidenav {
   grid-area: nav;
+  position: relative; /* holds its resize handle */
+  min-width: 0;
+  overflow: hidden auto;
   display: flex;
   flex-direction: column;
   padding: 16px 0;
@@ -256,6 +259,48 @@ pre {
 }
 
 
+
+/* --- Resize handles: the sidebar's right edge and the talk box's top edge --- */
+
+.resizer {
+  position: absolute;
+  z-index: 5;
+  background: transparent;
+}
+
+.resizer-x {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+}
+
+.resizer-y {
+  top: -3px;
+  left: 0;
+  right: 0;
+  height: 6px;
+  cursor: row-resize;
+}
+
+.resizer:hover,
+.resizer:focus-visible {
+  background: var(--accent);
+  outline: none;
+}
+
+body.resizing-x,
+body.resizing-x * {
+  cursor: col-resize !important;
+  user-select: none;
+}
+
+body.resizing-y,
+body.resizing-y * {
+  cursor: row-resize !important;
+  user-select: none;
+}
 
 /* --- Common pieces --- */
 
@@ -740,6 +785,40 @@ tr.not-found code {
   border-bottom: 1px solid var(--border);
 }
 
+.teacher .check,
+.pick-people .check {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.pick-people {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+}
+
+.pick-people li {
+  padding: 4px 0;
+}
+
+.worksheet-week .card-header {
+  gap: 12px;
+}
+
+.worksheet-week .card-header .muted {
+  margin-left: auto;
+}
+
+.worksheet-week.cancelled table,
+.worksheet-table tr.cancelled td {
+  opacity: 0.55;
+}
+
+.tag.worksheet-cancelled {
+  margin-left: 8px;
+}
+
 .worksheet-table .nowrap {
   white-space: nowrap;
 }
@@ -1063,6 +1142,7 @@ tr.not-found code {
 /* --- Super Brain chat, docked at the bottom; every row lines up with the page column --- */
 
 .agent-chat {
+  position: relative; /* holds its resize handle */
   flex: 0 1 auto;
   min-height: 0;
   max-height: 65%;
@@ -1118,6 +1198,8 @@ tr.not-found code {
 .agent-rule-actions { margin-top: 8px; }
 .agent-rule-actions > span { margin-right: auto; }
 .agent-transcript { overflow-y: auto; min-height: 0; padding: 0 28px; }
+.agent-transcript { flex: 1 1 auto; } /* fills a talk box made taller by dragging */
+.agent-chat .ask-dock { margin-top: auto; }
 .agent-feedback:empty { display: none; }
 .agent-feedback p { margin: 0; }
 .agent-reply { padding: 10px 0 0 12px; }

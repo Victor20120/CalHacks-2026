@@ -75,6 +75,13 @@ Built so far: researchers get Project, Diagnose, Drafts, Super Brain and Runs; t
 - Flow: the researcher runs the simulation on their computer, picks its log here and clicks **Start watching**; the local connector reads the log and sends the numbers from each step and the alerts; the run shows here live.
 - Shows: one sentence on what is watched (the log file the simulation writes; ExpandRG only reads it), then, for researchers, a "How to use it" box (start the simulation writing a log file, pick it and click Start watching, read the graphs and problems), open until the first run exists, and for the leader the same Warning / Critical guide on its own. (Researcher only) a "Log file to watch" bar: the log (from granted folders, refreshed every few seconds), **Start watching**, and "Add a folder". Then two columns: on the left the runs in this project, **Being watched now** first, then **Finished** (log name, who for the leader, start time, problem counts or "No problems found"); on the right the chosen run: name, Watching now or Finished, whose simulation, when watching started, the step reached, the last new line; the two latest problems found (or "No problems found so far"); up to 3 line charts, one per measure read from the log (e.g. max|T| and residual) on a shared step axis, with a log scale when values span 1,000x or more and Warning and Critical alerts marked at their step (hover shows the value at that step in every chart); then the run's alerts, newest first, and the numbers as a table.
 - Actions: **Stop watching** (a live run watched on this computer); **Replay** (an earlier run: the graphs and alerts play back step by step in about 8 seconds).
+- The leader's page is **Run results**, not a live monitor.
+  - What it is: what researchers shared. Each run is a log and its data from a researcher's computer, drawn as graphs to see what happened, with its problems marked.
+  - One list, "Shared runs, newest first": run name, researcher, date, steps recorded, and problem counts. The newest run opens first.
+  - The run's line reads "Shared by Researcher A · date · N steps recorded", plus "more of its log is still arriving" only while data keeps coming. There are no Live/Finished tags.
+  - **Play back step by step** replays it.
+  - No red live-problem count in the leader's menu.
+- In progress means new data arrived in the last 5 minutes. A run whose watch ended without saying so (ExpandRG restarted, say) counts as finished after that, for researchers too, and in the menu badge.
 - Rules: ExpandRG only reads the log and never pauses or stops a simulation. The log file never leaves the researcher's computer, only the numbers and alerts. A run is seen by the researcher and the group leader, never by other researchers. The Runs tab shows a count of Critical alerts in runs being watched right now.
 
 ### 4.3b Experiments (researchers)
@@ -103,7 +110,13 @@ Built so far: researchers get Project, Diagnose, Drafts, Super Brain and Runs; t
 - Drafts: when sharing, **Attach a run** lists the researcher's runs in that project. A run started up to a day before the draft is already selected.
 - Actions: open an update for the full finding, its links, notes and comments; add a note or a comment; ask a question in the "Ask Super Brain" box docked at the bottom of the page. Answers stack just above the box, newest at the bottom, from the chosen project. Each shows only the question and the answer: no timing line and no list of the findings used (while it works: "Super Brain is thinking… Ns").
 - Tabs at the top: **Updates** (all of the above) and **Worksheets**, the Super Brain as a teacher. `?tab=worksheets&worksheet=<id>` opens one directly.
-  - Leader: **Make worksheets** starts one Super Brain run that reads every finding shared in the project and writes each researcher a worksheet from what the others found, showing who it's writing for and the seconds passing. Below, a table: researcher, worksheet, status (Waiting for answers, Ready to check, Checked), how many items are answered, and the date. A worksheet shows each item with the researcher's answer, the model answer, and a comment box; **Send comments** (or **Update comments**) and **Delete** are at the end, with a comment on the whole worksheet.
+  - Leader, top: the **Week N** panel.
+    - An "Only what's new to each person since their last worksheet" checkbox, on by default.
+    - The researchers with checkboxes and how many findings each would learn from. Anyone with nothing new is greyed out with "nothing new since their last worksheet".
+    - **Make week N worksheets (k)** starts one Super Brain run, showing who it's writing for and the seconds passing.
+  - Leader, below: one card per week, newest first.
+    - The header: "Week N", the date, and "what was new to each person" or "everything shared", with **Cancel week** or **Restore week**. A cancelled week is greyed and tagged Cancelled, and stays listed. Its number is used again: the **Week N** panel goes back to it at once.
+    - A table: researcher, worksheet, status (Waiting for answers, Ready to check, Checked, or Cancelled), how many items are answered, and **Cancel** or **Restore** for that one person. A worksheet shows each item with the researcher's answer, the model answer, and a comment box; **Send comments** (or **Update comments**) and **Delete** are at the end, with a comment on the whole worksheet.
   - Researcher: their own worksheets (To do, Sent to the leader, Checked by the leader). Items are grouped by topic and numbered: **Question** or **Try it**, with the findings they come from (links). Each has an answer box, and a "try it" step says to use a copy on the Experiments page. **Save** and **Send to the leader**; answers can change until the leader has checked them. Model answers and the leader's comments appear once it's checked.
 - Rules: results respect project access; hypotheses never look like verified facts. The chart uses one colour and square bar ends; every number in it is also written in the researcher sections, so the tooltip is never the only way to read it.
 
@@ -133,6 +146,12 @@ Built so far: researchers get Project, Diagnose, Drafts, Super Brain and Runs; t
 ```
 
 The shell fills the window: the top bar and left nav stay in place and only the main view scrolls. Alerts live with their run on the Runs page. On the Super Brain, the "Ask Super Brain" box is docked at the bottom of the main view, with answers just above it.
+
+Two edges can be dragged to resize:
+- the left nav's right edge sets its width (140 px up to 420 px or half the window);
+- the talk box's top edge sets its height (120 px up to 85% of the page).
+
+The edges light up on hover. They are keyboard-focusable separators: the arrow keys move them 16 px. A double-click resets to the default size. Sizes are kept in this browser (`localStorage`), and the page works without it.
 
 ### 5.2 Breakpoints
 

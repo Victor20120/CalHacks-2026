@@ -120,18 +120,15 @@ def run(ask=input, ask_secret=getpass.getpass, say=print, key_checker=check_key,
         return 1
 
     group_id = folder.name
-    project_id = slugify(project)
     say(f"\nSaved in {folder}")
-    say("\nStart your group (the demo can't run at the same time):")
+    say("\nIn VS Code: open the project folder and click \"ExpandRG: Set up\" in the bottom bar")
+    say(f'(or run the command "ExpandRG: Set up"). Pick "{group_name}" and who you are; it starts the group for you.')
+    say("\nWithout VS Code, start the group here (the demo can't run at the same time):")
     say(f"  python run_demo.py --group {group_id}")
-    say("\nThen sign in on the dashboard as:")
+    say("Then sign in on the dashboard as:")
     say(f"  {leader.name} (leader)")
     for r in researchers:
         say(f"  {r.name}")
-    say("\nIn VS Code, set these in your workspace settings (.vscode/settings.json):")
-    say(f'  "expandrg.group": "{group_id}",')
-    say(f'  "expandrg.project": "{project_id}",')
-    say(f'  "expandrg.member": one of {", ".join(repr(p.id) for p in [leader, *researchers])}')
     return 0
 
 

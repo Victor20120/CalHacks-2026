@@ -66,7 +66,7 @@ def test_a_share_block_becomes_a_hypothesis_finding_without_a_draft(api):
     reply = job["diagnosis"]["reply"]
     assert "```" not in reply and '"share"' not in reply
     assert reply.startswith("That is the CFL limit for this scheme.")
-    assert f'Shared with your group in the Super Brain, as a hypothesis: "{FINDING["title"]}"' in reply
+    assert reply.endswith(f'\n\nShared with your group in the Super Brain as a hypothesis: "{FINDING["title"]}".')
     assert job["diagnosis"]["shared_finding"]["title"] == FINDING["title"]
     assert api.client.get("/drafts", headers=api.headers["researcher_a"]).json() == []
 

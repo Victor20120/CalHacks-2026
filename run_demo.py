@@ -6,6 +6,7 @@
     python run_demo.py --check   start everything, check it works, then stop (no browser)
     python run_demo.py --no-browser   start everything without opening windows (the VS Code extension uses this)
     python run_demo.py --group ID     start a research group made with setup_expandrg.py instead of the demo
+    python run_demo.py --stop         stop ExpandRG if it's running, wherever it was started
 
 Ctrl+C stops everything. Needs backend/.env filled in and `npm install` run in frontend/.
 Service output goes to .demo-logs/ in case something doesn't start.
@@ -55,7 +56,10 @@ def main() -> int:
     parser.add_argument("--check", action="store_true", help="start everything, check it, then stop")
     parser.add_argument("--no-browser", action="store_true", help="don't open dashboard windows")
     parser.add_argument("--group", metavar="ID", help="start a research group made with setup_expandrg.py instead of the demo")
+    parser.add_argument("--stop", action="store_true", help="stop ExpandRG if it's running, wherever it was started")
     args = parser.parse_args()
+    if args.stop:
+        return stop_running()
 
     group_env = None
     if args.group:
@@ -138,6 +142,60 @@ def main() -> int:
     finally:
         for process in reversed(running):
             _stop(process)
+
+
+def expandrg_processes(listing: list[tuple[int, str]], own: set[int]) -> list[int]:
+    """The processes that are ExpandRG, from (pid, command line) pairs: launchers, the backend,
+    the connector and this folder's dashboard. Never ourselves or another app's dev server."""
+    frontend = str(ROOT / "frontend").lower()
+    picked = []
+    for pid, command in listing:
+        text = command.lower()
+        if pid in own or "--stop" in text:
+            continue
+        if ("run_demo.py" in text or "backend.api.app" in text or "local_connector serve" in text
+                or ("vite" in text and frontend in text)):
+            picked.append(pid)
+    return picked
+
+
+def stop_running() -> int:
+    """Stop a running ExpandRG (any group), e.g. before VS Code starts another group."""
+    if os.name == "nt":
+        script = ("Get-CimInstance Win32_Process | Where-Object { $_.CommandLine } | "
+                  "ForEach-Object { \"$($_.ProcessId)`t$($_.CommandLine)\" }")
+        out = subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True).stdout
+    else:
+        out = subprocess.run(["ps", "-eo", "pid=,args="], capture_output=True, text=True).stdout
+    listing = []
+    for line in out.splitlines():
+        pid, _, command = line.strip().replace("\t", " ", 1).partition(" ")
+        if pid.isdigit():
+            listing.append((int(pid), command))
+    found = expandrg_processes(listing, {os.getpid(), os.getppid()})
+    for pid in found:
+        if os.name == "nt":  # with the processes each one started
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)], capture_output=True)
+        else:
+            try:
+                os.kill(pid, 15)
+            except OSError:
+                pass
+    stopped = all(not _is_up(url) for url in ("http://127.0.0.1:8000/health", "http://127.0.0.1:8001/health"))
+    for _ in range(20):
+        if stopped:
+            break
+        time.sleep(0.5)
+        stopped = all(not _is_up(url) for url in ("http://127.0.0.1:8000/health", "http://127.0.0.1:8001/health"))
+    print("ExpandRG stopped." if found else "ExpandRG wasn't running.")
+    return 0 if stopped else 1
+
+
+def _is_up(url: str) -> bool:
+    try:
+        return requests.get(url, timeout=1).ok
+    except requests.RequestException:
+        return False
 
 
 def _wait_for(url: str, seconds: float = 60) -> bool:

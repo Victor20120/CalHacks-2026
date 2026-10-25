@@ -60,6 +60,10 @@ class FolderIn(BaseModel):
     folder: str = Field(min_length=1, max_length=255)  # a granted folder's name, never a local path
 
 
+class ListIn(FolderIn):
+    under: str = Field(default="", max_length=300)  # a subfolder, relative to the granted folder
+
+
 class ReadIn(FolderIn):
     path: str = Field(min_length=1, max_length=500)
     lines: str | None = Field(default=None, max_length=20)
@@ -266,9 +270,12 @@ def create_service(
             raise HTTPException(status_code=403, detail=str(exc)) from None
 
     @app.post("/tools/list_project_files")
-    def tool_list_files(body: FolderIn) -> dict:
+    def tool_list_files(body: ListIn) -> dict:
         """The research files a personal agent may ask for, in a granted folder (read-only)."""
-        return list_project_files(named(body.folder))
+        try:
+            return list_project_files(named(body.folder), body.under)
+        except AccessDenied as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from None
 
     @app.post("/tools/read_project_file")
     def tool_read_file(body: ReadIn) -> dict:

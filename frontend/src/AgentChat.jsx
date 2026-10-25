@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { backend } from "./api.js";
-import { ErrorNote, Markdown } from "./components.jsx";
+import { ErrorNote, Markdown, Resizer, useStoredSize } from "./components.jsx";
 
 export default function AgentChat({ session, project }) {
   const [scope, setScope] = useState("project"); // the project chosen in the top bar
@@ -21,6 +21,8 @@ function ChatPanel({ session, project, scope, onScope }) {
   const [notice, setNotice] = useState("");
   const [elapsed, setElapsed] = useState(0);
   const scroller = useRef(null);
+  const box = useRef(null);
+  const [chatHeight, setChatHeight] = useStoredSize("expandrg.chatHeight");
   const token = session.token;
   const base = `/projects/${encodeURIComponent(project.id)}`;
   const chatPath = `${base}/chat?scope=${scope}`;
@@ -142,7 +144,10 @@ function ChatPanel({ session, project, scope, onScope }) {
 
   const dirty = rules !== savedRules;
   return (
-    <section className="agent-chat" aria-label="Super Brain research assistant">
+    <section className="agent-chat" ref={box} aria-label="Super Brain research assistant"
+      style={chatHeight ? { height: `${chatHeight}px`, maxHeight: "85%" } : undefined}>
+      <Resizer axis="y" grow={-1} label="Talk box height" current={() => box.current.offsetHeight} onResize={setChatHeight}
+        min={120} max={() => (box.current?.parentElement?.offsetHeight || 800) * 0.85} />
       <div className="agent-chat-head">
         <div className="agent-chat-title">
           <strong>Ask Super Brain</strong>
