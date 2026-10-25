@@ -4,7 +4,13 @@ One entry per commit, newest first. Each commit adds its own entry with the hash
 
 ---
 
-## 2026-10-25 · `pending` · ExpandRG 0.16.0: onboarding lessons, the Super Brain teaching a paper and its code
+## 2026-10-25 · `pending` · README: a personal agent's ID
+
+- The README's **CREAO agents** table now gives a personal agent's ID too (Researcher B's, `2c814bb4-30ef-4da7-84f9-99f13cbed0e7`), as Devpost asks, next to the Super Brain's.
+
+---
+
+## 2026-10-25 · `7158ffd` · ExpandRG 0.16.0: onboarding lessons, the Super Brain teaching a paper and its code
 
 **Why:** someone new to a project has to learn its code and the paper behind it, mostly by asking colleagues. Now they give the Super Brain the paper and the code, and it writes the lesson.
 

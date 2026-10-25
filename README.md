@@ -13,7 +13,7 @@ The core work is done by CREAO agents built on [agent.creao.ai](https://agent.cr
 | Agent | What it does | Agent ID |
 |---|---|---|
 | **Super Brain** | The group's shared agent: answers from the group's approved findings, writes worksheets and onboarding lessons (a paper and its code, with equations and diagrams) | `0bb3ca8b-e123-401f-aa10-c291f1f55885` |
-| **Personal agents** | One per researcher, private to them: project overviews, diagnoses, simulation setup, and the ExpandRG AI chat in VS Code | one per researcher |
+| **Personal agents** | One per researcher, private to them: project overviews, diagnoses, simulation setup, and the ExpandRG AI chat in VS Code | `2c814bb4-30ef-4da7-84f9-99f13cbed0e7` (Researcher B's) |
 
 ## Docs
 
