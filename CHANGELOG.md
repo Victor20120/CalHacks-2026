@@ -4,7 +4,19 @@ One entry per commit, newest first. Each commit adds its own entry with the hash
 
 ---
 
-## 2026-10-25 · `pending` · ExpandRG 0.14.1: recover when Visualize cannot load
+## 2026-10-25 · `pending` · ExpandRG 0.15.0: Research Context Engine
+
+- Connect existing simulation runs, anomalies, private investigations, selected evidence, graph specs, worksheet teaching references and findings through typed references. Use additive artifact, relationship and receipt tables in the existing shared/private SQLite files; schema version 2 and existing data remain intact.
+- Capture exact prepared code/input fingerprints, declared effective parameters, optional Git HEAD, repeat parents and diagnostic origins. Experiments now execute in a separate working copy so a solver cannot rewrite its retained evidence. Legacy metadata stays explicitly unknown.
+- Give the existing CREAO toolkit bounded context and parameter searches, plus private unverified relationship proposals. Recheck membership and both relationship endpoints; exclude human comments and worksheet answers. Separate private analysis from the context eligible for automatic group hypotheses.
+- Persist simulation/anomaly/evidence references with diagnosis episodes, separately from provider execution IDs. Approval reuses the explicit source run while keeping private investigations and evidence private.
+- Make run starts and frozen report batches replay-safe, with atomic domain writes and receipts, stale-revision protection, durable connector delivery state and an authenticated local metadata outbox.
+- Update the architecture proposal, implementation contracts, toolkit guide and build plan. Align wheel and extension versions at 0.15.0.
+- Validation: 584 Python tests passed, 2 skipped; frontend build and all 34 extension tests passed. Three additional release checks verify package/source parity, isolated installed-wheel API operation and existing-database preservation. CREAO is mocked throughout these checks; no paid provider calls were made.
+
+---
+
+## 2026-10-25 · `1b0a067` · ExpandRG 0.14.1: recover when Visualize cannot load
 
 - An older backend left running after a frontend update returned 404 for `/visualize/datasets`. The page kept showing “Loading your runs…” beside “Not Found.” Initialization now ends on failure, identifies this missing-endpoint case with restart/update guidance, and offers **Try again**.
 - Deleted saved graphs fall back to a fresh graph. Transient saved-graph failures preserve the selection and can be retried. Opening another run cannot update a graph from the previous panel state.

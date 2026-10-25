@@ -117,7 +117,8 @@ def test_the_connector_writes_only_its_grants_file_and_saved_execution_copies():
 
     # Experiments and saved simulations write their own copies/logs below ~/.expandrg.
     # Their execution tests check the source project remains byte-for-byte unchanged.
-    experiments = {p for p in offenders if p.startswith("local_connector/experiments/") or p == "local_connector/simulations.py"}
+    experiments = {p for p in offenders if p.startswith("local_connector/experiments/") or p in {
+        "local_connector/simulations.py", "local_connector/context.py"}}
     assert {p: n for p, n in offenders.items() if p not in experiments} == {
         "local_connector/file_access/grants.py": 1}  # GrantRegistry._save, in ~/.expandrg
     grants_source = (REPO / "local_connector" / "file_access" / "grants.py").read_text(encoding="utf-8")

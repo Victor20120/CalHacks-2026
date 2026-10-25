@@ -1,8 +1,8 @@
 # Build Plan — First Milestone
 
-**Status:** v0.4
+**Status:** v0.5 — ExpandRG 0.15.0
 **Milestone:** a single local simulation diagnosis reaches CREAO, is shown in the dashboard, and can become one researcher-approved group finding; a second researcher can retrieve that finding.
-**Next:** Phase 3 remains proposed: field/3D data sources, reusable templates, and sharing graphs. Visualization Studio phases 1 and 2 (steps 9–10) are built.
+**Next:** Research Context Engine's first connected workflow is implemented (step 11). Papers, equations, onboarding and advanced visualization adapters remain future work. Visualization Studio phases 1 and 2 (steps 9–10) are built; phase 3 remains proposed.
 
 ## How to use this plan
 
@@ -29,6 +29,7 @@
 | 8 | Project overview | `local_connector/evidence/`, `backend/orchestration/overview.py` | Done |
 | 9 | Visualization Studio, phase 1: graphs, overlays, Edit with Agent, saving | `backend/visualization/`, `backend/api/`, `frontend/` | Done |
 | 10 | Visualization Studio, phase 2: baselines, differences, diagnostic graphs, publication export | `backend/visualization/`, `backend/orchestration/`, `local_connector/` | Done |
+| 11 | Research Context Engine: run → anomaly → investigation → evidence → finding | `backend/context_engine/`, existing SQLite stores, connector | Done |
 
 ---
 
@@ -274,3 +275,21 @@ Demonstrate on one machine if necessary, with two demo researcher profiles in on
 - [x] Demonstrate project isolation: an unauthorized researcher cannot retrieve restricted knowledge (steps 3–5)
 - [x] Demonstrate handoff → verification → deactivation for a demo agent (step 7)
 - [x] Never expose provider credentials or change source files without approval (`tests/test_definition_of_done.py`: no backend response contains a key or app ID, even when CREAO rejects a key; the dashboard source never handles keys; a full connector session leaves every project file byte-for-byte unchanged; the connector writes nothing but its own grants file)
+
+
+## Step 11 — Research Context Engine
+
+Architecture: [approved proposal](research-context-engine-proposal.md). Contracts and limitations: [implementation guide](research-context-engine.md).
+
+- [x] Additive scoped artifacts, relationships and event receipts in existing shared/private SQLite; no schema reset
+- [x] Typed source adapters, live source permissions, bounded retrieval, explicit legacy gaps, reversible links and parameter matching
+- [x] Stable run/report keys, frozen retries, atomic receipt/domain writes and stale-event protection
+- [x] Retained code/input snapshots, declared parameter capture, safe optional HEAD metadata, durable local projection outbox and authenticated owner-scoped delivery
+- [x] Persist simulation/anomaly/evidence identity with diagnoses; preserve CREAO execution identity separately; approval retains the explicit run
+- [x] Existing CREAO toolkit retrieval and private relationship proposals; publication cannot verify a hypothesis or merge personal memory
+- [x] Reuse graph specs, finding links and worksheet teaching references; exclude human comments/answers
+- [x] Release gate: 584 Python tests passed, 2 skipped; frontend production build; 34 extension tests; wheel/VSIX source parity, isolated installed-wheel API and existing-database preservation checks (3 passed)
+
+**Checkpoint:** start one run, record its anomaly, diagnose with selected evidence, approve the draft, reopen the backend and retrieve the same run's connected context. Another member may see the finding while the investigation and private evidence remain inaccessible. Tests use mocked CREAO and temporary stores.
+
+**Deferred:** papers/equations, onboarding, expanded visualization, autonomous test orchestration, process resumption and new cloud infrastructure. Existing projects without captured provenance keep explicit unknowns.

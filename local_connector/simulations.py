@@ -5,7 +5,6 @@ The snapshot is retained; compilation and execution use another working copy.
 """
 from __future__ import annotations
 
-import hashlib
 import copy
 import json
 import os
@@ -18,6 +17,7 @@ from pathlib import Path
 
 from backend.orchestration.evidence_policy import redact_secrets
 from backend.orchestration.simulation_setup import InvalidSetup, clean_plan
+from local_connector.context import atomic_save, capture_snapshot, declared_parameters, update_record
 from local_connector.evidence.project_map import build_project_map
 from local_connector.experiments.manifest import DEFAULT_LIMITS, Limits
 from local_connector.experiments.sandbox import run_limited
@@ -60,7 +60,9 @@ class SimulationManager:
                 self._save(record)
 
     def prepare(self, grant: Grant, member_id: str, project_id: str, environment: str | None = None,
-                compiler: str | None = None, *, runtime: dict | None = None) -> dict:
+                compiler: str | None = None, *, runtime: dict | None = None,
+                origin_run_ref: str | None = None, origin_anomaly_ref: str | None = None,
+                origin_investigation_ref: str | None = None, parent_simulation_id: str | None = None) -> dict:
         selected_runtime = copy.deepcopy(runtime) if runtime else discover_runtime(
             grant.root, environment, compiler, find_program=self.find_program)
         identifier = uuid.uuid4().hex[:16]
@@ -68,22 +70,23 @@ class SimulationManager:
         try:
             copy_project(grant.root, dest)
             dest.mkdir(parents=True, exist_ok=True)
+            parameters, completeness = declared_parameters(dest)
+            captured = capture_snapshot(dest, original_root=grant.root, parameters=parameters,
+                                        parameter_completeness=completeness)
         except Exception:
             shutil.rmtree(dest.parent, ignore_errors=True)
             raise
-        paths = sorted(p for p in dest.rglob("*") if p.is_file())
-        digest = hashlib.sha256()
-        for path in paths:
-            digest.update(path.relative_to(dest).as_posix().encode())
-            with path.open("rb") as stream:
-                digest.update(hashlib.file_digest(stream, "sha256").digest())
         with self.lock:
             version = max((r["version"] for r in self.records.values()
                            if r["member_id"] == member_id and r["project_id"] == project_id), default=0) + 1
             record = {"id": identifier, "version": version, "project_id": project_id, "member_id": member_id,
                       "folder": grant.name, "created_at": _now(), "status": "awaiting_setup", "stage": "",
                       "plan": None, "reason": "", "missing_tools": [], "backend_run_id": None, "setup_job_id": None,
-                      "source_version": None, "fingerprint": digest.hexdigest(), "file_count": len(paths),
+                      "source_version": None, "parent_simulation_id": parent_simulation_id,
+                      "origin_run_ref": origin_run_ref, "origin_anomaly_ref": origin_anomaly_ref,
+                      "origin_investigation_ref": origin_investigation_ref,
+                      "fingerprint": captured["snapshot_fingerprint"], "file_count": captured["file_count"],
+                      "research_context": {"capture": captured},
                       "exit_code": None, "seconds": None, "started_at": None, "finished_at": None,
                       "limits": dict(DEFAULT_LIMITS)}
             record["runtime"] = selected_runtime
@@ -176,9 +179,18 @@ class SimulationManager:
         old = self.get(identifier)
         snapshot = self.home / identifier / "snapshot"
         record = self.prepare(Grant(snapshot, old["folder"], old["created_at"]), old["member_id"], old["project_id"],
-                              runtime=self._runtime(old))
+                              runtime=self._runtime(old), parent_simulation_id=old["id"],
+                              origin_run_ref=old.get("origin_run_ref"), origin_anomaly_ref=old.get("origin_anomaly_ref"),
+                              origin_investigation_ref=old.get("origin_investigation_ref"))
         with self.lock:
-            self.records[record["id"]]["source_version"] = old["version"]
+            repeated = self.records[record["id"]]
+            repeated["source_version"] = old["version"]
+            # A repeat uses exactly the saved source, not today's original Git HEAD.
+            old_capture = old.get("research_context", {}).get("capture")
+            if old_capture:
+                repeated["research_context"]["capture"].update(
+                    git_commit=old_capture.get("git_commit"), git_dirty=old_capture.get("git_dirty"),
+                    git_state_completeness=old_capture.get("git_state_completeness", "not_captured"))
             self._save(self.records[record["id"]])
         return self.set_plan(record["id"], old["plan"]) if old["plan"] else self.get(record["id"])
 
@@ -286,10 +298,9 @@ class SimulationManager:
         return self.records[identifier]
 
     def _save(self, record: dict) -> None:
-        path = self.home / record["id"] / "simulation.json"
-        temp = path.with_suffix(".tmp")
-        temp.write_text(json.dumps(record, indent=2), encoding="utf-8")
-        temp.replace(path)
+        folder = self.home / record["id"]
+        update_record(record, "simulation", folder)
+        atomic_save(folder / "simulation.json", record)
 
 
 def _tail(stage: Path, combined: Path, monitor, done: threading.Event) -> None:

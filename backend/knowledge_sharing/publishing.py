@@ -81,6 +81,19 @@ def approve_draft(db: Database, member_id: str, draft_id: str, edits: dict[str, 
     final["title"], _ = redact_secrets(final["title"].strip())
     final["summary"], _ = redact_secrets(final["summary"].strip())
     used = _context_finding_ids(memory, draft)
+    # The canonical investigation keeps the simulation identity independently
+    # of its CREAO execution ID. Reuse that explicit source on approval.
+    if run_id is None and draft.get("episode_id"):
+        episode = memory.get_episode(draft["episode_id"])
+        try:
+            source = json.loads(episode["details"]).get("simulation_run_ref") if episode else None
+        except (ValueError, AttributeError):
+            source = None
+        if isinstance(source, str) and source.startswith("run:"):
+            with closing(db.shared()) as conn:
+                candidate = source.removeprefix("run:")
+                if _is_own_run(conn, member_id, draft["project_id"], candidate):
+                    run_id = candidate
 
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     approval_id, finding_id = str(uuid.uuid4()), str(uuid.uuid4())

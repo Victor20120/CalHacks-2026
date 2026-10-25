@@ -6,11 +6,13 @@ researcher's computer). So the agent asks in its reply, with a
 ```json {"tool_requests": [...]}``` block; ExpandRG checks and runs each request
 for the signed-in researcher, and calls the agent again with the results.
 
-Four tools, all read-only:
+Bounded research tools:
 - list_project_files / read_project_file: the researcher's granted folder, through
   the local connector (local_connector/agent_tools.py), which enforces the grant;
 - search_super_brain: shared findings in projects the researcher belongs to;
 - get_simulation_runs: the researcher's watched runs, their alerts and numbers.
+- get_research_context / find_related_experiments: connected, permission-checked history.
+- propose_research_relationship: records a private hypothesis; cannot verify or publish it.
 
 The same Toolkit.run serves POST /agent-tools, so an MCP server can wrap it later.
 """
@@ -25,6 +27,8 @@ from typing import Any
 import requests
 
 from backend.db.database import Database
+from backend.auth.permissions import context_project_ids
+from backend.context_engine import ContextEngine, ContextError
 from backend.memory.shared_findings import attach_notes, search_findings
 from backend.monitoring.runs import run_detail, visible_runs
 
@@ -54,6 +58,17 @@ TOOLS = {
         {"run_id": "optional"},
         "the researcher's recent watched runs with their alert counts; with a run_id, that run's alerts and its "
         "numbers per step"),
+    "get_research_context": (
+        {"ref": "run:<simulation run ID>", "depth": 2, "limit": 15},
+        "bounded research history with typed references, recorded provenance, scientific status, and explicit missing metadata. "
+        "Use a run, anomaly, finding, experiment or saved graph reference; follow next_cursor for another page"),
+    "find_related_experiments": (
+        {"parameters": {"dt": 0.01}, "tolerance": 0.0},
+        "your captured experiments in this project matching declared parameters; incomplete legacy parameters are labelled"),
+    "propose_research_relationship": (
+        {"source_ref": "anomaly:<ID>", "predicate": "associated_with", "target_ref": "run:<ID>", "evidence_refs": []},
+        "record a private, unverified relationship proposal between records you can access. This never changes scientific "
+        "verification or shares private material. Give explicit evidence references when available"),
 }
 FILE_TOOLS = frozenset({"list_project_files", "read_project_file"})
 
@@ -65,20 +80,27 @@ class ToolError(Exception):
 class ConnectorClient:
     """The researcher's local connector, which reads files only from folders they granted."""
 
-    def __init__(self, base_url: str | None = None, http: Any = None):
+    def __init__(self, base_url: str | None = None, http: Any = None, authorization: str | None = None):
         self.base_url = (os.environ.get("EXPANDRG_CONNECTOR") or DEFAULT_CONNECTOR if base_url is None else base_url).rstrip("/")
         self.http = http or requests.Session()
+        self.authorization = authorization
+
+    def scoped(self, authorization: str | None) -> ConnectorClient:
+        return ConnectorClient(self.base_url, self.http, authorization)
+
+    def _headers(self) -> dict:
+        return {"headers": {"Authorization": self.authorization}} if self.authorization else {}
 
     def get(self, path: str, params: dict | None = None) -> Any:
         try:
-            response = self.http.get(self.base_url + path, params=params, timeout=15)
+            response = self.http.get(self.base_url + path, params=params, timeout=15, **self._headers())
         except requests.RequestException:
             raise ToolError("ExpandRG's local connector isn't running, so its data can't be read right now.") from None
         return self._answer(response)
 
     def post(self, path: str, body: dict) -> dict:
         try:
-            response = self.http.post(self.base_url + path, json=body, timeout=15)
+            response = self.http.post(self.base_url + path, json=body, timeout=15, **self._headers())
         except requests.RequestException:
             raise ToolError("ExpandRG's local connector isn't running, so files can't be read right now.") from None
         return self._answer(response)
@@ -106,7 +128,8 @@ def toolkit_instructions(available: list[str], rounds_left: int, folder: str | N
     connected = (f'The researcher\'s project folder "{folder}" is connected: you CAN list and read its files '
                  "through this toolkit, so never tell them you can't see their files. " if folder else "")
     text = (
-        "Your ExpandRG toolkit, all read-only. Your own sandbox and its file tools can't reach the researcher's "
+        "Your ExpandRG toolkit reads research records and can save private relationship proposals. Proposals never "
+        "verify or publish scientific conclusions. Your own sandbox and its file tools can't reach the researcher's "
         "computer, so don't try them: a tool_requests block is the only way to see their files, runs or the "
         "group's findings. " + connected +
         "When the question is about the researcher's own code, config, logs or runs, and tool_results don't hold "
@@ -165,6 +188,8 @@ def _source(call: dict, short: bool = True) -> str:
         return f"{name} (lines {result['lines']})" if call["request"].get("lines") else name
     if call["tool"] == "search_super_brain":
         return f"Super Brain ({len(result)} finding{'' if len(result) == 1 else 's'})"
+    if call["tool"] in ("get_research_context", "find_related_experiments", "propose_research_relationship"):
+        return "research context"
     if isinstance(result, list):
         return f"{len(result) or 'no'} recent run{'' if len(result) == 1 else 's'}"
     return f"run {result['name'][:60]}"
@@ -174,8 +199,10 @@ class Toolkit:
     """Runs one researcher's tool requests, with their permissions: their granted folder
     (by name) on this computer, and the projects they belong to."""
 
-    def __init__(self, db: Database, member: dict, project_id: str, folder: str | None, connector: ConnectorClient):
+    def __init__(self, db: Database, member: dict, project_id: str, folder: str | None, connector: ConnectorClient,
+                 purpose: str = "project_publication"):
         self.db, self.member, self.project_id, self.folder, self.connector = db, member, project_id, folder, connector
+        self.purpose = purpose
 
     @property
     def available(self) -> list[str]:
@@ -196,7 +223,7 @@ class Toolkit:
                     raise ToolError("Left out: this round's results reached the size limit. Ask for less, e.g. a line range.")
                 chars += size
                 calls.append({"tool": name, "request": args, "ok": True, "summary": summary, "result": result})
-            except ToolError as exc:
+            except (ToolError, ContextError, ValueError, TypeError) as exc:
                 calls.append({"tool": name, "request": args, "ok": False, "error": str(exc),
                               "summary": f"{_attempt(name, args)} failed ({exc})"})
         return calls
@@ -225,8 +252,22 @@ class Toolkit:
             if len(query) < 2:
                 raise ToolError("Give a query of at least two characters.")
             with closing(self.db.shared()) as conn:
-                found = attach_notes(conn, search_findings(conn, self.member["id"], query, limit=MAX_FINDINGS))
+                projects = context_project_ids(conn, self.project_id) if self.purpose == "project_publication" else None
+                found = attach_notes(conn, search_findings(conn, self.member["id"], query, projects, limit=MAX_FINDINGS))
             return [_finding(f) for f in found], f'searched the Super Brain for "{query}" ({len(found)} findings)'
+        if name in ("get_research_context", "find_related_experiments", "propose_research_relationship"):
+            engine = ContextEngine(self.db, self.member, self.connector, self.purpose, self.project_id)
+            if name == "get_research_context":
+                result = engine.get_context(str(args.get("ref") or ""), depth=int(args.get("depth", 2)),
+                                            limit=int(args.get("limit", 15)), cursor=args.get("cursor"))
+            elif name == "find_related_experiments":
+                result = engine.find_related_experiments(self.project_id, args.get("parameters") or {},
+                                                        tolerance=args.get("tolerance", 0), limit=10)
+            else:
+                result = engine.propose_relationship(self.project_id, str(args.get("source_ref") or ""),
+                                                     str(args.get("predicate") or ""), str(args.get("target_ref") or ""),
+                                                     evidence_refs=args.get("evidence_refs") or [])
+            return result, "looked up research context"
         return self._runs(str(args.get("run_id") or "").strip())
 
     def _runs(self, run_id: str) -> tuple[Any, str]:
@@ -235,6 +276,8 @@ class Toolkit:
                 runs = visible_runs(conn, self.member, [self.project_id])[:MAX_RUNS]
                 return [_run_row(r) for r in runs], f"looked at {len(runs)} recent runs"
             detail = run_detail(conn, self.member, run_id[:64])
+            if detail and self.purpose == "project_publication" and detail["project_id"] != self.project_id:
+                detail = None
         if detail is None:  # runs the researcher can't see look like they don't exist
             raise ToolError("No run with that ID that this researcher can see.")
         alerts = [{k: a[k] for k in ("severity", "check", "message", "metric", "step", "line")}

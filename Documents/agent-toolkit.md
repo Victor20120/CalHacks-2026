@@ -1,8 +1,8 @@
 # Personal agent toolkit
 
-What a researcher's personal agent can look at while it works on a simulation problem: their files, their runs and the group's findings. Everything is read-only, and ExpandRG checks every request with the researcher's own permissions.
+What a researcher's personal agent can look at while it works on a simulation problem: their files, their runs and the group's findings. ExpandRG checks every request with the researcher's own permissions. Reads remain read-only; the Context Engine also accepts private, unverified relationship proposals.
 
-## The four tools
+## The tools
 
 | Tool | What the agent gets | Where it runs | Permission |
 |---|---|---|---|
@@ -10,6 +10,8 @@ What a researcher's personal agent can look at while it works on a simulation pr
 | `read_project_file` | One file with line numbers: a range (`"18-40"`), or the start of the file. A log without a range gives its first lines, the lines around problems and its end | Local connector | Same grant; at most 400 lines and 12,000 characters per request; secrets blanked |
 | `search_super_brain` | The group's shared findings that match: title, project, researcher, category, whether a researcher verified it, summary with evidence, the agent's guess if any, and members' notes | Backend (`search_findings`) | Only projects the researcher belongs to, so never another group's or a restricted project's findings |
 | `get_simulation_runs` | The researcher's recent watched runs with alert counts; with a `run_id`, that run's alerts and its numbers per step (range, first non-finite step, about 40 points) | Backend (runs store) | Only the researcher's own runs (the leader sees runs in their projects) |
+
+The [Research Context Engine](research-context-engine.md) adds `get_research_context` (typed run, anomaly, investigation, finding, graph or experiment references), `find_related_experiments` (explicit recorded parameter values and tolerance), and `propose_research_relationship` (a private proposal that cannot verify or publish). Context is bounded and carries provenance and completeness labels. Personal chat uses audience-safe publication context because eligible results can auto-share as hypotheses; unpublished investigation prose and evidence content stay private. Direct authenticated tool requests and graph analysis can inspect the caller's private context.
 
 Readable file types: Python, Fortran (`.f`, `.f90`, …), MATLAB (`.m`), Julia, R, C/C++/CUDA, Rust, Go, Java, shell, Makefile and CMake files, JSON, YAML, TOML, INI and namelist configs, CSV, TSV and `.dat` data, logs (`.log`, `.out`, `.err`, `.txt`), Markdown and LaTeX.
 
@@ -61,11 +63,11 @@ The goal was to give the agents real MCP tools. That isn't possible with CREAO t
 - **CREAO can't reach the researcher's computer:** webhooks must be public URLs, and "URLs pointing to private networks are rejected".
 - **⚠ The agents can run code in CREAO's cloud.** In that same run, Agent 1 ran `python3 -c "print(6*7)"` (output 42) and fetched `https://example.com` (HTTP 200). That breaks principle 3 of the [runtime design](agent-runtime-design.md) ("no cloud execution"). ExpandRG instructs the agents never to run project code, but that's only an instruction. Turn off code execution for Agent 1 and Agent 2 in agent.creao.ai if CREAO allows it.
 
-If CREAO adds custom tools for API runs, or Device Connect proves to work on Windows, the four tools can be served as MCP tools through `POST /agent-tools` without changing their rules.
+If CREAO adds custom tools for API runs, or Device Connect proves to work on Windows, the tools can be served as MCP tools through `POST /agent-tools` without changing their rules.
 
 ## Setup on Windows with VS Code
 
-1. Install the extension: `code --install-extension vscode-extension/expandrg-0.14.1.vsix --force`, then run **Developer: Reload Window**. **ExpandRG: Set up** installs ExpandRG itself if needed and starts it (or run `expandrg start`, or `python run_demo.py` in the ExpandRG folder). The backend reaches your local connector at `http://127.0.0.1:8001`; set `EXPANDRG_CONNECTOR` to change that.
+1. Install the extension: `code --install-extension vscode-extension/expandrg-0.15.0.vsix --force`, then run **Developer: Reload Window**. **ExpandRG: Set up** installs ExpandRG itself if needed and starts it (or run `expandrg start`, or `python run_demo.py` in the ExpandRG folder). The backend reaches your local connector at `http://127.0.0.1:8001`; set `EXPANDRG_CONNECTOR` to change that.
 2. Pick your group, who you are and the folder's project when Set up asks.
 3. Open your project folder in VS Code and click **ExpandRG AI** in the bottom bar.
 4. On your first message, if the folder isn't allowed yet, VS Code asks **Allow ExpandRG to read "<folder>"?** Click **Allow**. The panel header then says `… · can read <folder>`. If you click away, the agent works without files and says so.

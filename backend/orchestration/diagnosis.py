@@ -7,12 +7,14 @@ connector is checked again here instead of being trusted.
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 from dataclasses import dataclass, field
 from typing import Any
 
 from backend.creao.client import ANALYSIS_DEPTHS, FOCUS_AREAS
 from backend.db.database import Database
+from backend.context_engine import link, register_investigation, store_artifact
 from backend.knowledge_sharing.publishing import draft_from_diagnosis
 from backend.memory.private_memory import PrivateMemory
 from backend.orchestration.evidence_policy import (
@@ -160,16 +162,34 @@ def record_diagnosis(
     symptom: str,
     diagnosis: dict[str, Any],
     context_finding_ids: list[str] | None = None,
+    *,
+    source_run_id: str | None = None,
+    source_alert_id: str | None = None,
+    evidence: list[dict[str, Any]] | None = None,
 ) -> str | None:
     """Save a finished diagnosis to the researcher's private memory, and draft a
     finding they may choose to share. Returns the draft ID, or None if there is
     nothing to share. Nothing here touches the shared Super Brain. The IDs of the
     findings it was given as context are kept so approval can link to them."""
     memory = PrivateMemory(db, member_id)
+    evidence_refs = []
+    for item in evidence or []:
+        digest = hashlib.sha256(item["excerpt"].encode("utf-8")).hexdigest()
+        artifact = store_artifact(db, member_id, project_id, "evidence",
+                                  hashlib.sha256((item["path"] + "\0" + digest).encode()).hexdigest(),
+                                  {"path": item["path"], "kind": item["kind"], "digest": digest,
+                                   "excerpt": item["excerpt"][:2000],
+                                   "truncated": item.get("truncated", False) or len(item["excerpt"]) > 2000,
+                                   "capture_authorization": "selected_diagnosis_evidence"})
+        evidence_refs.append(artifact["ref"])
     issues = diagnosis.get("issues") or []
     details = {"symptom": symptom, "reply": diagnosis["reply"], "issues": issues,
                "context_finding_ids": list(context_finding_ids or []),
-               "diagnostic_graphs": diagnosis.get("diagnostic_graphs", [])}
+               "diagnostic_graphs": diagnosis.get("diagnostic_graphs", []),
+               "simulation_run_ref": f"run:{source_run_id}" if source_run_id else None,
+               "anomaly_ref": f"anomaly:{source_alert_id}" if source_alert_id else None,
+               "evidence_refs": evidence_refs, "provider_run_id": diagnosis["run_id"],
+               "context_schema_version": 1}
     episode_id = memory.add_episode(
         project_id,
         "diagnosis",
@@ -178,7 +198,12 @@ def record_diagnosis(
         status="hypothesis" if diagnosis.get("analysis_ran") else "open",
         creao_run_id=diagnosis["run_id"],
     )
+    register_investigation(db, member_id, project_id, episode_id, source_run_id, source_alert_id,
+                           evidence_refs, diagnosis["run_id"])
     draft = draft_from_diagnosis(symptom, diagnosis)
     if draft is None:
         return None
-    return memory.add_draft(project_id, draft, source_creao_run_id=diagnosis["run_id"], episode_id=episode_id)
+    draft_id = memory.add_draft(project_id, draft, source_creao_run_id=diagnosis["run_id"], episode_id=episode_id)
+    link(db, member_id, project_id, "draft:" + draft_id, "derived_from", "investigation:" + episode_id,
+         provider_run_id=diagnosis["run_id"])
+    return draft_id

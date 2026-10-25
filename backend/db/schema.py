@@ -12,6 +12,57 @@ memory. Rejected drafts and draft text never go into the shared database:
 # to existing files.
 SCHEMA_VERSION = 2
 
+# An additive index of provenance, not another copy of the domain stores. The
+# same tables exist in private files so private evidence never enters shared SQL.
+CONTEXT_SCHEMA = """
+CREATE TABLE IF NOT EXISTS context_artifacts (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    owner_id TEXT,
+    kind TEXT NOT NULL,
+    source_key TEXT NOT NULL,
+    metadata TEXT NOT NULL DEFAULT '{}',
+    locator TEXT,
+    digest TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(project_id, owner_id, kind, source_key)
+);
+CREATE INDEX IF NOT EXISTS context_artifacts_project ON context_artifacts(project_id, kind);
+CREATE TABLE IF NOT EXISTS context_links (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    source_ref TEXT NOT NULL,
+    predicate TEXT NOT NULL,
+    target_ref TEXT NOT NULL,
+    origin TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'recorded',
+    evidence_refs TEXT NOT NULL DEFAULT '[]',
+    provider_run_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(project_id, source_ref, predicate, target_ref)
+);
+CREATE INDEX IF NOT EXISTS context_links_reverse ON context_links(target_ref, project_id);
+CREATE INDEX IF NOT EXISTS context_links_forward ON context_links(source_ref, project_id);
+CREATE TABLE IF NOT EXISTS context_events (
+    producer_id TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    owner_id TEXT,
+    event_type TEXT NOT NULL,
+    subject_ref TEXT NOT NULL,
+    source_revision INTEGER NOT NULL DEFAULT 0,
+    payload_hash TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('pending', 'applied', 'rejected')),
+    occurred_at TEXT NOT NULL,
+    applied_at TEXT,
+    PRIMARY KEY (producer_id, event_id)
+);
+CREATE INDEX IF NOT EXISTS context_events_subject ON context_events(project_id, subject_ref, source_revision);
+"""
+
 FINDING_CATEGORIES = ("research_result", "code_change", "error_diagnosis")
 VERIFICATION_STATUSES = ("hypothesis", "supported", "verified", "unresolved")
 
@@ -37,9 +88,10 @@ SHARED_TABLES = (
     "finding_comments",
     "worksheet_weeks",
     "worksheet_in_week",
+    "context_artifacts", "context_links", "context_events",
 )
 PRIVATE_TABLES = ("runs", "private_episodes", "share_drafts", "settings", "alerts", "project_context", "visualizations",
-                  "visualization_history")
+                  "visualization_history", "context_artifacts", "context_links", "context_events")
 
 SHARED_SCHEMA = """
 CREATE TABLE IF NOT EXISTS workspaces (
@@ -268,6 +320,11 @@ CREATE TABLE IF NOT EXISTS run_alerts (
 );
 """
 
+SHARED_SCHEMA += CONTEXT_SCHEMA + """
+CREATE INDEX IF NOT EXISTS run_alerts_by_run ON run_alerts(run_id);
+CREATE INDEX IF NOT EXISTS finding_runs_by_run ON finding_runs(run_id);
+"""
+
 PRIVATE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
     id          TEXT PRIMARY KEY,
@@ -363,4 +420,11 @@ CREATE TABLE IF NOT EXISTS visualization_history (
     spec              TEXT NOT NULL,          -- JSON, after these operations
     creao_run_id      TEXT
 );
+"""
+
+PRIVATE_SCHEMA += CONTEXT_SCHEMA + """
+CREATE INDEX IF NOT EXISTS context_episodes_by_project ON private_episodes(project_id);
+CREATE INDEX IF NOT EXISTS context_drafts_by_episode ON share_drafts(episode_id);
+CREATE INDEX IF NOT EXISTS context_drafts_by_finding ON share_drafts(finding_id);
+CREATE INDEX IF NOT EXISTS context_graphs_by_project ON visualizations(project_id);
 """

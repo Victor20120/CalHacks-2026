@@ -61,8 +61,8 @@ class Local:
     def __init__(self, client):
         self.client = client
 
-    def post(self, url, json, timeout):
-        return self.client.post(url, json=json)
+    def post(self, url, json, timeout, headers=None):
+        return self.client.post(url, json=json, headers=headers)
 
 
 def read(connector, path, lines=None, folder="heat_project"):

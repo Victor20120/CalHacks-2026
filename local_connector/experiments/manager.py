@@ -18,6 +18,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from local_connector.context import atomic_save, capture_snapshot, declared_parameters, update_record
 from local_connector.experiments.manifest import EntryPoint, Limits, load_manifest
 from local_connector.experiments.sandbox import resolve_command, run_limited
 from local_connector.experiments.workspace import ExperimentRefused, apply_changes, check_changes, copy_project
@@ -49,7 +50,9 @@ class ExperimentManager:
     # --- preparing ------------------------------------------------------------
 
     def prepare(self, root: Path, project_name: str, member_id: str, project_id: str, entry_name: str,
-                changes: dict, set_id: str | None = None, baseline: str | None = None, label: str = "") -> dict:
+                changes: dict, set_id: str | None = None, baseline: str | None = None, label: str = "", *,
+                origin_run_ref: str | None = None, origin_anomaly_ref: str | None = None,
+                origin_investigation_ref: str | None = None) -> dict:
         """Copy the project and apply the change. Nothing runs."""
         entry = self._entry(root, entry_name)
         checked = check_changes(root, entry, changes)
@@ -57,7 +60,13 @@ class ExperimentManager:
         folder = self.home / experiment_id
         try:
             copy_project(Path(root), folder / "project")
+            baseline_parameters, baseline_completeness = declared_parameters(folder / "project", entry_name)
             apply_changes(folder / "project", entry, checked)
+            parameters, completeness = declared_parameters(folder / "project", entry_name)
+            captured = capture_snapshot(folder / "project", original_root=Path(root), parameters=parameters,
+                                        parameter_completeness=completeness)
+            captured.update(baseline_parameters=baseline_parameters,
+                            baseline_parameter_completeness=baseline_completeness)
         except Exception:
             shutil.rmtree(folder, ignore_errors=True)
             raise
@@ -67,6 +76,8 @@ class ExperimentManager:
             "limits": vars(entry.limits), "changes": checked, "label": label[:120] or _describe(checked),
             "baseline": baseline, "status": "prepared", "reason": "", "exit_code": None, "seconds": None,
             "created_at": _now(), "started_at": None, "finished_at": None,
+            "origin_run_ref": origin_run_ref, "origin_anomaly_ref": origin_anomaly_ref,
+            "origin_investigation_ref": origin_investigation_ref, "research_context": {"capture": captured},
         }
         with self._lock:
             self._records[experiment_id] = record
@@ -118,8 +129,10 @@ class ExperimentManager:
                 cancel = self._cancel[record["id"]] = threading.Event()
                 self._save(record)
             folder = self.home / record["id"]
-            copy_root = folder / "project"
+            copy_root = folder / "work"
             try:
+                # Keep the prepared parameter/source artifact immutable even if a solver writes its inputs.
+                copy_project(folder / "project", copy_root)
                 outcome = self._run(resolve_command(tuple(record["command"]), copy_root), copy_root,
                                     folder / "output.log", Limits(**record["limits"]), cancel)
                 result = (outcome.status, outcome.reason, outcome.exit_code, outcome.seconds)
@@ -173,9 +186,9 @@ class ExperimentManager:
         return record
 
     def _save(self, record: dict) -> None:
-        path = self.home / record["id"] / "experiment.json"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+        folder = self.home / record["id"]
+        update_record(record, "experiment", folder)
+        atomic_save(folder / "experiment.json", record)
 
     def _load(self) -> list[dict]:
         records = []
@@ -186,7 +199,7 @@ class ExperimentManager:
                 continue
             if record.get("status") in ("queued", "running"):  # the connector stopped while it waited or ran
                 record.update(status="stopped", reason="Stopped: the local connector was restarted.", finished_at=_now())
-                path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+                self._save(record)
             records.append(record)
         return records
 
